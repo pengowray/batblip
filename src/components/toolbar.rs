@@ -97,8 +97,17 @@ pub fn Toolbar() -> impl IntoView {
                         }.into_any()
                     }
                     PlaybackMode::Heterodyne => {
+                        let on_het_enter = move |_: web_sys::MouseEvent| {
+                            state.het_interacting.set(true);
+                        };
+                        let on_het_leave = move |_: web_sys::MouseEvent| {
+                            state.het_interacting.set(false);
+                        };
                         view! {
-                            <label class="mode-param">
+                            <label class="mode-param"
+                                on:mouseenter=on_het_enter
+                                on:mouseleave=on_het_leave
+                            >
                                 {move || format!("{:.0} kHz", state.het_frequency.get() / 1000.0)}
                                 <input
                                     type="range"

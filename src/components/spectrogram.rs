@@ -29,13 +29,16 @@ pub fn Spectrogram() -> impl IntoView {
         }
     });
 
-    // Redraw when pre-rendered data, scroll, zoom, selection, or playhead changes
+    // Redraw when pre-rendered data, scroll, zoom, selection, playhead, or HET overlay changes
     Effect::new(move || {
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
         let selection = state.selection.get();
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
+        let het_interacting = state.het_interacting.get();
+        let het_freq = state.het_frequency.get();
+        let playback_mode = state.playback_mode.get();
         let _pre = pre_rendered.track();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -75,12 +78,28 @@ pub fn Spectrogram() -> impl IntoView {
                     .and_then(|i| files.get(i))
                     .map(|f| f.spectrogram.max_freq)
                     .unwrap_or(96_000.0);
+                // Show HET overlay when hovering/sliding control, or when playing in HET mode
+                let show_het = het_interacting
+                    || (playback_mode == crate::state::PlaybackMode::Heterodyne && is_playing);
+                let het_for_markers = if show_het { Some(het_freq) } else { None };
+
                 spectrogram_renderer::draw_freq_markers(
                     &ctx,
                     max_freq,
                     display_h as f64,
                     display_w as f64,
+                    het_for_markers,
                 );
+
+                if show_het {
+                    spectrogram_renderer::draw_het_overlay(
+                        &ctx,
+                        het_freq,
+                        max_freq,
+                        display_h as f64,
+                        display_w as f64,
+                    );
+                }
 
                 // Draw selection overlay
                 if let Some(sel) = selection {

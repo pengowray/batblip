@@ -128,18 +128,33 @@ pub fn blit_viewport(
 }
 
 /// Draw horizontal frequency marker lines with resistor color band colors.
+/// When `het_freq` is Some, markers within the audible band show the shifted frequency
+/// and markers outside the band are dimmed.
 pub fn draw_freq_markers(
     ctx: &CanvasRenderingContext2d,
     max_freq: f64,
     canvas_height: f64,
     canvas_width: f64,
+    het_freq: Option<f64>,
 ) {
+    let cutoff = 15_000.0;
     let mut freq = 10_000.0;
     while freq < max_freq {
         let y = canvas_height * (1.0 - freq / max_freq);
         let color = freq_marker_color(freq);
 
-        ctx.set_stroke_style_str(&format!("rgba({},{},{},0.6)", color[0], color[1], color[2]));
+        // Determine alpha based on whether marker is in audible band
+        let (line_alpha, label_alpha) = if let Some(hf) = het_freq {
+            if (freq - hf).abs() <= cutoff {
+                (0.6, 0.9)
+            } else {
+                (0.2, 0.3)
+            }
+        } else {
+            (0.6, 0.8)
+        };
+
+        ctx.set_stroke_style_str(&format!("rgba({},{},{},{line_alpha})", color[0], color[1], color[2]));
         ctx.set_line_width(1.0);
         ctx.begin_path();
         ctx.move_to(0.0, y);
@@ -147,13 +162,83 @@ pub fn draw_freq_markers(
         ctx.stroke();
 
         // Label
-        ctx.set_fill_style_str(&format!("rgba({},{},{},0.8)", color[0], color[1], color[2]));
+        ctx.set_fill_style_str(&format!("rgba({},{},{},{label_alpha})", color[0], color[1], color[2]));
         ctx.set_font("11px sans-serif");
-        let label = freq_marker_label(freq);
+        let base_label = freq_marker_label(freq);
+        let label = if let Some(hf) = het_freq {
+            let diff = (freq - hf).abs();
+            if diff <= cutoff {
+                let diff_khz = (diff / 1000.0).round() as u32;
+                format!("{base_label} \u{2192} {diff_khz} kHz")
+            } else {
+                base_label
+            }
+        } else {
+            base_label
+        };
         let _ = ctx.fill_text(&label, 4.0, y - 3.0);
 
         freq += 10_000.0;
     }
+}
+
+/// Draw the heterodyne frequency overlay: center line, audible band, and dimmed regions.
+pub fn draw_het_overlay(
+    ctx: &CanvasRenderingContext2d,
+    het_freq: f64,
+    max_freq: f64,
+    canvas_height: f64,
+    canvas_width: f64,
+) {
+    let cutoff = 15_000.0;
+    let band_low = (het_freq - cutoff).max(0.0);
+    let band_high = (het_freq + cutoff).min(max_freq);
+
+    let y_center = canvas_height * (1.0 - het_freq / max_freq);
+    let y_band_top = canvas_height * (1.0 - band_high / max_freq);
+    let y_band_bottom = canvas_height * (1.0 - band_low / max_freq);
+
+    // Dim regions outside the audible band
+    ctx.set_fill_style_str("rgba(0, 0, 0, 0.5)");
+    if y_band_top > 0.0 {
+        ctx.fill_rect(0.0, 0.0, canvas_width, y_band_top);
+    }
+    if y_band_bottom < canvas_height {
+        ctx.fill_rect(0.0, y_band_bottom, canvas_width, canvas_height - y_band_bottom);
+    }
+
+    // Audible band highlight
+    ctx.set_fill_style_str("rgba(0, 200, 255, 0.07)");
+    ctx.fill_rect(0.0, y_band_top, canvas_width, y_band_bottom - y_band_top);
+
+    // Band edge lines (subtle)
+    ctx.set_stroke_style_str("rgba(0, 200, 255, 0.3)");
+    ctx.set_line_width(1.0);
+    for &y in &[y_band_top, y_band_bottom] {
+        ctx.begin_path();
+        ctx.move_to(0.0, y);
+        ctx.line_to(canvas_width, y);
+        ctx.stroke();
+    }
+
+    // Center line at het_freq (dashed)
+    ctx.set_stroke_style_str("rgba(0, 230, 255, 0.8)");
+    ctx.set_line_width(1.5);
+    let _ = ctx.set_line_dash(&js_sys::Array::of2(
+        &wasm_bindgen::JsValue::from_f64(6.0),
+        &wasm_bindgen::JsValue::from_f64(4.0),
+    ));
+    ctx.begin_path();
+    ctx.move_to(0.0, y_center);
+    ctx.line_to(canvas_width, y_center);
+    ctx.stroke();
+    let _ = ctx.set_line_dash(&js_sys::Array::new()); // reset dash
+
+    // Label at center line
+    ctx.set_fill_style_str("rgba(0, 230, 255, 0.9)");
+    ctx.set_font("bold 12px sans-serif");
+    let label = format!("HET {:.0} kHz", het_freq / 1000.0);
+    let _ = ctx.fill_text(&label, canvas_width - 120.0, y_center - 5.0);
 }
 
 /// Draw selection rectangle overlay on spectrogram.
