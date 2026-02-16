@@ -3,7 +3,7 @@ use web_sys::{AudioContext, AudioContextOptions, AudioBufferSourceNode};
 use crate::types::AudioData;
 use crate::state::{AppState, Selection, PlaybackMode};
 use crate::dsp::heterodyne::heterodyne_mix;
-use crate::dsp::pitch_shift::pitch_shift_down;
+use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::filters::lowpass_filter;
 use std::cell::RefCell;
 
@@ -86,9 +86,8 @@ pub fn play(state: &AppState) {
             play_samples(&samples, te_rate);
         }
         PlaybackMode::PitchShift => {
-            // PS: resample to stretch by factor, then play at original rate
-            // Frequencies shift down by factor, duration increases by factor
-            let shifted = pitch_shift_down(&samples, ps_factor);
+            // PS: pitch shift down by factor while preserving original duration
+            let shifted = pitch_shift_realtime(&samples, ps_factor);
             play_samples(&shifted, sample_rate);
         }
     }
@@ -98,7 +97,7 @@ pub fn play(state: &AppState) {
         PlaybackMode::Normal => 1.0,
         PlaybackMode::Heterodyne => 1.0,
         PlaybackMode::TimeExpansion => 1.0 / te_factor,
-        PlaybackMode::PitchShift => 1.0 / ps_factor,
+        PlaybackMode::PitchShift => 1.0,
     };
 
     state.is_playing.set(true);

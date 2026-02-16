@@ -82,16 +82,16 @@ pub fn Toolbar() -> impl IntoView {
             // Mode selector — radio-style buttons
             <div class="mode-group">
                 <button
-                    class=move || if current_mode() == PlaybackMode::TimeExpansion { "mode-btn active" } else { "mode-btn" }
-                    on:click=move |_| set_mode(PlaybackMode::TimeExpansion)
-                >
-                    "TE"
-                </button>
-                <button
                     class=move || if current_mode() == PlaybackMode::Heterodyne { "mode-btn active" } else { "mode-btn" }
                     on:click=move |_| set_mode(PlaybackMode::Heterodyne)
                 >
                     "HET"
+                </button>
+                <button
+                    class=move || if current_mode() == PlaybackMode::TimeExpansion { "mode-btn active" } else { "mode-btn" }
+                    on:click=move |_| set_mode(PlaybackMode::TimeExpansion)
+                >
+                    "TE"
                 </button>
                 <button
                     class=move || if current_mode() == PlaybackMode::PitchShift { "mode-btn active" } else { "mode-btn" }

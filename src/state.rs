@@ -49,7 +49,7 @@ impl AppState {
             files: RwSignal::new(Vec::new()),
             current_file_index: RwSignal::new(None),
             selection: RwSignal::new(None),
-            playback_mode: RwSignal::new(PlaybackMode::TimeExpansion),
+            playback_mode: RwSignal::new(PlaybackMode::Normal),
             het_frequency: RwSignal::new(45_000.0),
             te_factor: RwSignal::new(10.0),
             zoom_level: RwSignal::new(1.0),
