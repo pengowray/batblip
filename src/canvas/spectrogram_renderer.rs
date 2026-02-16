@@ -127,15 +127,25 @@ pub fn blit_viewport(
     }
 }
 
+/// Describes how frequency markers should show shifted output frequencies.
+#[derive(Clone, Copy)]
+pub enum FreqShiftMode {
+    /// No shift annotation.
+    None,
+    /// Heterodyne: show |freq - het_freq| for markers within ±15 kHz of het_freq.
+    Heterodyne(f64),
+    /// Time expansion or pitch shift: all freqs divide by factor.
+    Divide(f64),
+}
+
 /// Draw horizontal frequency marker lines with resistor color band colors.
-/// When `het_freq` is Some, markers within the audible band show the shifted frequency
-/// and markers outside the band are dimmed.
+/// When a `FreqShiftMode` is active, markers show the shifted output frequency.
 pub fn draw_freq_markers(
     ctx: &CanvasRenderingContext2d,
     max_freq: f64,
     canvas_height: f64,
     canvas_width: f64,
-    het_freq: Option<f64>,
+    shift_mode: FreqShiftMode,
 ) {
     let cutoff = 15_000.0;
     let mut freq = 10_000.0;
@@ -143,15 +153,12 @@ pub fn draw_freq_markers(
         let y = canvas_height * (1.0 - freq / max_freq);
         let color = freq_marker_color(freq);
 
-        // Determine alpha based on whether marker is in audible band
-        let (line_alpha, label_alpha) = if let Some(hf) = het_freq {
-            if (freq - hf).abs() <= cutoff {
-                (0.6, 0.9)
-            } else {
-                (0.2, 0.3)
+        // Determine alpha based on whether marker is in audible band (HET only)
+        let (line_alpha, label_alpha) = match shift_mode {
+            FreqShiftMode::Heterodyne(hf) => {
+                if (freq - hf).abs() <= cutoff { (0.6, 0.9) } else { (0.2, 0.3) }
             }
-        } else {
-            (0.6, 0.8)
+            _ => (0.6, 0.8),
         };
 
         ctx.set_stroke_style_str(&format!("rgba({},{},{},{line_alpha})", color[0], color[1], color[2]));
@@ -165,16 +172,26 @@ pub fn draw_freq_markers(
         ctx.set_fill_style_str(&format!("rgba({},{},{},{label_alpha})", color[0], color[1], color[2]));
         ctx.set_font("11px sans-serif");
         let base_label = freq_marker_label(freq);
-        let label = if let Some(hf) = het_freq {
-            let diff = (freq - hf).abs();
-            if diff <= cutoff {
-                let diff_khz = (diff / 1000.0).round() as u32;
-                format!("{base_label} \u{2192} {diff_khz} kHz")
-            } else {
-                base_label
+        let label = match shift_mode {
+            FreqShiftMode::Heterodyne(hf) => {
+                let diff = (freq - hf).abs();
+                if diff <= cutoff {
+                    let diff_khz = (diff / 1000.0).round() as u32;
+                    format!("{base_label} \u{2192} {diff_khz} kHz")
+                } else {
+                    base_label
+                }
             }
-        } else {
-            base_label
+            FreqShiftMode::Divide(factor) if factor > 1.0 => {
+                let shifted = freq / factor;
+                let shifted_khz = shifted / 1000.0;
+                if shifted_khz >= 1.0 {
+                    format!("{base_label} \u{2192} {:.0} kHz", shifted_khz)
+                } else {
+                    format!("{base_label} \u{2192} {:.0} Hz", shifted)
+                }
+            }
+            _ => base_label,
         };
         let _ = ctx.fill_text(&label, 4.0, y - 3.0);
 

@@ -3,6 +3,7 @@ use web_sys::{AudioContext, AudioContextOptions, AudioBufferSourceNode};
 use crate::types::AudioData;
 use crate::state::{AppState, Selection, PlaybackMode};
 use crate::dsp::heterodyne::heterodyne_mix;
+use crate::dsp::pitch_shift::pitch_shift_down;
 use crate::dsp::filters::lowpass_filter;
 use std::cell::RefCell;
 
@@ -39,12 +40,13 @@ pub fn play(state: &AppState) {
     let selection = state.selection.get_untracked();
     let het_freq = state.het_frequency.get_untracked();
     let te_factor = state.te_factor.get_untracked();
+    let ps_factor = state.ps_factor.get_untracked();
 
     let (samples, sample_rate) = extract_selection(&file.audio, selection);
 
     // Apply bandpass if selection has frequency bounds (Normal/TE modes)
     let samples = if let Some(sel) = selection {
-        if matches!(mode, PlaybackMode::Normal | PlaybackMode::TimeExpansion)
+        if matches!(mode, PlaybackMode::Normal | PlaybackMode::TimeExpansion | PlaybackMode::PitchShift)
             && (sel.freq_low > 0.0 || sel.freq_high < (sample_rate as f64 / 2.0))
         {
             apply_bandpass(&samples, sample_rate, sel.freq_low, sel.freq_high)
@@ -83,6 +85,12 @@ pub fn play(state: &AppState) {
             let te_rate = te_rate.max(8000); // browser minimum
             play_samples(&samples, te_rate);
         }
+        PlaybackMode::PitchShift => {
+            // PS: resample to stretch by factor, then play at original rate
+            // Frequencies shift down by factor, duration increases by factor
+            let shifted = pitch_shift_down(&samples, ps_factor);
+            play_samples(&shifted, sample_rate);
+        }
     }
 
     // Start playhead animation
@@ -90,6 +98,7 @@ pub fn play(state: &AppState) {
         PlaybackMode::Normal => 1.0,
         PlaybackMode::Heterodyne => 1.0,
         PlaybackMode::TimeExpansion => 1.0 / te_factor,
+        PlaybackMode::PitchShift => 1.0 / ps_factor,
     };
 
     state.is_playing.set(true);

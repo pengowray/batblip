@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent};
-use crate::canvas::spectrogram_renderer::{self, PreRendered};
-use crate::state::{AppState, Selection};
+use crate::canvas::spectrogram_renderer::{self, FreqShiftMode, PreRendered};
+use crate::state::{AppState, PlaybackMode, Selection};
 
 #[component]
 pub fn Spectrogram() -> impl IntoView {
@@ -38,6 +38,8 @@ pub fn Spectrogram() -> impl IntoView {
         let is_playing = state.is_playing.get();
         let het_interacting = state.het_interacting.get();
         let het_freq = state.het_frequency.get();
+        let te_factor = state.te_factor.get();
+        let ps_factor = state.ps_factor.get();
         let playback_mode = state.playback_mode.get();
         let _pre = pre_rendered.track();
 
@@ -78,17 +80,25 @@ pub fn Spectrogram() -> impl IntoView {
                     .and_then(|i| files.get(i))
                     .map(|f| f.spectrogram.max_freq)
                     .unwrap_or(96_000.0);
-                // Show HET overlay when hovering/sliding control, or when playing in HET mode
+                // Determine frequency shift mode for marker labels
                 let show_het = het_interacting
-                    || (playback_mode == crate::state::PlaybackMode::Heterodyne && is_playing);
-                let het_for_markers = if show_het { Some(het_freq) } else { None };
+                    || (playback_mode == PlaybackMode::Heterodyne && is_playing);
+                let shift_mode = if show_het {
+                    FreqShiftMode::Heterodyne(het_freq)
+                } else {
+                    match playback_mode {
+                        PlaybackMode::TimeExpansion => FreqShiftMode::Divide(te_factor),
+                        PlaybackMode::PitchShift => FreqShiftMode::Divide(ps_factor),
+                        _ => FreqShiftMode::None,
+                    }
+                };
 
                 spectrogram_renderer::draw_freq_markers(
                     &ctx,
                     max_freq,
                     display_h as f64,
                     display_w as f64,
-                    het_for_markers,
+                    shift_mode,
                 );
 
                 if show_het {

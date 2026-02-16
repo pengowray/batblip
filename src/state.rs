@@ -21,6 +21,7 @@ pub enum PlaybackMode {
     Normal,
     Heterodyne,
     TimeExpansion,
+    PitchShift,
 }
 
 #[derive(Clone)]
@@ -38,6 +39,7 @@ pub struct AppState {
     pub loading_count: RwSignal<usize>,
     pub join_files: RwSignal<bool>,
     pub auto_advance: RwSignal<bool>,
+    pub ps_factor: RwSignal<f64>,
     pub het_interacting: RwSignal<bool>,
 }
 
@@ -57,6 +59,7 @@ impl AppState {
             loading_count: RwSignal::new(0),
             join_files: RwSignal::new(false),
             auto_advance: RwSignal::new(true),
+            ps_factor: RwSignal::new(10.0),
             het_interacting: RwSignal::new(false),
         }
     }

@@ -254,6 +254,12 @@ html, body {
     min-width: 120px;
 }
 
+.mode-param-value {
+    display: inline-block;
+    min-width: 52px;
+    text-align: right;
+}
+
 .mode-hint {
     color: #666;
     font-size: 12px;

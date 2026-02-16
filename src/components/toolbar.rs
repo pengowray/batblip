@@ -24,11 +24,19 @@ pub fn Toolbar() -> impl IntoView {
         state.playback_mode.set(mode);
     };
 
+    // Track shift key for HET 5 kHz stepping
+    let shift_held = RwSignal::new(false);
+
     let on_het_freq_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let input: web_sys::HtmlInputElement = target.unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
-            state.het_frequency.set(val * 1000.0);
+            let freq_khz = if shift_held.get_untracked() {
+                (val / 5.0).round() * 5.0
+            } else {
+                val
+            };
+            state.het_frequency.set(freq_khz * 1000.0);
         }
     };
 
@@ -40,8 +48,23 @@ pub fn Toolbar() -> impl IntoView {
         }
     };
 
+    let on_ps_factor_change = move |ev: web_sys::Event| {
+        let target = ev.target().unwrap();
+        let input: web_sys::HtmlInputElement = target.unchecked_into();
+        if let Ok(val) = input.value().parse::<f64>() {
+            state.ps_factor.set(val);
+        }
+    };
+
     view! {
-        <div class="toolbar">
+        <div class="toolbar"
+            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                if ev.key() == "Shift" { shift_held.set(true); }
+            }
+            on:keyup=move |ev: web_sys::KeyboardEvent| {
+                if ev.key() == "Shift" { shift_held.set(false); }
+            }
+        >
             <span class="toolbar-brand">"Batgram"</span>
             <div class="toolbar-sep"></div>
 
@@ -71,6 +94,12 @@ pub fn Toolbar() -> impl IntoView {
                     "HET"
                 </button>
                 <button
+                    class=move || if current_mode() == PlaybackMode::PitchShift { "mode-btn active" } else { "mode-btn" }
+                    on:click=move |_| set_mode(PlaybackMode::PitchShift)
+                >
+                    "PS"
+                </button>
+                <button
                     class=move || if current_mode() == PlaybackMode::Normal { "mode-btn active" } else { "mode-btn" }
                     on:click=move |_| set_mode(PlaybackMode::Normal)
                 >
@@ -84,7 +113,7 @@ pub fn Toolbar() -> impl IntoView {
                     PlaybackMode::TimeExpansion => {
                         view! {
                             <label class="mode-param">
-                                {move || format!("{}x", state.te_factor.get() as u32)}
+                                <span class="mode-param-value">{move || format!("{}x", state.te_factor.get() as u32)}</span>
                                 <input
                                     type="range"
                                     min="2"
@@ -108,7 +137,7 @@ pub fn Toolbar() -> impl IntoView {
                                 on:mouseenter=on_het_enter
                                 on:mouseleave=on_het_leave
                             >
-                                {move || format!("{:.0} kHz", state.het_frequency.get() / 1000.0)}
+                                <span class="mode-param-value">{move || format!("{:.0} kHz", state.het_frequency.get() / 1000.0)}</span>
                                 <input
                                     type="range"
                                     min="10"
@@ -116,6 +145,21 @@ pub fn Toolbar() -> impl IntoView {
                                     step="1"
                                     prop:value=move || (state.het_frequency.get() / 1000.0).to_string()
                                     on:input=on_het_freq_change
+                                />
+                            </label>
+                        }.into_any()
+                    }
+                    PlaybackMode::PitchShift => {
+                        view! {
+                            <label class="mode-param">
+                                <span class="mode-param-value">{move || format!("÷{}", state.ps_factor.get() as u32)}</span>
+                                <input
+                                    type="range"
+                                    min="2"
+                                    max="20"
+                                    step="1"
+                                    prop:value=move || (state.ps_factor.get()).to_string()
+                                    on:input=on_ps_factor_change
                                 />
                             </label>
                         }.into_any()
