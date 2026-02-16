@@ -1,0 +1,55 @@
+[package]
+name = "batgram"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+leptos = { version = "0.7", features = ["csr"] }
+web-sys = { version = "0.3", features = [
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "GainNode",
+    "AudioDestinationNode",
+    "AudioNode",
+    "BaseAudioContext",
+    "DragEvent",
+    "DataTransfer",
+    "FileList",
+    "File",
+    "FileReader",
+    "FileReaderSync",
+    "Blob",
+    "Url",
+    "HtmlInputElement",
+    "MouseEvent",
+    "WheelEvent",
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "CssStyleDeclaration",
+    "DomRect",
+    "Event",
+    "EventTarget",
+] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+realfft = "3"
+hound = "3.5"
+claxon = "0.4"
+log = "0.4"
+console_log = "1"
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
