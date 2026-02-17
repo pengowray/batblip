@@ -221,8 +221,7 @@ pub fn Spectrogram() -> impl IntoView {
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;
         let max_freq = state.max_display_freq.get_untracked()
-            .unwrap_or(file_max_freq)
-            .min(file_max_freq);
+            .unwrap_or(file_max_freq);
         let scroll = state.scroll_offset.get_untracked();
         let zoom = state.zoom_level.get_untracked();
 

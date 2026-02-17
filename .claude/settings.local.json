@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(trunk build:*)"
+      "Bash(trunk build:*)",
+      "Bash(cargo check:*)"
     ]
   }
 }
