@@ -66,7 +66,8 @@ pub struct AppState {
     pub is_dragging: RwSignal<bool>,
     pub spectrogram_display: RwSignal<SpectrogramDisplay>,
     pub sidebar_tab: RwSignal<SidebarTab>,
-    pub mv_threshold: RwSignal<f32>,
+    pub mv_intensity_gate: RwSignal<f32>,
+    pub mv_movement_gate: RwSignal<f32>,
     pub mv_opacity: RwSignal<f32>,
     pub max_display_freq: RwSignal<Option<f64>>,
 }
@@ -92,7 +93,8 @@ impl AppState {
             is_dragging: RwSignal::new(false),
             spectrogram_display: RwSignal::new(SpectrogramDisplay::Normal),
             sidebar_tab: RwSignal::new(SidebarTab::Files),
-            mv_threshold: RwSignal::new(20.0),
+            mv_intensity_gate: RwSignal::new(0.3),
+            mv_movement_gate: RwSignal::new(0.15),
             mv_opacity: RwSignal::new(0.5),
             max_display_freq: RwSignal::new(None),
         }

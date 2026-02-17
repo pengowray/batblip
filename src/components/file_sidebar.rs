@@ -150,11 +150,19 @@ fn SpectrogramSettingsPanel() -> impl IntoView {
         state.spectrogram_display.set(mode);
     };
 
-    let on_threshold_change = move |ev: web_sys::Event| {
+    let on_intensity_gate_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let input: web_sys::HtmlInputElement = target.unchecked_into();
         if let Ok(val) = input.value().parse::<f32>() {
-            state.mv_threshold.set(val);
+            state.mv_intensity_gate.set(val / 100.0);
+        }
+    };
+
+    let on_movement_gate_change = move |ev: web_sys::Event| {
+        let target = ev.target().unwrap();
+        let input: web_sys::HtmlInputElement = target.unchecked_into();
+        if let Ok(val) = input.value().parse::<f32>() {
+            state.mv_movement_gate.set(val / 100.0);
         }
     };
 
@@ -178,6 +186,29 @@ fn SpectrogramSettingsPanel() -> impl IntoView {
 
     view! {
         <div class="sidebar-panel">
+            // Max display frequency section (first)
+            <div class="setting-group">
+                <div class="setting-group-title">"Display"</div>
+                <div class="setting-row">
+                    <span class="setting-label">"Max freq"</span>
+                    <select
+                        class="setting-select"
+                        on:change=on_max_freq_change
+                        prop:value=move || match state.max_display_freq.get() {
+                            None => "auto".to_string(),
+                            Some(hz) => format!("{}", (hz / 1000.0) as u32),
+                        }
+                    >
+                        <option value="auto">"Auto"</option>
+                        <option value="50">"50 kHz"</option>
+                        <option value="100">"100 kHz"</option>
+                        <option value="150">"150 kHz"</option>
+                        <option value="200">"200 kHz"</option>
+                        <option value="250">"250 kHz"</option>
+                    </select>
+                </div>
+            </div>
+
             // Movement overlay section
             <div class="setting-group">
                 <div class="setting-group-title">"Movement overlay"</div>
@@ -203,18 +234,33 @@ fn SpectrogramSettingsPanel() -> impl IntoView {
                     if state.spectrogram_display.get().is_active() {
                         view! {
                             <div class="setting-row">
-                                <span class="setting-label">"Threshold"</span>
+                                <span class="setting-label">"Intensity gate"</span>
                                 <div class="setting-slider-row">
                                     <input
                                         type="range"
                                         class="setting-range"
                                         min="0"
-                                        max="80"
+                                        max="100"
                                         step="1"
-                                        prop:value=move || state.mv_threshold.get().to_string()
-                                        on:input=on_threshold_change
+                                        prop:value=move || (state.mv_intensity_gate.get() * 100.0).round().to_string()
+                                        on:input=on_intensity_gate_change
                                     />
-                                    <span class="setting-value">{move || format!("{:.0}", state.mv_threshold.get())}</span>
+                                    <span class="setting-value">{move || format!("{}%", (state.mv_intensity_gate.get() * 100.0).round() as u32)}</span>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <span class="setting-label">"Movement gate"</span>
+                                <div class="setting-slider-row">
+                                    <input
+                                        type="range"
+                                        class="setting-range"
+                                        min="0"
+                                        max="100"
+                                        step="1"
+                                        prop:value=move || (state.mv_movement_gate.get() * 100.0).round().to_string()
+                                        on:input=on_movement_gate_change
+                                    />
+                                    <span class="setting-value">{move || format!("{}%", (state.mv_movement_gate.get() * 100.0).round() as u32)}</span>
                                 </div>
                             </div>
                             <div class="setting-row">
@@ -237,29 +283,6 @@ fn SpectrogramSettingsPanel() -> impl IntoView {
                         view! { <span></span> }.into_any()
                     }
                 }}
-            </div>
-
-            // Max display frequency section
-            <div class="setting-group">
-                <div class="setting-group-title">"Display"</div>
-                <div class="setting-row">
-                    <span class="setting-label">"Max freq"</span>
-                    <select
-                        class="setting-select"
-                        on:change=on_max_freq_change
-                        prop:value=move || match state.max_display_freq.get() {
-                            None => "auto".to_string(),
-                            Some(hz) => format!("{}", (hz / 1000.0) as u32),
-                        }
-                    >
-                        <option value="auto">"Auto"</option>
-                        <option value="50">"50 kHz"</option>
-                        <option value="100">"100 kHz"</option>
-                        <option value="150">"150 kHz"</option>
-                        <option value="200">"200 kHz"</option>
-                        <option value="250">"250 kHz"</option>
-                    </select>
-                </div>
             </div>
         </div>
     }

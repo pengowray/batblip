@@ -65,25 +65,34 @@ pub enum MovementAlgo {
     Flow,
 }
 
-/// Pre-render spectrogram with frequency-movement color overlay.
-/// Greyscale base with red (upward shift) / blue (downward shift) tint.
-pub fn pre_render_movement(
-    data: &SpectrogramData,
-    algo: MovementAlgo,
-    threshold: u8,
-    opacity: f32,
-) -> PreRendered {
+/// Cached intermediate data: greyscale intensities + shift values per pixel.
+/// The expensive shift computation only needs to run when file or algorithm changes.
+/// Color mapping (gates, opacity) can then be applied cheaply via `composite_movement`.
+pub struct MovementData {
+    pub width: u32,
+    pub height: u32,
+    /// Greyscale intensity per pixel (row-major, flipped: row 0 = highest freq).
+    pub greys: Vec<u8>,
+    /// Frequency shift value per pixel (same layout as greys).
+    pub shifts: Vec<f32>,
+}
+
+/// Compute movement data (expensive): greyscale + shift values for every pixel.
+/// Only needs to re-run when the file or algorithm changes.
+pub fn compute_movement_data(data: &SpectrogramData, algo: MovementAlgo) -> MovementData {
     if data.columns.is_empty() {
-        return PreRendered {
+        return MovementData {
             width: 0,
             height: 0,
-            pixels: Vec::new(),
+            greys: Vec::new(),
+            shifts: Vec::new(),
         };
     }
 
     let width = data.columns.len() as u32;
     let height = data.columns[0].magnitudes.len() as u32;
     let h = height as usize;
+    let total = (width as usize) * (height as usize);
 
     let max_mag = data
         .columns
@@ -92,10 +101,10 @@ pub fn pre_render_movement(
         .copied()
         .fold(0.0f32, f32::max);
 
-    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    let mut greys = vec![0u8; total];
+    let mut shifts = vec![0.0f32; total];
 
     for (col_idx, col) in data.columns.iter().enumerate() {
-        // Get previous column magnitudes (or None for first column)
         let prev = if col_idx > 0 {
             Some(&data.columns[col_idx - 1].magnitudes)
         } else {
@@ -104,36 +113,48 @@ pub fn pre_render_movement(
 
         for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
             let grey = magnitude_to_greyscale(mag, max_mag);
-
             let shift = match prev {
                 None => 0.0,
                 Some(prev_mags) => match algo {
-                    MovementAlgo::Centroid => {
-                        compute_centroid_shift(prev_mags, &col.magnitudes, bin_idx, h)
-                    }
-                    MovementAlgo::Gradient => {
-                        compute_gradient_shift(prev_mags, &col.magnitudes, bin_idx, h)
-                    }
-                    MovementAlgo::Flow => {
-                        compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h)
-                    }
+                    MovementAlgo::Centroid => compute_centroid_shift(prev_mags, &col.magnitudes, bin_idx, h),
+                    MovementAlgo::Gradient => compute_gradient_shift(prev_mags, &col.magnitudes, bin_idx, h),
+                    MovementAlgo::Flow => compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h),
                 },
             };
 
-            let [r, g, b] = movement_rgb(grey, shift, threshold, opacity);
-
             let y = height as usize - 1 - bin_idx;
-            let pixel_idx = (y * width as usize + col_idx) * 4;
-            pixels[pixel_idx] = r;
-            pixels[pixel_idx + 1] = g;
-            pixels[pixel_idx + 2] = b;
-            pixels[pixel_idx + 3] = 255;
+            let idx = y * width as usize + col_idx;
+            greys[idx] = grey;
+            shifts[idx] = shift;
         }
     }
 
+    MovementData { width, height, greys, shifts }
+}
+
+/// Composite movement data into RGBA pixels (cheap).
+/// Re-runs when intensity_gate, movement_gate, or opacity changes.
+pub fn composite_movement(
+    md: &MovementData,
+    intensity_gate: f32,
+    movement_gate: f32,
+    opacity: f32,
+) -> PreRendered {
+    let total = (md.width as usize) * (md.height as usize);
+    let mut pixels = vec![0u8; total * 4];
+
+    for i in 0..total {
+        let [r, g, b] = movement_rgb(md.greys[i], md.shifts[i], intensity_gate, movement_gate, opacity);
+        let pi = i * 4;
+        pixels[pi] = r;
+        pixels[pi + 1] = g;
+        pixels[pi + 2] = b;
+        pixels[pi + 3] = 255;
+    }
+
     PreRendered {
-        width,
-        height,
+        width: md.width,
+        height: md.height,
         pixels,
     }
 }
@@ -246,13 +267,16 @@ fn compute_flow_shift(prev: &[f32], curr: &[f32], bin: usize, h: usize) -> f32 {
     best_d as f32 / max_disp as f32
 }
 
-/// Blit the pre-rendered spectrogram to a visible canvas, handling scroll and zoom.
+/// Blit the pre-rendered spectrogram to a visible canvas, handling scroll, zoom, and freq crop.
+/// `freq_crop` is 0.0–1.0: fraction of the vertical image to show (from bottom / low freq).
+/// 1.0 = show all, 0.5 = show bottom half only.
 pub fn blit_viewport(
     ctx: &CanvasRenderingContext2d,
     pre_rendered: &PreRendered,
     canvas: &HtmlCanvasElement,
     scroll_col: f64,
     zoom: f64,
+    freq_crop: f64,
 ) {
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
@@ -265,12 +289,19 @@ pub fn blit_viewport(
         return;
     }
 
+    let fc = freq_crop.clamp(0.01, 1.0);
+
     // How many source columns are visible at current zoom
     let visible_cols = (cw / zoom).min(pre_rendered.width as f64);
     let src_start = scroll_col.max(0.0).min((pre_rendered.width as f64 - visible_cols).max(0.0));
 
+    // Vertical crop: row 0 = highest freq, last row = 0 Hz
+    // We want to show the bottom `fc` fraction, so skip rows at top
+    let full_h = pre_rendered.height as f64;
+    let src_y = full_h * (1.0 - fc);
+    let src_h = full_h * fc;
+
     // Create ImageData from pixel buffer and draw it
-    // We'll draw the full pre-rendered image scaled to the canvas
     let clamped = Clamped(&pre_rendered.pixels[..]);
     let image_data = ImageData::new_with_u8_clamped_array_and_sh(
         clamped,
@@ -301,9 +332,9 @@ pub fn blit_viewport(
             let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
                 &tmp,
                 src_start,
-                0.0,
+                src_y,
                 visible_cols,
-                pre_rendered.height as f64,
+                src_h,
                 0.0,
                 0.0,
                 cw,

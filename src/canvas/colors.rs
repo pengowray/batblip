@@ -28,17 +28,44 @@ pub fn freq_marker_color(freq_hz: f64) -> [u8; 3] {
     }
 }
 
+/// Hermite smoothstep: smooth transition from 0 to 1 between edge0 and edge1.
+fn smoothstep(x: f32, edge0: f32, edge1: f32) -> f32 {
+    if edge1 <= edge0 {
+        return if x >= edge0 { 1.0 } else { 0.0 };
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Map a greyscale base value and a frequency-shift amount to an RGB triple.
 /// `shift` > 0 → energy moving upward in frequency → red tint.
 /// `shift` < 0 → energy moving downward in frequency → blue tint.
-/// `threshold` — minimum greyscale value to apply color (below this, stays grey).
-/// `opacity` — 0.0–1.0 multiplier on color intensity.
-pub fn movement_rgb(grey: u8, shift: f32, threshold: u8, opacity: f32) -> [u8; 3] {
-    if grey < threshold {
+///
+/// Two smooth gates control when color appears:
+/// - `intensity_gate` (0.0–1.0): how bright must a pixel be to show color
+/// - `movement_gate` (0.0–1.0): how large must the shift be to show color
+/// - `opacity` (0.0–1.0): overall color strength multiplier
+pub fn movement_rgb(grey: u8, shift: f32, intensity_gate: f32, movement_gate: f32, opacity: f32) -> [u8; 3] {
+    let g_norm = grey as f32 / 255.0;
+
+    // Smooth intensity gate: ramp from gate*0.6 to gate*1.4
+    let ig_lo = intensity_gate * 0.6;
+    let ig_hi = (intensity_gate * 1.4).min(1.0);
+    let intensity_factor = smoothstep(g_norm, ig_lo, ig_hi);
+
+    // Smooth movement gate: ramp based on |shift|
+    let abs_shift = shift.abs();
+    let mg_lo = movement_gate * 0.3;
+    let mg_hi = (movement_gate * 2.0).max(0.05);
+    let movement_factor = smoothstep(abs_shift, mg_lo, mg_hi);
+
+    let effective = intensity_factor * movement_factor * opacity;
+    if effective < 0.001 {
         return [grey, grey, grey];
     }
-    let gain: f32 = 4.0;
-    let s = (shift * gain * opacity).clamp(-1.0, 1.0);
+
+    let gain: f32 = 3.0;
+    let s = (shift * gain * effective).clamp(-1.0, 1.0);
     let g = grey as f32;
     if s > 0.0 {
         // Upward shift → red
