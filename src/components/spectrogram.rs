@@ -122,7 +122,7 @@ pub fn Spectrogram() -> impl IntoView {
                     .and_then(|i| files.get(i))
                     .map(|f| f.spectrogram.max_freq)
                     .unwrap_or(96_000.0);
-                let max_freq = max_display_freq.unwrap_or(file_max_freq).min(file_max_freq);
+                let max_freq = max_display_freq.unwrap_or(file_max_freq);
                 let freq_crop = max_freq / file_max_freq;
 
                 spectrogram_renderer::blit_viewport(&ctx, rendered, canvas, scroll_col, zoom, freq_crop);

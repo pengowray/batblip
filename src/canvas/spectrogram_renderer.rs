@@ -289,17 +289,24 @@ pub fn blit_viewport(
         return;
     }
 
-    let fc = freq_crop.clamp(0.01, 1.0);
+    let fc = freq_crop.max(0.01);
 
     // How many source columns are visible at current zoom
     let visible_cols = (cw / zoom).min(pre_rendered.width as f64);
     let src_start = scroll_col.max(0.0).min((pre_rendered.width as f64 - visible_cols).max(0.0));
 
     // Vertical crop: row 0 = highest freq, last row = 0 Hz
-    // We want to show the bottom `fc` fraction, so skip rows at top
     let full_h = pre_rendered.height as f64;
-    let src_y = full_h * (1.0 - fc);
-    let src_h = full_h * fc;
+    let (src_y, src_h, dst_y, dst_h) = if fc <= 1.0 {
+        // Display range <= data range: crop to bottom `fc` fraction of source
+        let sy = full_h * (1.0 - fc);
+        (sy, full_h * fc, 0.0, ch)
+    } else {
+        // Display range > data range (above Nyquist): draw all data into
+        // the bottom portion of the canvas, leaving the top black
+        let frac = 1.0 / fc; // fraction of canvas the data occupies
+        (0.0, full_h, ch * (1.0 - frac), ch * frac)
+    };
 
     // Create ImageData from pixel buffer and draw it
     let clamped = Clamped(&pre_rendered.pixels[..]);
@@ -336,9 +343,9 @@ pub fn blit_viewport(
                 visible_cols,
                 src_h,
                 0.0,
-                0.0,
+                dst_y,
                 cw,
-                ch,
+                dst_h,
             );
         }
         Err(e) => {
