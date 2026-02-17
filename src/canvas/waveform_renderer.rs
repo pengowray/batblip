@@ -1,5 +1,4 @@
 use web_sys::CanvasRenderingContext2d;
-use crate::dsp::zc_divide::zc_rate_per_bin;
 
 /// Draw waveform on a canvas context.
 /// Uses min/max envelope at low zoom, individual samples at high zoom.
@@ -106,13 +105,13 @@ pub fn draw_waveform(
     }
 }
 
-/// Draw a zero-crossing rate graph instead of the waveform.
-/// Shows ZC frequency (kHz) per time bin as vertical bars, with armed bins
-/// highlighted. The Y axis spans 0 to `max_freq_khz`.
+/// Draw a zero-crossing rate graph from pre-computed bins.
+/// `bins` is a slice of (rate_hz, is_armed) with fixed `bin_duration` spacing.
 pub fn draw_zc_rate(
     ctx: &CanvasRenderingContext2d,
-    samples: &[f32],
-    sample_rate: u32,
+    bins: &[(f64, bool)],
+    bin_duration: f64,
+    total_duration: f64,
     scroll_offset: f64,
     zoom: f64,
     time_resolution: f64,
@@ -121,17 +120,15 @@ pub fn draw_zc_rate(
     selection: Option<(f64, f64)>,
     max_freq_khz: f64,
 ) {
-    // Clear
     ctx.set_fill_style_str("#0a0a0a");
     ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
 
-    if samples.is_empty() {
+    if bins.is_empty() {
         return;
     }
 
-    let duration = samples.len() as f64 / sample_rate as f64;
     let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset.max(0.0).min((duration - visible_time).max(0.0));
+    let start_time = scroll_offset.max(0.0).min((total_duration - visible_time).max(0.0));
     let px_per_sec = canvas_width / visible_time;
 
     // Selection highlight
@@ -144,16 +141,9 @@ pub fn draw_zc_rate(
         }
     }
 
-    // Compute ZC rate bins — use 1ms bins for good resolution
-    let bin_duration = 0.001;
-    let bins = zc_rate_per_bin(samples, sample_rate, bin_duration);
-    if bins.is_empty() {
-        return;
-    }
-
     let max_freq_hz = max_freq_khz * 1000.0;
 
-    // Draw horizontal grid lines at key frequencies
+    // Horizontal grid lines
     ctx.set_stroke_style_str("#222");
     ctx.set_line_width(1.0);
     let grid_freqs = [20.0, 40.0, 60.0, 80.0, 100.0, 120.0];
@@ -171,19 +161,20 @@ pub fn draw_zc_rate(
         let _ = ctx.fill_text(&format!("{:.0}k", freq_khz), 2.0, y - 2.0);
     }
 
-    // Draw ZC rate bars
-    for (bin_idx, &(rate_hz, armed)) in bins.iter().enumerate() {
-        let bin_time = bin_idx as f64 * bin_duration;
-        let x = (bin_time - start_time) * px_per_sec;
-        let bar_w = (bin_duration * px_per_sec).max(1.0);
+    // Only iterate visible bins
+    let first_bin = ((start_time / bin_duration) as usize).saturating_sub(1);
+    let end_time = start_time + visible_time;
+    let last_bin = ((end_time / bin_duration) as usize + 2).min(bins.len());
 
-        if x + bar_w < 0.0 || x > canvas_width {
-            continue;
-        }
-
+    for bin_idx in first_bin..last_bin {
+        let (rate_hz, armed) = bins[bin_idx];
         if rate_hz <= 0.0 {
             continue;
         }
+
+        let bin_time = bin_idx as f64 * bin_duration;
+        let x = (bin_time - start_time) * px_per_sec;
+        let bar_w = (bin_duration * px_per_sec).max(1.0);
 
         let bar_h = (rate_hz / max_freq_hz * canvas_height).min(canvas_height);
         let y = canvas_height - bar_h;

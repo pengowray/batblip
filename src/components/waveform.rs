@@ -2,12 +2,24 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
+use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, PlaybackMode};
+
+const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 
 #[component]
 pub fn Waveform() -> impl IntoView {
     let state = expect_context::<AppState>();
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+
+    // Cache ZC bins — only recompute when the file changes, not on scroll/zoom.
+    let zc_bins = Memo::new(move |_| {
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+        idx.and_then(|i| files.get(i).cloned()).map(|file| {
+            zc_rate_per_bin(&file.audio.samples, file.audio.sample_rate, ZC_BIN_DURATION)
+        })
+    });
 
     Effect::new(move || {
         let scroll = state.scroll_offset.get();
@@ -45,18 +57,21 @@ pub fn Waveform() -> impl IntoView {
             let max_freq_khz = file.spectrogram.max_freq / 1000.0;
 
             if mode == PlaybackMode::ZeroCrossing {
-                waveform_renderer::draw_zc_rate(
-                    &ctx,
-                    &file.audio.samples,
-                    file.audio.sample_rate,
-                    scroll,
-                    zoom,
-                    file.spectrogram.time_resolution,
-                    display_w as f64,
-                    display_h as f64,
-                    sel_time,
-                    max_freq_khz,
-                );
+                if let Some(bins) = zc_bins.get().as_ref() {
+                    waveform_renderer::draw_zc_rate(
+                        &ctx,
+                        bins,
+                        ZC_BIN_DURATION,
+                        file.audio.duration_secs,
+                        scroll,
+                        zoom,
+                        file.spectrogram.time_resolution,
+                        display_w as f64,
+                        display_h as f64,
+                        sel_time,
+                        max_freq_khz,
+                    );
+                }
             } else {
                 waveform_renderer::draw_waveform(
                     &ctx,
