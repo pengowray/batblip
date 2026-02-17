@@ -24,7 +24,7 @@ pub enum PlaybackMode {
     PitchShift,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct AppState {
     pub files: RwSignal<Vec<LoadedFile>>,
     pub current_file_index: RwSignal<Option<usize>>,

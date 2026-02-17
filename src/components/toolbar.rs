@@ -37,6 +37,12 @@ pub fn Toolbar() -> impl IntoView {
                 val
             };
             state.het_frequency.set(freq_khz * 1000.0);
+            // Restart playback live if currently playing in HET mode
+            if state.is_playing.get_untracked()
+                && state.playback_mode.get_untracked() == PlaybackMode::Heterodyne
+            {
+                playback::play(&state);
+            }
         }
     };
 
