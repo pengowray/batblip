@@ -79,7 +79,7 @@ pub fn Toolbar() -> impl IntoView {
                 if ev.key() == "Shift" { shift_held.set(false); }
             }
         >
-            <span class="toolbar-brand">"Batgram"</span>
+            <span class="toolbar-brand">"Batchi"</span>
             <div class="toolbar-sep"></div>
 
             // Play/Stop
