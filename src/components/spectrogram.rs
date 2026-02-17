@@ -171,6 +171,7 @@ pub fn Spectrogram() -> impl IntoView {
                     match playback_mode {
                         PlaybackMode::TimeExpansion => FreqShiftMode::Divide(te_factor),
                         PlaybackMode::PitchShift => FreqShiftMode::Divide(ps_factor),
+                        PlaybackMode::ZeroCrossing => FreqShiftMode::Divide(state.zc_factor.get()),
                         _ => FreqShiftMode::None,
                     }
                 };

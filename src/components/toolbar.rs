@@ -62,6 +62,14 @@ pub fn Toolbar() -> impl IntoView {
         }
     };
 
+    let on_zc_factor_change = move |ev: web_sys::Event| {
+        let target = ev.target().unwrap();
+        let input: web_sys::HtmlInputElement = target.unchecked_into();
+        if let Ok(val) = input.value().parse::<f64>() {
+            state.zc_factor.set(val);
+        }
+    };
+
     view! {
         <div class="toolbar"
             on:keydown=move |ev: web_sys::KeyboardEvent| {
@@ -104,6 +112,12 @@ pub fn Toolbar() -> impl IntoView {
                     on:click=move |_| set_mode(PlaybackMode::PitchShift)
                 >
                     "PS"
+                </button>
+                <button
+                    class=move || if current_mode() == PlaybackMode::ZeroCrossing { "mode-btn active" } else { "mode-btn" }
+                    on:click=move |_| set_mode(PlaybackMode::ZeroCrossing)
+                >
+                    "ZC"
                 </button>
                 <button
                     class=move || if current_mode() == PlaybackMode::Normal { "mode-btn active" } else { "mode-btn" }
@@ -166,6 +180,21 @@ pub fn Toolbar() -> impl IntoView {
                                     step="1"
                                     prop:value=move || (state.ps_factor.get()).to_string()
                                     on:input=on_ps_factor_change
+                                />
+                            </label>
+                        }.into_any()
+                    }
+                    PlaybackMode::ZeroCrossing => {
+                        view! {
+                            <label class="mode-param">
+                                <span class="mode-param-value">{move || format!("÷{}", state.zc_factor.get() as u32)}</span>
+                                <input
+                                    type="range"
+                                    min="2"
+                                    max="32"
+                                    step="1"
+                                    prop:value=move || (state.zc_factor.get()).to_string()
+                                    on:input=on_zc_factor_change
                                 />
                             </label>
                         }.into_any()

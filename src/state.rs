@@ -23,6 +23,7 @@ pub enum PlaybackMode {
     Heterodyne,
     TimeExpansion,
     PitchShift,
+    ZeroCrossing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -56,6 +57,7 @@ pub struct AppState {
     pub join_files: RwSignal<bool>,
     pub auto_advance: RwSignal<bool>,
     pub ps_factor: RwSignal<f64>,
+    pub zc_factor: RwSignal<f64>,
     pub het_interacting: RwSignal<bool>,
     pub is_dragging: RwSignal<bool>,
     pub spectrogram_display: RwSignal<SpectrogramDisplay>,
@@ -87,6 +89,7 @@ impl AppState {
             join_files: RwSignal::new(false),
             auto_advance: RwSignal::new(true),
             ps_factor: RwSignal::new(10.0),
+            zc_factor: RwSignal::new(10.0),
             het_interacting: RwSignal::new(false),
             is_dragging: RwSignal::new(false),
             spectrogram_display: RwSignal::new(SpectrogramDisplay::MovementFlow),

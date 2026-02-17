@@ -4,6 +4,7 @@ use crate::types::AudioData;
 use crate::state::{AppState, Selection, PlaybackMode};
 use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
+use crate::dsp::zc_divide::zc_divide;
 use crate::dsp::filters::lowpass_filter;
 use std::cell::RefCell;
 
@@ -41,12 +42,13 @@ pub fn play(state: &AppState) {
     let het_freq = state.het_frequency.get_untracked();
     let te_factor = state.te_factor.get_untracked();
     let ps_factor = state.ps_factor.get_untracked();
+    let zc_factor = state.zc_factor.get_untracked();
 
     let (samples, sample_rate) = extract_selection(&file.audio, selection);
 
     // Apply bandpass if selection has frequency bounds (Normal/TE modes)
     let samples = if let Some(sel) = selection {
-        if matches!(mode, PlaybackMode::Normal | PlaybackMode::TimeExpansion | PlaybackMode::PitchShift)
+        if matches!(mode, PlaybackMode::Normal | PlaybackMode::TimeExpansion | PlaybackMode::PitchShift | PlaybackMode::ZeroCrossing)
             && (sel.freq_low > 0.0 || sel.freq_high < (sample_rate as f64 / 2.0))
         {
             apply_bandpass(&samples, sample_rate, sel.freq_low, sel.freq_high)
@@ -90,6 +92,11 @@ pub fn play(state: &AppState) {
             let shifted = pitch_shift_realtime(&samples, ps_factor);
             play_samples(&shifted, sample_rate);
         }
+        PlaybackMode::ZeroCrossing => {
+            // ZC: frequency division via zero-crossing detection
+            let processed = zc_divide(&samples, sample_rate, zc_factor as u32);
+            play_samples(&processed, sample_rate);
+        }
     }
 
     // Start playhead animation
@@ -98,6 +105,7 @@ pub fn play(state: &AppState) {
         PlaybackMode::Heterodyne => 1.0,
         PlaybackMode::TimeExpansion => 1.0 / te_factor,
         PlaybackMode::PitchShift => 1.0,
+        PlaybackMode::ZeroCrossing => 1.0,
     };
 
     state.is_playing.set(true);
