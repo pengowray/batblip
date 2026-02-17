@@ -12,20 +12,22 @@ pub fn magnitude_to_greyscale(mag: f32, max_mag: f32) -> u8 {
 }
 
 /// Resistor color band colors for frequency markers at 10 kHz intervals.
+/// Repeats every 10 decades (0=black, 1=brown, ..., 9=white, 10=black, ...).
 pub fn freq_marker_color(freq_hz: f64) -> [u8; 3] {
-    match (freq_hz / 10_000.0).round() as u32 {
-        1 => [139, 69, 19],    // brown  - 10 kHz
-        2 => [255, 0, 0],      // red    - 20 kHz
-        3 => [255, 165, 0],    // orange - 30 kHz
-        4 => [255, 255, 0],    // yellow - 40 kHz
-        5 => [0, 128, 0],      // green  - 50 kHz
-        6 => [0, 0, 255],      // blue   - 60 kHz
-        7 => [148, 0, 211],    // violet - 70 kHz
-        8 => [128, 128, 128],  // grey   - 80 kHz
-        9 => [255, 255, 255],  // white  - 90 kHz
-        10 => [40, 40, 40],    // dark   - 100 kHz (lightened for visibility on black)
-        _ => [64, 64, 64],
-    }
+    const BANDS: [[u8; 3]; 10] = [
+        [40, 40, 40],      // 0 - black (lightened for visibility)
+        [139, 69, 19],     // 1 - brown
+        [255, 0, 0],       // 2 - red
+        [255, 165, 0],     // 3 - orange
+        [255, 255, 0],     // 4 - yellow
+        [0, 128, 0],       // 5 - green
+        [0, 0, 255],       // 6 - blue
+        [148, 0, 211],     // 7 - violet
+        [128, 128, 128],   // 8 - grey
+        [255, 255, 255],   // 9 - white
+    ];
+    let digit = (freq_hz / 10_000.0).round() as u32 % 10;
+    BANDS[digit as usize]
 }
 
 /// Hermite smoothstep: smooth transition from 0 to 1 between edge0 and edge1.
@@ -81,7 +83,7 @@ pub fn movement_rgb(grey: u8, shift: f32, intensity_gate: f32, movement_gate: f3
     }
 }
 
-/// Label for a frequency marker.
+/// Label for a frequency marker (number only, e.g. "40").
 pub fn freq_marker_label(freq_hz: f64) -> String {
-    format!("{} kHz", (freq_hz / 1000.0).round() as u32)
+    format!("{}", (freq_hz / 1000.0).round() as u32)
 }

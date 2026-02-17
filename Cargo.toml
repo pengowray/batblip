@@ -40,6 +40,7 @@ web-sys = { version = "0.3", features = [
     "Event",
     "EventTarget",
     "Performance",
+    "TextMetrics",
 ] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"

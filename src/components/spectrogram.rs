@@ -1,8 +1,11 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent};
-use crate::canvas::spectrogram_renderer::{self, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
+use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
 use crate::state::{AppState, PlaybackMode, Selection, SpectrogramDisplay};
+
+const LABEL_AREA_WIDTH: f64 = 60.0;
 
 #[component]
 pub fn Spectrogram() -> impl IntoView {
@@ -15,6 +18,37 @@ pub fn Spectrogram() -> impl IntoView {
     // Drag state for selection
     let drag_start = RwSignal::new((0.0f64, 0.0f64));
 
+    // Label hover animation: lerp label_hover_opacity toward target
+    let label_hover_target = RwSignal::new(0.0f64);
+    Effect::new(move || {
+        let target = label_hover_target.get();
+        let current = state.label_hover_opacity.get_untracked();
+        if (current - target).abs() < 0.01 {
+            // Snap to target
+            if current != target {
+                state.label_hover_opacity.set(target);
+            }
+            return;
+        }
+        // Schedule animation frame
+        let cb = Closure::once(move || {
+            let cur = state.label_hover_opacity.get_untracked();
+            let tgt = label_hover_target.get_untracked();
+            let lerp_speed = 0.15;
+            let next = cur + (tgt - cur) * lerp_speed;
+            let next = if (next - tgt).abs() < 0.01 { tgt } else { next };
+            state.label_hover_opacity.set(next);
+            // Re-trigger if not at target
+            if next != tgt {
+                label_hover_target.set(tgt);
+            }
+        });
+        let _ = web_sys::window().unwrap().request_animation_frame(
+            cb.as_ref().unchecked_ref(),
+        );
+        cb.forget();
+    });
+
     // Effect 1 (expensive): recompute when file or algorithm changes
     Effect::new(move || {
         let files = state.files.get();
@@ -24,7 +58,6 @@ pub fn Spectrogram() -> impl IntoView {
         if let Some(i) = idx {
             if let Some(file) = files.get(i) {
                 if file.spectrogram.columns.is_empty() {
-                    // Full spectrogram not yet computed; show preview as placeholder
                     movement_cache.set(None);
                     if let Some(ref pv) = file.preview {
                         pre_rendered.set(Some(PreRendered {
@@ -63,7 +96,6 @@ pub fn Spectrogram() -> impl IntoView {
         let ig = state.mv_intensity_gate.get();
         let mg = state.mv_movement_gate.get();
         let op = state.mv_opacity.get();
-        // Only run if we have cached movement data (i.e., movement mode is active)
         movement_cache.with_untracked(|mc| {
             if let Some(md) = mc {
                 pre_rendered.set(Some(spectrogram_renderer::composite_movement(md, ig, mg, op)));
@@ -71,7 +103,7 @@ pub fn Spectrogram() -> impl IntoView {
         });
     });
 
-    // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, or overlays change
+    // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, or hover change
     Effect::new(move || {
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
@@ -85,6 +117,9 @@ pub fn Spectrogram() -> impl IntoView {
         let ps_factor = state.ps_factor.get();
         let playback_mode = state.playback_mode.get();
         let max_display_freq = state.max_display_freq.get();
+        let mouse_freq = state.mouse_freq.get();
+        let mouse_cx = state.mouse_canvas_x.get();
+        let label_opacity = state.label_hover_opacity.get();
         let _pre = pre_rendered.track();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -140,12 +175,21 @@ pub fn Spectrogram() -> impl IntoView {
                     }
                 };
 
+                let marker_state = FreqMarkerState {
+                    mouse_freq,
+                    mouse_in_label_area: mouse_freq.is_some() && mouse_cx < LABEL_AREA_WIDTH,
+                    label_hover_opacity: label_opacity,
+                    has_selection: selection.is_some() || dragging,
+                    file_max_freq,
+                };
+
                 spectrogram_renderer::draw_freq_markers(
                     &ctx,
                     max_freq,
                     display_h as f64,
                     display_w as f64,
                     shift_mode,
+                    &marker_state,
                 );
 
                 if show_het {
@@ -205,8 +249,8 @@ pub fn Spectrogram() -> impl IntoView {
         });
     });
 
-    // Helper to get time/freq from mouse event
-    let mouse_to_tf = move |ev: &MouseEvent| -> Option<(f64, f64)> {
+    // Helper to get (px_x, time, freq) from mouse event
+    let mouse_to_xtf = move |ev: &MouseEvent| -> Option<(f64, f64, f64)> {
         let canvas_el = canvas_ref.get()?;
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
         let rect = canvas.get_bounding_client_rect();
@@ -225,14 +269,15 @@ pub fn Spectrogram() -> impl IntoView {
         let scroll = state.scroll_offset.get_untracked();
         let zoom = state.zoom_level.get_untracked();
 
-        Some(spectrogram_renderer::pixel_to_time_freq(
+        let (t, f) = spectrogram_renderer::pixel_to_time_freq(
             px_x, px_y, max_freq, scroll, time_res, zoom, cw, ch,
-        ))
+        );
+        Some((px_x, t, f))
     };
 
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
-        if let Some((t, f)) = mouse_to_tf(&ev) {
+        if let Some((_, t, f)) = mouse_to_xtf(&ev) {
             state.is_dragging.set(true);
             drag_start.set((t, f));
             state.selection.set(None);
@@ -240,22 +285,41 @@ pub fn Spectrogram() -> impl IntoView {
     };
 
     let on_mousemove = move |ev: MouseEvent| {
-        if !state.is_dragging.get_untracked() { return; }
-        if let Some((t, f)) = mouse_to_tf(&ev) {
-            let (t0, f0) = drag_start.get_untracked();
-            state.selection.set(Some(Selection {
-                time_start: t0.min(t),
-                time_end: t0.max(t),
-                freq_low: f0.min(f),
-                freq_high: f0.max(f),
-            }));
+        if let Some((px_x, t, f)) = mouse_to_xtf(&ev) {
+            // Always track hover position
+            state.mouse_freq.set(Some(f));
+            state.mouse_canvas_x.set(px_x);
+
+            // Update label hover target
+            let in_label_area = px_x < LABEL_AREA_WIDTH;
+            let current_target = label_hover_target.get_untracked();
+            let new_target = if in_label_area { 1.0 } else { 0.0 };
+            if current_target != new_target {
+                label_hover_target.set(new_target);
+            }
+
+            // Update selection if dragging
+            if state.is_dragging.get_untracked() {
+                let (t0, f0) = drag_start.get_untracked();
+                state.selection.set(Some(Selection {
+                    time_start: t0.min(t),
+                    time_end: t0.max(t),
+                    freq_low: f0.min(f),
+                    freq_high: f0.max(f),
+                }));
+            }
         }
+    };
+
+    let on_mouseleave = move |_ev: MouseEvent| {
+        state.mouse_freq.set(None);
+        label_hover_target.set(0.0);
     };
 
     let on_mouseup = move |ev: MouseEvent| {
         if !state.is_dragging.get_untracked() { return; }
         state.is_dragging.set(false);
-        if let Some((t, f)) = mouse_to_tf(&ev) {
+        if let Some((_, t, f)) = mouse_to_xtf(&ev) {
             let (t0, f0) = drag_start.get_untracked();
             let sel = Selection {
                 time_start: t0.min(t),
@@ -294,6 +358,7 @@ pub fn Spectrogram() -> impl IntoView {
                 on:mousedown=on_mousedown
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
+                on:mouseleave=on_mouseleave
             />
         </div>
     }

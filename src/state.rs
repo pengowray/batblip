@@ -65,6 +65,9 @@ pub struct AppState {
     pub mv_movement_gate: RwSignal<f32>,
     pub mv_opacity: RwSignal<f32>,
     pub max_display_freq: RwSignal<Option<f64>>,
+    pub mouse_freq: RwSignal<Option<f64>>,
+    pub mouse_canvas_x: RwSignal<f64>,
+    pub label_hover_opacity: RwSignal<f64>,
 }
 
 impl AppState {
@@ -93,6 +96,9 @@ impl AppState {
             mv_movement_gate: RwSignal::new(0.75),
             mv_opacity: RwSignal::new(0.75),
             max_display_freq: RwSignal::new(None),
+            mouse_freq: RwSignal::new(None),
+            mouse_canvas_x: RwSignal::new(0.0),
+            label_hover_opacity: RwSignal::new(0.0),
         }
     }
 

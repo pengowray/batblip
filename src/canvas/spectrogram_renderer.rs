@@ -365,65 +365,233 @@ pub enum FreqShiftMode {
     Divide(f64),
 }
 
-/// Draw horizontal frequency marker lines with resistor color band colors.
-/// When a `FreqShiftMode` is active, markers show the shifted output frequency.
+/// Frequency marker hover/interaction state passed to drawing functions.
+pub struct FreqMarkerState {
+    pub mouse_freq: Option<f64>,
+    pub mouse_in_label_area: bool,
+    pub label_hover_opacity: f64,
+    pub has_selection: bool,
+    pub file_max_freq: f64,
+}
+
+/// Draw horizontal frequency marker lines with subtle, interactive UI.
+/// Labels are white; colored range bars indicate the resistor-band color.
 pub fn draw_freq_markers(
     ctx: &CanvasRenderingContext2d,
     max_freq: f64,
     canvas_height: f64,
     canvas_width: f64,
     shift_mode: FreqShiftMode,
+    ms: &FreqMarkerState,
 ) {
     let cutoff = 15_000.0;
+    let color_bar_w = 6.0;
+    let color_bar_x = 0.0; // flush left
+    let label_x = color_bar_w + 3.0; // text starts after color bar
+    let tick_len = 22.0; // short tick under label (~half old label_area_w)
+    let right_tick_len = 15.0;
+
+    // Collect all division freqs to check for nyquist overlap
+    let mut divisions: Vec<f64> = Vec::new();
     let mut freq = 10_000.0;
     while freq < max_freq {
+        divisions.push(freq);
+        freq += 10_000.0;
+    }
+
+    // Check if top of display is nyquist
+    let is_nyquist_top = (max_freq - ms.file_max_freq).abs() < 1.0;
+    // Find topmost division for nyquist overlap check
+    let topmost_div = divisions.last().copied().unwrap_or(0.0);
+    let topmost_div_y_frac = if max_freq > 0.0 { topmost_div / max_freq } else { 0.0 };
+    let hide_topmost_for_nyquist = is_nyquist_top && topmost_div_y_frac > 0.95;
+
+    for &freq in &divisions {
         let y = canvas_height * (1.0 - freq / max_freq);
+
+        // Skip topmost division if it would overlap nyquist marker
+        if hide_topmost_for_nyquist && freq == topmost_div && !ms.mouse_in_label_area {
+            continue;
+        }
+
         let color = freq_marker_color(freq);
 
-        // Determine alpha based on whether marker is in audible band (HET only)
-        let (line_alpha, label_alpha) = match shift_mode {
+        // Determine alpha based on HET audible band
+        let base_alpha = match shift_mode {
             FreqShiftMode::Heterodyne(hf) => {
-                if (freq - hf).abs() <= cutoff { (0.6, 0.9) } else { (0.2, 0.3) }
+                if (freq - hf).abs() <= cutoff { 0.8 } else { 0.3 }
             }
-            _ => (0.6, 0.8),
+            _ => 0.7,
         };
 
-        ctx.set_stroke_style_str(&format!("rgba({},{},{},{line_alpha})", color[0], color[1], color[2]));
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(0.0, y);
-        ctx.line_to(canvas_width, y);
-        ctx.stroke();
+        // --- Color range bar (left edge, covering the decade above: freq to freq+10k) ---
+        // e.g. 40kHz marker (yellow) covers 40–50kHz
+        let bar_top_freq = (freq + 10_000.0).min(max_freq);
+        let mouse_in_range = ms.mouse_freq.map_or(false, |mf| mf >= freq && mf < bar_top_freq);
+        if ms.has_selection || mouse_in_range {
+            let bar_alpha = if ms.has_selection { 0.6 } else { 0.8 };
+            let bar_y_top = canvas_height * (1.0 - bar_top_freq / max_freq);
+            let bar_y_bot = canvas_height * (1.0 - freq / max_freq);
+            ctx.set_fill_style_str(&format!("rgba({},{},{},{:.2})", color[0], color[1], color[2], bar_alpha));
+            ctx.fill_rect(color_bar_x, bar_y_top, color_bar_w, bar_y_bot - bar_y_top);
+        }
 
-        // Label
-        ctx.set_fill_style_str(&format!("rgba({},{},{},{label_alpha})", color[0], color[1], color[2]));
+        // --- White text label (drawn ABOVE the division line) ---
         ctx.set_font("11px sans-serif");
+        ctx.set_text_baseline("bottom"); // text sits above the line
         let base_label = freq_marker_label(freq);
+        let label_alpha = base_alpha;
+
+        // Build label with optional kHz suffix and shift info
         let label = match shift_mode {
             FreqShiftMode::Heterodyne(hf) => {
                 let diff = (freq - hf).abs();
                 if diff <= cutoff {
                     let diff_khz = (diff / 1000.0).round() as u32;
-                    format!("{base_label} \u{2192} {diff_khz} kHz")
+                    if ms.label_hover_opacity > 0.01 {
+                        format!("{base_label} kHz \u{2192} {diff_khz} kHz")
+                    } else {
+                        format!("{base_label} \u{2192} {diff_khz}")
+                    }
+                } else if ms.label_hover_opacity > 0.01 {
+                    format!("{base_label} kHz")
                 } else {
-                    base_label
+                    base_label.clone()
                 }
             }
             FreqShiftMode::Divide(factor) if factor > 1.0 => {
                 let shifted = freq / factor;
                 let shifted_khz = shifted / 1000.0;
+                let suffix = if ms.label_hover_opacity > 0.01 { " kHz" } else { "" };
                 if shifted_khz >= 1.0 {
-                    format!("{base_label} \u{2192} {:.0} kHz", shifted_khz)
+                    format!("{base_label}{suffix} \u{2192} {:.0} kHz", shifted_khz)
                 } else {
-                    format!("{base_label} \u{2192} {:.0} Hz", shifted)
+                    format!("{base_label}{suffix} \u{2192} {:.0} Hz", shifted)
                 }
             }
-            _ => base_label,
+            _ => {
+                if ms.label_hover_opacity > 0.01 {
+                    format!("{base_label} kHz")
+                } else {
+                    base_label.clone()
+                }
+            }
         };
-        let _ = ctx.fill_text(&label, 4.0, y - 3.0);
 
-        freq += 10_000.0;
+        // kHz fade: use opacity^2 for faster fade
+        let khz_fade = ms.label_hover_opacity * ms.label_hover_opacity;
+        if matches!(shift_mode, FreqShiftMode::None) && khz_fade > 0.01 && khz_fade < 0.99 {
+            // Draw number at full alpha
+            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
+            let _ = ctx.fill_text(&base_label, label_x, y - 2.0);
+            // Draw " kHz" suffix at faded alpha
+            let metrics = ctx.measure_text(&base_label).unwrap();
+            let num_w = metrics.width();
+            let khz_alpha = label_alpha * khz_fade;
+            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
+            let _ = ctx.fill_text(" kHz", label_x + num_w, y - 2.0);
+        } else {
+            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
+            let _ = ctx.fill_text(&label, label_x, y - 2.0);
+        }
+
+        // --- Short left tick line (lightly colored, under the label) ---
+        // Blend: mostly white with a hint of the marker color
+        let tr = 200 + (color[0] as u16 * 55 / 255) as u8;
+        let tg = 200 + (color[1] as u16 * 55 / 255) as u8;
+        let tb = 200 + (color[2] as u16 * 55 / 255) as u8;
+        ctx.set_stroke_style_str(&format!("rgba({},{},{},{:.2})", tr, tg, tb, base_alpha * 0.5));
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(0.0, y);
+        ctx.line_to(tick_len, y);
+        ctx.stroke();
+
+        // --- Short right tick line (same tint) ---
+        ctx.begin_path();
+        ctx.move_to(canvas_width - right_tick_len, y);
+        ctx.line_to(canvas_width, y);
+        ctx.stroke();
+
+        // --- Full-width line (fades in when hovering label area, colored) ---
+        if ms.label_hover_opacity > 0.001 {
+            let full_alpha = ms.label_hover_opacity * 0.7 * base_alpha;
+            ctx.set_stroke_style_str(&format!("rgba({},{},{},{:.3})", color[0], color[1], color[2], full_alpha));
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(tick_len, y);
+            ctx.line_to(canvas_width - right_tick_len, y);
+            ctx.stroke();
+        }
     }
+
+    // --- Nyquist / MAX marker ---
+    if is_nyquist_top && !ms.mouse_in_label_area {
+        let ny_y = 2.0; // just below top edge
+        let ny_khz = ms.file_max_freq / 1000.0;
+        let ny_label = if ny_khz == ny_khz.round() {
+            format!("{:.0}k MAX", ny_khz)
+        } else {
+            format!("{:.1}k MAX", ny_khz)
+        };
+        ctx.set_fill_style_str("rgba(255,255,255,0.45)");
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_baseline("top");
+        let _ = ctx.fill_text(&ny_label, label_x, ny_y);
+        ctx.set_stroke_style_str("rgba(255,255,255,0.3)");
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(0.0, 0.5);
+        ctx.line_to(tick_len, 0.5);
+        ctx.stroke();
+        // Right tick
+        ctx.begin_path();
+        ctx.move_to(canvas_width - right_tick_len, 0.5);
+        ctx.line_to(canvas_width, 0.5);
+        ctx.stroke();
+    }
+
+    // --- Cursor frequency indicator ---
+    if let Some(mf) = ms.mouse_freq {
+        if !ms.mouse_in_label_area && mf > 0.0 && mf < max_freq {
+            let y = canvas_height * (1.0 - mf / max_freq);
+
+            // Label (above the dashed line, starting around midpoint)
+            let freq_label = if mf >= 1000.0 {
+                format!("{:.1} kHz", mf / 1000.0)
+            } else {
+                format!("{:.0} Hz", mf)
+            };
+            let cursor_line_len = canvas_width * 0.5;
+            let label_start_x = cursor_line_len * 0.5;
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_baseline("bottom");
+            ctx.set_fill_style_str("rgba(0,210,240,0.8)");
+            let _ = ctx.fill_text(&freq_label, label_start_x, y - 2.0);
+
+            // Dashed line (cyan)
+            ctx.set_stroke_style_str("rgba(0,210,240,0.45)");
+            ctx.set_line_width(1.0);
+            let _ = ctx.set_line_dash(&js_sys::Array::of2(
+                &wasm_bindgen::JsValue::from_f64(4.0),
+                &wasm_bindgen::JsValue::from_f64(4.0),
+            ));
+            ctx.begin_path();
+            ctx.move_to(0.0, y);
+            ctx.line_to(cursor_line_len, y);
+            ctx.stroke();
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+            // Right-side frequency label
+            ctx.set_text_baseline("middle");
+            ctx.set_fill_style_str("rgba(0,210,240,0.7)");
+            let metrics = ctx.measure_text(&freq_label).unwrap();
+            let text_w = metrics.width();
+            let _ = ctx.fill_text(&freq_label, canvas_width - text_w - right_tick_len - 4.0, y);
+        }
+    }
+
+    ctx.set_text_baseline("alphabetic"); // reset
 }
 
 /// Draw the heterodyne frequency overlay: center line, audible band, and dimmed regions.
@@ -478,11 +646,11 @@ pub fn draw_het_overlay(
     ctx.stroke();
     let _ = ctx.set_line_dash(&js_sys::Array::new()); // reset dash
 
-    // Label at center line
+    // Label at center line (positioned on left, offset from freq division labels)
     ctx.set_fill_style_str("rgba(0, 230, 255, 0.9)");
     ctx.set_font("bold 12px sans-serif");
     let label = format!("HET {:.0} kHz", het_freq / 1000.0);
-    let _ = ctx.fill_text(&label, canvas_width - 120.0, y_center - 5.0);
+    let _ = ctx.fill_text(&label, 55.0, y_center - 5.0);
 }
 
 /// Draw selection rectangle overlay on spectrogram.
