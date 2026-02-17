@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
-use crate::state::AppState;
+use crate::state::{AppState, PlaybackMode};
 
 #[component]
 pub fn Waveform() -> impl IntoView {
@@ -17,6 +17,7 @@ pub fn Waveform() -> impl IntoView {
         let is_playing = state.is_playing.get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
+        let mode = state.playback_mode.get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -41,17 +42,34 @@ pub fn Waveform() -> impl IntoView {
 
         if let Some(file) = idx.and_then(|i| files.get(i)) {
             let sel_time = selection.map(|s| (s.time_start, s.time_end));
-            waveform_renderer::draw_waveform(
-                &ctx,
-                &file.audio.samples,
-                file.audio.sample_rate,
-                scroll,
-                zoom,
-                file.spectrogram.time_resolution,
-                display_w as f64,
-                display_h as f64,
-                sel_time,
-            );
+            let max_freq_khz = file.spectrogram.max_freq / 1000.0;
+
+            if mode == PlaybackMode::ZeroCrossing {
+                waveform_renderer::draw_zc_rate(
+                    &ctx,
+                    &file.audio.samples,
+                    file.audio.sample_rate,
+                    scroll,
+                    zoom,
+                    file.spectrogram.time_resolution,
+                    display_w as f64,
+                    display_h as f64,
+                    sel_time,
+                    max_freq_khz,
+                );
+            } else {
+                waveform_renderer::draw_waveform(
+                    &ctx,
+                    &file.audio.samples,
+                    file.audio.sample_rate,
+                    scroll,
+                    zoom,
+                    file.spectrogram.time_resolution,
+                    display_w as f64,
+                    display_h as f64,
+                    sel_time,
+                );
+            }
 
             // Draw playhead
             if is_playing {
