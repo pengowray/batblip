@@ -118,6 +118,81 @@ pub fn apply_eq_filter(
     output
 }
 
+/// Fast IIR-based multi-band EQ using cascaded lowpass band-splitting.
+/// Lower latency than FFT version, suitable for live parameter changes.
+/// Band transitions are softer (~24 dB/octave) compared to FFT's brick-wall.
+pub fn apply_eq_filter_fast(
+    samples: &[f32],
+    sample_rate: u32,
+    freq_low: f64,
+    freq_high: f64,
+    db_below: f64,
+    db_selected: f64,
+    db_harmonics: f64,
+    db_above: f64,
+    band_mode: u8,
+) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    let gain_below = 10.0_f64.powf(db_below / 20.0) as f32;
+    let gain_selected = 10.0_f64.powf(db_selected / 20.0) as f32;
+    let harmonics_active = band_mode >= 4 && freq_low > 0.0 && freq_high / freq_low < 2.0;
+    let gain_harmonics = if harmonics_active { 10.0_f64.powf(db_harmonics / 20.0) as f32 } else { 0.0 };
+    let gain_above = if band_mode >= 3 { 10.0_f64.powf(db_above / 20.0) as f32 } else { gain_selected };
+
+    // Split at freq_low: below vs rest
+    let lp_low = cascaded_lowpass(samples, freq_low, sample_rate, 4);
+    let hp_low: Vec<f32> = samples.iter().zip(lp_low.iter()).map(|(s, l)| s - l).collect();
+
+    // Split rest at freq_high: selected vs upper
+    let lp_high = cascaded_lowpass(&hp_low, freq_high, sample_rate, 4);
+    let hp_high: Vec<f32> = hp_low.iter().zip(lp_high.iter()).map(|(s, l)| s - l).collect();
+
+    let len = samples.len();
+    let mut output = vec![0.0f32; len];
+
+    // Below band
+    for i in 0..len {
+        output[i] += lp_low[i] * gain_below;
+    }
+
+    // Selected band
+    for i in 0..len {
+        output[i] += lp_high[i] * gain_selected;
+    }
+
+    if harmonics_active {
+        // Split upper at harmonics boundary
+        let harmonics_upper = freq_high * 2.0;
+        let lp_harm = cascaded_lowpass(&hp_high, harmonics_upper, sample_rate, 4);
+        let hp_harm: Vec<f32> = hp_high.iter().zip(lp_harm.iter()).map(|(s, l)| s - l).collect();
+
+        for i in 0..len {
+            output[i] += lp_harm[i] * gain_harmonics;
+        }
+        for i in 0..len {
+            output[i] += hp_harm[i] * gain_above;
+        }
+    } else {
+        // Above band (or selected dB in 2-band mode)
+        for i in 0..len {
+            output[i] += hp_high[i] * gain_above;
+        }
+    }
+
+    output
+}
+
+fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
+    let mut result = samples.to_vec();
+    for _ in 0..passes {
+        result = lowpass_filter(&result, cutoff, sample_rate);
+    }
+    result
+}
+
 /// Simple single-pole IIR low-pass filter (first-order exponential moving average).
 ///
 /// Transfer function: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]

@@ -1,11 +1,11 @@
 use leptos::prelude::*;
 use web_sys::{AudioContext, AudioContextOptions, AudioBufferSourceNode};
 use crate::types::AudioData;
-use crate::state::{AppState, Selection, PlaybackMode};
+use crate::state::{AppState, Selection, PlaybackMode, FilterQuality};
 use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
-use crate::dsp::filters::{lowpass_filter, apply_eq_filter};
+use crate::dsp::filters::{lowpass_filter, apply_eq_filter, apply_eq_filter_fast};
 use std::cell::RefCell;
 
 thread_local! {
@@ -82,7 +82,8 @@ pub fn replay_het(state: &AppState) {
     } else {
         het_freq
     };
-    let processed = heterodyne_mix(&samples, sr, effective_lo);
+    let het_cutoff = state.het_cutoff.get_untracked();
+    let processed = heterodyne_mix(&samples, sr, effective_lo, het_cutoff);
     play_samples(&processed, sr);
 
     // Continue playhead from current position
@@ -115,7 +116,11 @@ pub fn play(state: &AppState) {
         let db_harmonics = state.filter_db_harmonics.get_untracked();
         let db_above = state.filter_db_above.get_untracked();
         let band_mode = state.filter_band_mode.get_untracked();
-        apply_eq_filter(&samples, sample_rate, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode)
+        let quality = state.filter_quality.get_untracked();
+        match quality {
+            FilterQuality::Fast => apply_eq_filter_fast(&samples, sample_rate, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+            FilterQuality::HQ => apply_eq_filter(&samples, sample_rate, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+        }
     } else if let Some(sel) = selection {
         if matches!(mode, PlaybackMode::Normal | PlaybackMode::TimeExpansion | PlaybackMode::PitchShift | PlaybackMode::ZeroCrossing)
             && (sel.freq_low > 0.0 || sel.freq_high < (sample_rate as f64 / 2.0))
@@ -146,7 +151,8 @@ pub fn play(state: &AppState) {
             } else {
                 het_freq
             };
-            let processed = heterodyne_mix(&samples, sample_rate, effective_lo);
+            let het_cutoff = state.het_cutoff.get_untracked();
+            let processed = heterodyne_mix(&samples, sample_rate, effective_lo, het_cutoff);
             play_samples(&processed, sample_rate);
         }
         PlaybackMode::TimeExpansion => {

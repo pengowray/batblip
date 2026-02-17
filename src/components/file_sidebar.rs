@@ -452,12 +452,16 @@ fn FilterPanel() -> impl IntoView {
     let show_harmonics = move || band_mode() >= 4 && selection_under_octave();
     let show_above = move || band_mode() >= 3;
 
-    let mode_info = move || {
-        let mode = state.playback_mode.get();
-        match mode {
-            crate::state::PlaybackMode::Heterodyne => Some("HET: lowpass 15 kHz after mix"),
-            crate::state::PlaybackMode::ZeroCrossing => Some("ZC: bandpass 15–150 kHz"),
-            _ => None,
+    let quality = move || state.filter_quality.get();
+    let set_quality = move |q: crate::state::FilterQuality| {
+        state.filter_quality.set(q);
+    };
+
+    let on_het_cutoff_change = move |ev: web_sys::Event| {
+        let target = ev.target().unwrap();
+        let input: web_sys::HtmlInputElement = target.unchecked_into();
+        if let Ok(val) = input.value().parse::<f64>() {
+            state.het_cutoff.set(val * 1000.0);
         }
     };
 
@@ -500,6 +504,22 @@ fn FilterPanel() -> impl IntoView {
                     </div>
 
                     <div class="setting-group">
+                        <div class="setting-group-title">"Quality"</div>
+                        <div class="filter-band-mode">
+                            <button
+                                class=move || if quality() == crate::state::FilterQuality::Fast { "mode-btn active" } else { "mode-btn" }
+                                on:click=move |_| set_quality(crate::state::FilterQuality::Fast)
+                                title="IIR band-split — low latency, softer band edges"
+                            >"Fast"</button>
+                            <button
+                                class=move || if quality() == crate::state::FilterQuality::HQ { "mode-btn active" } else { "mode-btn" }
+                                on:click=move |_| set_quality(crate::state::FilterQuality::HQ)
+                                title="FFT spectral EQ — sharp band edges, higher latency"
+                            >"HQ"</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
                         <button
                             class="filter-set-btn"
                             on:click=on_set_from_selection
@@ -519,45 +539,33 @@ fn FilterPanel() -> impl IntoView {
                     <div class="setting-group">
                         <div class="setting-group-title">"EQ"</div>
 
-                        // Below slider
-                        <div class="setting-row"
-                            on:mouseenter=make_hover_enter(0)
-                            on:mouseleave=on_hover_leave
-                        >
-                            <span class="setting-label">"Below"</span>
-                            <div class="setting-slider-row">
-                                <input
-                                    type="range"
-                                    class="setting-range"
-                                    min="-60"
-                                    max="6"
-                                    step="1"
-                                    prop:value=move || state.filter_db_below.get().to_string()
-                                    on:input=on_below_change
-                                />
-                                <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_below.get())}</span>
-                            </div>
-                        </div>
-
-                        // Selected slider
-                        <div class="setting-row"
-                            on:mouseenter=make_hover_enter(1)
-                            on:mouseleave=on_hover_leave
-                        >
-                            <span class="setting-label">"Selected"</span>
-                            <div class="setting-slider-row">
-                                <input
-                                    type="range"
-                                    class="setting-range"
-                                    min="-60"
-                                    max="6"
-                                    step="1"
-                                    prop:value=move || state.filter_db_selected.get().to_string()
-                                    on:input=on_selected_change
-                                />
-                                <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_selected.get())}</span>
-                            </div>
-                        </div>
+                        // Above slider (3+ band) — top, highest freq
+                        {move || {
+                            if show_above() {
+                                view! {
+                                    <div class="setting-row"
+                                        on:mouseenter=make_hover_enter(3)
+                                        on:mouseleave=on_hover_leave
+                                    >
+                                        <span class="setting-label">"Above"</span>
+                                        <div class="setting-slider-row">
+                                            <input
+                                                type="range"
+                                                class="setting-range"
+                                                min="-60"
+                                                max="6"
+                                                step="1"
+                                                prop:value=move || state.filter_db_above.get().to_string()
+                                                on:input=on_above_change
+                                            />
+                                            <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_above.get())}</span>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }
+                        }}
 
                         // Harmonics slider (4-band only, selection < 1 octave)
                         {move || {
@@ -587,48 +595,81 @@ fn FilterPanel() -> impl IntoView {
                             }
                         }}
 
-                        // Above slider (3+ band)
+                        // Selected slider
+                        <div class="setting-row"
+                            on:mouseenter=make_hover_enter(1)
+                            on:mouseleave=on_hover_leave
+                        >
+                            <span class="setting-label">"Selected"</span>
+                            <div class="setting-slider-row">
+                                <input
+                                    type="range"
+                                    class="setting-range"
+                                    min="-60"
+                                    max="6"
+                                    step="1"
+                                    prop:value=move || state.filter_db_selected.get().to_string()
+                                    on:input=on_selected_change
+                                />
+                                <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_selected.get())}</span>
+                            </div>
+                        </div>
+
+                        // Below slider — bottom, lowest freq
+                        <div class="setting-row"
+                            on:mouseenter=make_hover_enter(0)
+                            on:mouseleave=on_hover_leave
+                        >
+                            <span class="setting-label">"Below"</span>
+                            <div class="setting-slider-row">
+                                <input
+                                    type="range"
+                                    class="setting-range"
+                                    min="-60"
+                                    max="6"
+                                    step="1"
+                                    prop:value=move || state.filter_db_below.get().to_string()
+                                    on:input=on_below_change
+                                />
+                                <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_below.get())}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    // Mode-specific filter chain
+                    <div class="setting-group">
+                        <div class="setting-group-title">"Mode filters"</div>
                         {move || {
-                            if show_above() {
-                                view! {
-                                    <div class="setting-row"
-                                        on:mouseenter=make_hover_enter(3)
-                                        on:mouseleave=on_hover_leave
-                                    >
-                                        <span class="setting-label">"Above"</span>
-                                        <div class="setting-slider-row">
-                                            <input
-                                                type="range"
-                                                class="setting-range"
-                                                min="-60"
-                                                max="6"
-                                                step="1"
-                                                prop:value=move || state.filter_db_above.get().to_string()
-                                                on:input=on_above_change
-                                            />
-                                            <span class="setting-value">{move || format!("{:.0} dB", state.filter_db_above.get())}</span>
+                            let mode = state.playback_mode.get();
+                            match mode {
+                                crate::state::PlaybackMode::Heterodyne => {
+                                    view! {
+                                        <div class="setting-row">
+                                            <span class="setting-label">"HET LP"</span>
+                                            <div class="setting-slider-row">
+                                                <input
+                                                    type="range"
+                                                    class="setting-range"
+                                                    min="1"
+                                                    max="30"
+                                                    step="1"
+                                                    prop:value=move || (state.het_cutoff.get() / 1000.0).to_string()
+                                                    on:input=on_het_cutoff_change
+                                                />
+                                                <span class="setting-value">{move || format!("{:.0} kHz", state.het_cutoff.get() / 1000.0)}</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
+                                    }.into_any()
+                                }
+                                crate::state::PlaybackMode::ZeroCrossing => {
+                                    view! {
+                                        <div class="filter-mode-info">"ZC: bandpass 15\u{2013}150 kHz"</div>
+                                    }.into_any()
+                                }
+                                _ => view! { <span></span> }.into_any(),
                             }
                         }}
                     </div>
-
-                    // Mode-specific filter chain info
-                    {move || {
-                        if let Some(info) = mode_info() {
-                            view! {
-                                <div class="setting-group">
-                                    <div class="setting-group-title">"Mode filters"</div>
-                                    <div class="filter-mode-info">{info}</div>
-                                </div>
-                            }.into_any()
-                        } else {
-                            view! { <span></span> }.into_any()
-                        }
-                    }}
                 }.into_any()
             }}
         </div>

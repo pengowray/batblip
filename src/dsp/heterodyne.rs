@@ -9,7 +9,7 @@ use std::f64::consts::PI;
 /// local oscillator has frequency f_lo, multiplication produces two components:
 ///   - f_in + f_lo  (sum, removed by low-pass filter)
 ///   - |f_in - f_lo| (difference, the audible output)
-pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64) -> Vec<f32> {
+pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64, cutoff_hz: f64) -> Vec<f32> {
     let sr = sample_rate as f64;
     let angular_freq = 2.0 * PI * lo_freq;
 
@@ -25,10 +25,8 @@ pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64) -> Vec<f3
         .collect();
 
     // Step 2: Cascaded low-pass filter to remove the sum frequency component.
-    // Cutoff at 15 kHz preserves the full audible band while rejecting
-    // the ultrasonic sum component. 4 passes of a single-pole IIR gives
-    // -24 dB/octave rolloff (equivalent to a 4th-order Butterworth).
-    let cutoff_hz = 15_000.0;
+    // 4 passes of a single-pole IIR gives -24 dB/octave rolloff
+    // (equivalent to a 4th-order Butterworth).
     let mut filtered = mixed;
     for _ in 0..4 {
         filtered = lowpass_filter(&filtered, cutoff_hz, sample_rate);
@@ -57,7 +55,7 @@ mod tests {
             })
             .collect();
 
-        let output = heterodyne_mix(&input, sample_rate, lo_freq);
+        let output = heterodyne_mix(&input, sample_rate, lo_freq, 15_000.0);
         assert_eq!(output.len(), input.len());
 
         // Verify the output has energy (is not all zeros)
@@ -81,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_heterodyne_empty_input() {
-        let output = heterodyne_mix(&[], 192_000, 45_000.0);
+        let output = heterodyne_mix(&[], 192_000, 45_000.0, 15_000.0);
         assert!(output.is_empty());
     }
 }

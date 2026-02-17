@@ -113,6 +113,7 @@ pub fn Spectrogram() -> impl IntoView {
         let het_interacting = state.het_interacting.get();
         let dragging = state.is_dragging.get();
         let het_freq = state.het_frequency.get();
+        let het_cutoff = state.het_cutoff.get();
         let te_factor = state.te_factor.get();
         let ps_factor = state.ps_factor.get();
         let playback_mode = state.playback_mode.get();
@@ -193,12 +194,14 @@ pub fn Spectrogram() -> impl IntoView {
                     display_w as f64,
                     shift_mode,
                     &marker_state,
+                    het_cutoff,
                 );
 
                 if show_het {
                     spectrogram_renderer::draw_het_overlay(
                         &ctx,
                         het_freq,
+                        het_cutoff,
                         max_freq,
                         display_h as f64,
                         display_w as f64,

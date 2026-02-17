@@ -383,8 +383,9 @@ pub fn draw_freq_markers(
     canvas_width: f64,
     shift_mode: FreqShiftMode,
     ms: &FreqMarkerState,
+    het_cutoff: f64,
 ) {
-    let cutoff = 15_000.0;
+    let cutoff = het_cutoff;
     let color_bar_w = 6.0;
     let color_bar_x = 0.0; // flush left
     let label_x = color_bar_w + 3.0; // text starts after color bar
@@ -598,11 +599,12 @@ pub fn draw_freq_markers(
 pub fn draw_het_overlay(
     ctx: &CanvasRenderingContext2d,
     het_freq: f64,
+    het_cutoff: f64,
     max_freq: f64,
     canvas_height: f64,
     canvas_width: f64,
 ) {
-    let cutoff = 15_000.0;
+    let cutoff = het_cutoff;
     let band_low = (het_freq - cutoff).max(0.0);
     let band_high = (het_freq + cutoff).min(max_freq);
 

@@ -43,6 +43,13 @@ pub enum SidebarTab {
     Filter,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum FilterQuality {
+    #[default]
+    Fast,
+    HQ,
+}
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     pub files: RwSignal<Vec<LoadedFile>>,
@@ -85,6 +92,8 @@ pub struct AppState {
     pub filter_db_harmonics: RwSignal<f64>,
     pub filter_db_above: RwSignal<f64>,
     pub filter_hovering_band: RwSignal<Option<u8>>,
+    pub filter_quality: RwSignal<FilterQuality>,
+    pub het_cutoff: RwSignal<f64>,
 }
 
 impl AppState {
@@ -129,6 +138,8 @@ impl AppState {
             filter_db_harmonics: RwSignal::new(0.0),
             filter_db_above: RwSignal::new(0.0),
             filter_hovering_band: RwSignal::new(None),
+            filter_quality: RwSignal::new(FilterQuality::Fast),
+            het_cutoff: RwSignal::new(15_000.0),
         }
     }
 
