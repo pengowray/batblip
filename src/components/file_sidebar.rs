@@ -10,6 +10,26 @@ use crate::dsp::zero_crossing::zero_crossing_frequency;
 use crate::state::{AppState, LoadedFile, SidebarTab, SpectrogramDisplay};
 use crate::types::{PreviewImage, SpectrogramData};
 
+fn format_guano_key(key: &str) -> String {
+    match key {
+        "GUANO|Version" => "GUANO Version".into(),
+        "BatGizmo|App|DeviceModel" => "Device Model".into(),
+        "BatGizmo|App|Version" => "BatGizmo Version".into(),
+        "BatGizmo|App|TriggerType" => "Trigger Type".into(),
+        "Loc|Lat" => "Latitude".into(),
+        "Loc|Lon" => "Longitude".into(),
+        "Loc|Elev" => "Elevation".into(),
+        "Filter|HP" => "High-pass Filter".into(),
+        "Filter|LP" => "Low-pass Filter".into(),
+        "Species|Auto" => "Species (Auto)".into(),
+        "Species|Manual" => "Species (Manual)".into(),
+        "TE" => "Time Expansion".into(),
+        "Samplerate" => "Sample Rate".into(),
+        "Length" => "Length".into(),
+        _ => key.replace('|', " "),
+    }
+}
+
 #[component]
 pub fn FileSidebar() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -743,11 +763,13 @@ fn MetadataPanel() -> impl IntoView {
                             </div>
                             {if has_guano {
                                 let rows: Vec<_> = guano_fields.into_iter().map(|(k, v)| {
-                                    let title = v.clone();
+                                    let display_key = format_guano_key(&k);
+                                    let label_title = k.clone();
+                                    let value_title = v.clone();
                                     view! {
                                         <div class="setting-row">
-                                            <span class="setting-label">{k}</span>
-                                            <span class="setting-value metadata-value" title=title>{v}</span>
+                                            <span class="setting-label" title=label_title>{display_key}</span>
+                                            <span class="setting-value metadata-value" title=value_title>{v}</span>
                                         </div>
                                     }
                                 }).collect();
