@@ -70,6 +70,8 @@ pub struct AppState {
     pub mouse_freq: RwSignal<Option<f64>>,
     pub mouse_canvas_x: RwSignal<f64>,
     pub label_hover_opacity: RwSignal<f64>,
+    pub follow_cursor: RwSignal<bool>,
+    pub pre_play_scroll: RwSignal<f64>,
 }
 
 impl AppState {
@@ -102,6 +104,8 @@ impl AppState {
             mouse_freq: RwSignal::new(None),
             mouse_canvas_x: RwSignal::new(0.0),
             label_hover_opacity: RwSignal::new(0.0),
+            follow_cursor: RwSignal::new(true),
+            pre_play_scroll: RwSignal::new(0.0),
         }
     }
 

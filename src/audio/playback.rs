@@ -27,6 +27,9 @@ pub fn stop(state: &AppState) {
             let _ = ctx.close();
         }
     });
+    if state.follow_cursor.get_untracked() {
+        state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+    }
     state.is_playing.set(false);
 }
 
@@ -108,6 +111,7 @@ pub fn play(state: &AppState) {
         PlaybackMode::ZeroCrossing => 1.0,
     };
 
+    state.pre_play_scroll.set(state.scroll_offset.get_untracked());
     state.is_playing.set(true);
     state.playhead_time.set(play_start_time);
     start_playhead(state.clone(), play_start_time, play_duration_orig, playback_speed);
@@ -200,6 +204,9 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
 
         if current >= end_time {
             state.playhead_time.set(end_time);
+            if state.follow_cursor.get_untracked() {
+                state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+            }
             state.is_playing.set(false);
             return;
         }
