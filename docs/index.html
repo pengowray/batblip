@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Batchi</title>
+    <link rel="stylesheet" href="/batchi/style-9235bb7c074bfd90.css" integrity="sha384-kOUD3OBKKTeYQy6/1Q8lLOYYjeNFrblkHMrWFQ4HMo3rsB76JLMK1x3ek0283h/z"/>
+<link rel="modulepreload" href="/batchi/batchi-b3d95a39d797e119.js" crossorigin="anonymous" integrity="sha384-FQYEjiBELCYH7d7mpx/2sudNBDKYKS6hZQU48pQP1iMJfXpmtNCaC32pkNClvPOD"><link rel="preload" href="/batchi/batchi-b3d95a39d797e119_bg.wasm" crossorigin="anonymous" integrity="sha384-ctE+g9kM6khhKsCVnHHQxRzt1xN130dP0g1VGOInLLExXTEyjcxsHU5/e6gvPV/c" as="fetch" type="application/wasm"></head>
+<body>
+<script type="module">
+import init, * as bindings from '/batchi/batchi-b3d95a39d797e119.js';
+const wasm = await init({ module_or_path: '/batchi/batchi-b3d95a39d797e119_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>
