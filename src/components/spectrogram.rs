@@ -12,7 +12,6 @@ pub fn Spectrogram() -> impl IntoView {
     let pre_rendered: RwSignal<Option<PreRendered>> = RwSignal::new(None);
 
     // Drag state for selection
-    let is_dragging = RwSignal::new(false);
     let drag_start = RwSignal::new((0.0f64, 0.0f64));
 
     // Re-compute pre-render when current file changes
@@ -37,6 +36,7 @@ pub fn Spectrogram() -> impl IntoView {
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
         let het_interacting = state.het_interacting.get();
+        let dragging = state.is_dragging.get();
         let het_freq = state.het_frequency.get();
         let te_factor = state.te_factor.get();
         let ps_factor = state.ps_factor.get();
@@ -123,6 +123,18 @@ pub fn Spectrogram() -> impl IntoView {
                         display_w as f64,
                         display_h as f64,
                     );
+                    if dragging {
+                        spectrogram_renderer::draw_harmonic_shadows(
+                            &ctx,
+                            &sel,
+                            max_freq,
+                            scroll,
+                            time_res,
+                            zoom,
+                            display_w as f64,
+                            display_h as f64,
+                        );
+                    }
                 }
 
                 // Draw playhead
@@ -172,14 +184,14 @@ pub fn Spectrogram() -> impl IntoView {
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
         if let Some((t, f)) = mouse_to_tf(&ev) {
-            is_dragging.set(true);
+            state.is_dragging.set(true);
             drag_start.set((t, f));
             state.selection.set(None);
         }
     };
 
     let on_mousemove = move |ev: MouseEvent| {
-        if !is_dragging.get_untracked() { return; }
+        if !state.is_dragging.get_untracked() { return; }
         if let Some((t, f)) = mouse_to_tf(&ev) {
             let (t0, f0) = drag_start.get_untracked();
             state.selection.set(Some(Selection {
@@ -192,8 +204,8 @@ pub fn Spectrogram() -> impl IntoView {
     };
 
     let on_mouseup = move |ev: MouseEvent| {
-        if !is_dragging.get_untracked() { return; }
-        is_dragging.set(false);
+        if !state.is_dragging.get_untracked() { return; }
+        state.is_dragging.set(false);
         if let Some((t, f)) = mouse_to_tf(&ev) {
             let (t0, f0) = drag_start.get_untracked();
             let sel = Selection {

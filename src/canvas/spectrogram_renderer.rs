@@ -292,6 +292,74 @@ pub fn draw_selection(
     ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
 }
 
+/// Draw shadow selection boxes one octave higher and lower to highlight harmonics.
+/// Only drawn when the selection spans less than 1 octave.
+pub fn draw_harmonic_shadows(
+    ctx: &CanvasRenderingContext2d,
+    selection: &Selection,
+    max_freq: f64,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+) {
+    // Only show shadows if selection is less than 1 octave
+    if selection.freq_low <= 0.0 || selection.freq_high / selection.freq_low >= 2.0 {
+        return;
+    }
+
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let px_per_sec = canvas_width / visible_time;
+
+    let x0 = ((selection.time_start - start_time) * px_per_sec).max(0.0);
+    let x1 = ((selection.time_end - start_time) * px_per_sec).min(canvas_width);
+    if x1 <= x0 {
+        return;
+    }
+    let w = x1 - x0;
+
+    // Set up dashed border style
+    let _ = ctx.set_line_dash(&js_sys::Array::of2(
+        &wasm_bindgen::JsValue::from_f64(4.0),
+        &wasm_bindgen::JsValue::from_f64(4.0),
+    ));
+
+    // Octave higher
+    let hi_low = selection.freq_low * 2.0;
+    let hi_high = selection.freq_high * 2.0;
+    if hi_low < max_freq {
+        let y0 = (canvas_height * (1.0 - hi_high.min(max_freq) / max_freq)).max(0.0);
+        let y1 = (canvas_height * (1.0 - hi_low / max_freq)).min(canvas_height);
+        if y1 > y0 {
+            ctx.set_fill_style_str("rgba(50, 120, 200, 0.06)");
+            ctx.fill_rect(x0, y0, w, y1 - y0);
+            ctx.set_stroke_style_str("rgba(80, 160, 255, 0.3)");
+            ctx.set_line_width(1.0);
+            ctx.stroke_rect(x0, y0, w, y1 - y0);
+        }
+    }
+
+    // Octave lower
+    let lo_low = selection.freq_low / 2.0;
+    let lo_high = selection.freq_high / 2.0;
+    {
+        let y0 = (canvas_height * (1.0 - lo_high / max_freq)).max(0.0);
+        let y1 = (canvas_height * (1.0 - lo_low.max(0.0) / max_freq)).min(canvas_height);
+        if y1 > y0 {
+            ctx.set_fill_style_str("rgba(50, 120, 200, 0.06)");
+            ctx.fill_rect(x0, y0, w, y1 - y0);
+            ctx.set_stroke_style_str("rgba(80, 160, 255, 0.3)");
+            ctx.set_line_width(1.0);
+            ctx.stroke_rect(x0, y0, w, y1 - y0);
+        }
+    }
+
+    // Reset dash
+    let _ = ctx.set_line_dash(&js_sys::Array::new());
+}
+
 /// Convert pixel coordinates on the spectrogram canvas to (time, frequency).
 pub fn pixel_to_time_freq(
     px_x: f64,

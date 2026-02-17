@@ -41,6 +41,7 @@ pub struct AppState {
     pub auto_advance: RwSignal<bool>,
     pub ps_factor: RwSignal<f64>,
     pub het_interacting: RwSignal<bool>,
+    pub is_dragging: RwSignal<bool>,
 }
 
 impl AppState {
@@ -61,6 +62,7 @@ impl AppState {
             auto_advance: RwSignal::new(true),
             ps_factor: RwSignal::new(10.0),
             het_interacting: RwSignal::new(false),
+            is_dragging: RwSignal::new(false),
         }
     }
 

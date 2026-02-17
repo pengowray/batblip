@@ -8,6 +8,7 @@ pub fn AnalysisPanel() -> impl IntoView {
 
     let analysis = move || {
         let selection = state.selection.get()?;
+        let dragging = state.is_dragging.get();
         let files = state.files.get();
         let idx = state.current_file_index.get()?;
         let file = files.get(idx)?;
@@ -22,16 +23,23 @@ pub fn AnalysisPanel() -> impl IntoView {
             return None;
         }
 
-        let slice = &file.audio.samples[start..end];
         let duration = selection.time_end - selection.time_start;
         let frames = end - start;
-        let zc = zero_crossing_frequency(slice, sr);
+
+        // Skip expensive ZC calculation while dragging
+        let (crossing_count, estimated_freq) = if dragging {
+            (None, None)
+        } else {
+            let slice = &file.audio.samples[start..end];
+            let zc = zero_crossing_frequency(slice, sr);
+            (Some(zc.crossing_count), Some(zc.estimated_frequency_hz))
+        };
 
         Some(AnalysisData {
             duration,
             frames,
-            crossing_count: zc.crossing_count,
-            estimated_freq: zc.estimated_frequency_hz,
+            crossing_count,
+            estimated_freq,
             freq_low: selection.freq_low,
             freq_high: selection.freq_high,
         })
@@ -45,8 +53,8 @@ pub fn AnalysisPanel() -> impl IntoView {
                         view! {
                             <span>{format!("{:.3}s", a.duration)}</span>
                             <span>{format!("{} frames", a.frames)}</span>
-                            <span>{format!("ZC: {}", a.crossing_count)}</span>
-                            <span>{format!("~{:.1} kHz", a.estimated_freq / 1000.0)}</span>
+                            <span>{match a.crossing_count { Some(c) => format!("ZC: {c}"), None => "ZC: ...".into() }}</span>
+                            <span>{match a.estimated_freq { Some(f) => format!("~{:.1} kHz", f / 1000.0), None => "~... kHz".into() }}</span>
                             <span>{format!("{:.0}-{:.0} kHz", a.freq_low / 1000.0, a.freq_high / 1000.0)}</span>
                         }.into_any()
                     }
@@ -64,8 +72,8 @@ pub fn AnalysisPanel() -> impl IntoView {
 struct AnalysisData {
     duration: f64,
     frames: usize,
-    crossing_count: usize,
-    estimated_freq: f64,
+    crossing_count: Option<usize>,
+    estimated_freq: Option<f64>,
     freq_low: f64,
     freq_high: f64,
 }
