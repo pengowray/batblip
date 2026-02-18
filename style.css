@@ -15,7 +15,6 @@ html, body {
 
 .app {
     display: grid;
-    grid-template-columns: 220px 1fr;
     height: 100vh;
 }
 
@@ -26,6 +25,73 @@ html, body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
+    transition: opacity 0.15s;
+}
+
+.sidebar.collapsed {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.sidebar.collapsed .sidebar-tabs {
+    pointer-events: auto;
+    opacity: 1;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    flex-direction: column;
+    width: 28px;
+}
+
+.sidebar.collapsed .sidebar-tab:not(.sidebar-collapse-btn) {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    width: 28px;
+    height: 28px;
+    opacity: 1;
+    pointer-events: auto;
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 0 0 4px 0;
+}
+
+.sidebar-collapse-btn {
+    flex: 0 0 28px !important;
+    font-size: 9px !important;
+    padding: 0 !important;
+    color: #555;
+}
+
+.sidebar-collapse-btn:hover {
+    color: #ccc !important;
+}
+
+.sidebar-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 20;
+}
+
+.sidebar-resize-handle:hover,
+body.sidebar-resizing .sidebar-resize-handle {
+    background: #4a8;
+}
+
+body.sidebar-resizing {
+    cursor: col-resize !important;
+    user-select: none;
 }
 
 /* Sidebar tabs */

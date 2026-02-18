@@ -41,8 +41,16 @@ pub fn App() -> impl IntoView {
     let _ = window.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
     handler.forget();
 
+    let grid_style = move || {
+        if state.sidebar_collapsed.get() {
+            "grid-template-columns: 0px 1fr".to_string()
+        } else {
+            format!("grid-template-columns: {}px 1fr", state.sidebar_width.get() as i32)
+        }
+    };
+
     view! {
-        <div class="app">
+        <div class="app" style=grid_style>
             <FileSidebar />
             <MainArea />
         </div>

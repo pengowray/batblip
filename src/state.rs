@@ -95,6 +95,8 @@ pub struct AppState {
     pub filter_hovering_band: RwSignal<Option<u8>>,
     pub filter_quality: RwSignal<FilterQuality>,
     pub het_cutoff: RwSignal<f64>,
+    pub sidebar_collapsed: RwSignal<bool>,
+    pub sidebar_width: RwSignal<f64>,
 }
 
 impl AppState {
@@ -141,6 +143,8 @@ impl AppState {
             filter_hovering_band: RwSignal::new(None),
             filter_quality: RwSignal::new(FilterQuality::Fast),
             het_cutoff: RwSignal::new(15_000.0),
+            sidebar_collapsed: RwSignal::new(false),
+            sidebar_width: RwSignal::new(220.0),
         }
     }
 

@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
+use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CanvasRenderingContext2d, DragEvent, File, FileReader, HtmlCanvasElement, ImageData};
 use crate::audio::loader::load_audio;
@@ -37,36 +38,79 @@ fn format_guano_key(key: &str) -> String {
 pub fn FileSidebar() -> impl IntoView {
     let state = expect_context::<AppState>();
 
+    // Resize drag logic
+    let on_resize_start = move |ev: web_sys::MouseEvent| {
+        ev.prevent_default();
+        let start_x = ev.client_x() as f64;
+        let start_width = state.sidebar_width.get_untracked();
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let body = doc.body().unwrap();
+        let _ = body.class_list().add_1("sidebar-resizing");
+
+        let on_move = Closure::<dyn Fn(web_sys::MouseEvent)>::new(move |ev: web_sys::MouseEvent| {
+            let dx = ev.client_x() as f64 - start_x;
+            let new_width = (start_width + dx).clamp(140.0, 500.0);
+            state.sidebar_width.set(new_width);
+        });
+
+        let on_move_fn = on_move.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        let on_move_fn2 = on_move_fn.clone();
+        let _ = doc.add_event_listener_with_callback("mousemove", &on_move_fn);
+
+        let on_up = Closure::<dyn FnMut(web_sys::MouseEvent)>::once_into_js(move |_: web_sys::MouseEvent| {
+            let doc = web_sys::window().unwrap().document().unwrap();
+            let body = doc.body().unwrap();
+            let _ = body.class_list().remove_1("sidebar-resizing");
+            let _ = doc.remove_event_listener_with_callback("mousemove", &on_move_fn2);
+            drop(on_move);
+        });
+
+        let _ = doc.add_event_listener_with_callback_and_bool("mouseup", on_up.unchecked_ref(), true);
+    };
+
+    let sidebar_class = move || {
+        if state.sidebar_collapsed.get() { "sidebar collapsed" } else { "sidebar" }
+    };
+
     view! {
-        <div class="sidebar">
+        <div class=sidebar_class>
             <div class="sidebar-tabs">
                 <button
+                    class="sidebar-tab sidebar-collapse-btn"
+                    on:click=move |_| {
+                        state.sidebar_collapsed.update(|c| *c = !*c);
+                    }
+                    title=move || if state.sidebar_collapsed.get() { "Show sidebar" } else { "Hide sidebar" }
+                >
+                    {move || if state.sidebar_collapsed.get() { "\u{25B6}" } else { "\u{25C0}" }}
+                </button>
+                <button
                     class=move || if state.sidebar_tab.get() == SidebarTab::Files { "sidebar-tab active" } else { "sidebar-tab" }
-                    on:click=move |_| state.sidebar_tab.set(SidebarTab::Files)
+                    on:click=move |_| { state.sidebar_collapsed.set(false); state.sidebar_tab.set(SidebarTab::Files); }
                 >
                     "Files"
                 </button>
                 <button
                     class=move || if state.sidebar_tab.get() == SidebarTab::Spectrogram { "sidebar-tab active" } else { "sidebar-tab" }
-                    on:click=move |_| state.sidebar_tab.set(SidebarTab::Spectrogram)
+                    on:click=move |_| { state.sidebar_collapsed.set(false); state.sidebar_tab.set(SidebarTab::Spectrogram); }
                 >
                     "Display"
                 </button>
                 <button
                     class=move || if state.sidebar_tab.get() == SidebarTab::Selection { "sidebar-tab active" } else { "sidebar-tab" }
-                    on:click=move |_| state.sidebar_tab.set(SidebarTab::Selection)
+                    on:click=move |_| { state.sidebar_collapsed.set(false); state.sidebar_tab.set(SidebarTab::Selection); }
                 >
                     "Selection"
                 </button>
                 <button
                     class=move || if state.sidebar_tab.get() == SidebarTab::Filter { "sidebar-tab active" } else { "sidebar-tab" }
-                    on:click=move |_| state.sidebar_tab.set(SidebarTab::Filter)
+                    on:click=move |_| { state.sidebar_collapsed.set(false); state.sidebar_tab.set(SidebarTab::Filter); }
                 >
                     "Filter"
                 </button>
                 <button
                     class=move || if state.sidebar_tab.get() == SidebarTab::Metadata { "sidebar-tab active" } else { "sidebar-tab" }
-                    on:click=move |_| state.sidebar_tab.set(SidebarTab::Metadata)
+                    on:click=move |_| { state.sidebar_collapsed.set(false); state.sidebar_tab.set(SidebarTab::Metadata); }
                 >
                     "Info"
                 </button>
@@ -78,6 +122,7 @@ pub fn FileSidebar() -> impl IntoView {
                 SidebarTab::Filter => view! { <FilterPanel /> }.into_any(),
                 SidebarTab::Metadata => view! { <MetadataPanel /> }.into_any(),
             }}
+            <div class="sidebar-resize-handle" on:mousedown=on_resize_start></div>
         </div>
     }
 }
