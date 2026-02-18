@@ -184,6 +184,19 @@ fn FilesPanel() -> impl IntoView {
         input.set_value("");
     };
 
+    let state_for_demo = state.clone();
+    let on_demo_click = move |_: web_sys::MouseEvent| {
+        let state = state_for_demo.clone();
+        state.loading_count.update(|c| *c += 1);
+        spawn_local(async move {
+            match load_demo_sounds(state.clone()).await {
+                Ok(()) => {}
+                Err(e) => log::error!("Failed to load demo sounds: {e}"),
+            }
+            state.loading_count.update(|c| *c = c.saturating_sub(1));
+        });
+    };
+
     let state_for_drop = state.clone();
     let on_drop = move |ev: DragEvent| {
         ev.prevent_default();
@@ -229,6 +242,7 @@ fn FilesPanel() -> impl IntoView {
                         <div class="drop-hint">
                             "Drop WAV/FLAC files here"
                             <button class="upload-btn" on:click=on_upload_click>"Browse files"</button>
+                            <button class="upload-btn demo-btn" on:click=on_demo_click>"Load demo"</button>
                         </div>
                     }.into_any()
                 } else {
@@ -940,8 +954,11 @@ fn PreviewCanvas(preview: PreviewImage) -> impl IntoView {
 async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
     let name = file.name();
     let bytes = read_file_bytes(&file).await?;
+    load_named_bytes(name, &bytes, state).await
+}
 
-    let audio = load_audio(&bytes)?;
+async fn load_named_bytes(name: String, bytes: &[u8], state: AppState) -> Result<(), String> {
+    let audio = load_audio(bytes)?;
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
         name,
@@ -1006,6 +1023,72 @@ async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
             }
         }
     });
+
+    Ok(())
+}
+
+const DEMO_SOUNDS_BASE: &str =
+    "https://raw.githubusercontent.com/pengowray/batchi-demo-sounds/main";
+
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let window = web_sys::window().ok_or("No window")?;
+    let resp_value = JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|e| format!("fetch error: {e:?}"))?;
+    let resp: web_sys::Response = resp_value
+        .dyn_into()
+        .map_err(|_| "Response cast failed".to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let buf = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
+        .await
+        .map_err(|e| format!("array_buffer: {e:?}"))?;
+    let uint8 = js_sys::Uint8Array::new(&buf);
+    Ok(uint8.to_vec())
+}
+
+async fn fetch_text(url: &str) -> Result<String, String> {
+    let window = web_sys::window().ok_or("No window")?;
+    let resp_value = JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|e| format!("fetch error: {e:?}"))?;
+    let resp: web_sys::Response = resp_value
+        .dyn_into()
+        .map_err(|_| "Response cast failed".to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let text = JsFuture::from(resp.text().map_err(|e| format!("{e:?}"))?)
+        .await
+        .map_err(|e| format!("text: {e:?}"))?;
+    text.as_string().ok_or("Not a string".to_string())
+}
+
+async fn load_demo_sounds(state: AppState) -> Result<(), String> {
+    let index_url = format!("{}/index.json", DEMO_SOUNDS_BASE);
+    let index_text = fetch_text(&index_url).await?;
+    let index: serde_json::Value =
+        serde_json::from_str(&index_text).map_err(|e| format!("index parse: {e}"))?;
+
+    let sounds = index["sounds"]
+        .as_array()
+        .ok_or("No sounds array in index")?;
+
+    for sound in sounds {
+        let filename = sound["filename"]
+            .as_str()
+            .ok_or("Missing filename in index entry")?;
+        let encoded = js_sys::encode_uri_component(filename);
+        let audio_url = format!(
+            "{}/sounds/{}",
+            DEMO_SOUNDS_BASE,
+            encoded.as_string().unwrap_or_default()
+        );
+        log::info!("Fetching demo: {}", filename);
+        let bytes = fetch_bytes(&audio_url).await?;
+        load_named_bytes(filename.to_string(), &bytes, state.clone()).await?;
+    }
 
     Ok(())
 }
