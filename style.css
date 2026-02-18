@@ -26,41 +26,35 @@ html, body {
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    transition: opacity 0.15s;
 }
 
 .sidebar.collapsed {
-    opacity: 0;
-    pointer-events: none;
-}
-
-.sidebar.collapsed .sidebar-tabs {
-    pointer-events: auto;
-    opacity: 1;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 10;
-    flex-direction: column;
-    width: 28px;
+    overflow: visible;
+    border-right: none;
 }
 
 .sidebar.collapsed .sidebar-tab:not(.sidebar-collapse-btn) {
     display: none;
 }
 
+.sidebar.collapsed .sidebar-panel {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-resize-handle {
+    display: none;
+}
+
 .sidebar.collapsed .sidebar-collapse-btn {
     position: fixed;
-    top: 0;
-    left: 0;
+    top: 4px;
+    left: 4px;
     z-index: 100;
-    width: 28px;
+    width: 24px;
     height: 28px;
-    opacity: 1;
-    pointer-events: auto;
     background: #222;
     border: 1px solid #333;
-    border-radius: 0 0 4px 0;
+    border-radius: 4px;
 }
 
 .sidebar-collapse-btn {

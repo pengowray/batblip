@@ -79,7 +79,10 @@ pub fn Toolbar() -> impl IntoView {
                 if ev.key() == "Shift" { shift_held.set(false); }
             }
         >
-            <span class="toolbar-brand">"Batchi"</span>
+            <span
+                class="toolbar-brand"
+                style=move || if state.sidebar_collapsed.get() { "margin-left: 24px" } else { "" }
+            >"Batchi"</span>
             <div class="toolbar-sep"></div>
 
             // Play/Stop
