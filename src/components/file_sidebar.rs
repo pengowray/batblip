@@ -16,7 +16,6 @@ use crate::types::{PreviewImage, SpectrogramData};
 /// return the prefix (e.g. "BatGizmo App") as section and the last segment as display key.
 fn categorize_guano_key(key: &str) -> (String, String) {
     let known = match key {
-        "GUANO|Version" => Some("GUANO Version"),
         "Loc|Lat" => Some("Latitude"),
         "Loc|Lon" => Some("Longitude"),
         "Loc|Elev" => Some("Elevation"),
@@ -819,6 +818,29 @@ fn FilterPanel() -> impl IntoView {
     }
 }
 
+fn copy_to_clipboard(text: &str) {
+    if let Some(window) = web_sys::window() {
+        let clipboard = window.navigator().clipboard();
+        let _ = clipboard.write_text(text);
+    }
+}
+
+fn metadata_row(label: String, value: String, label_title: Option<String>) -> impl IntoView {
+    let value_for_copy = value.clone();
+    let value_for_title = value.clone();
+    let on_copy = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        copy_to_clipboard(&value_for_copy);
+    };
+    view! {
+        <div class="setting-row metadata-row">
+            <span class="setting-label" title=label_title.unwrap_or_default()>{label}</span>
+            <span class="setting-value metadata-value" title=value_for_title>{value}</span>
+            <button class="copy-btn" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+        </div>
+    }
+}
+
 #[component]
 fn MetadataPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -837,6 +859,8 @@ fn MetadataPanel() -> impl IntoView {
                     Some(f) => {
                         let meta = &f.audio.metadata;
                         let size_str = format_file_size(meta.file_size);
+                        let xc_fields: Vec<_> = f.xc_metadata.clone().unwrap_or_default();
+                        let has_xc = !xc_fields.is_empty();
                         let guano_fields: Vec<_> = meta.guano.as_ref()
                             .map(|g| g.fields.clone())
                             .unwrap_or_default();
@@ -845,35 +869,27 @@ fn MetadataPanel() -> impl IntoView {
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"File"</div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Name"</span>
-                                    <span class="setting-value metadata-value" title=f.name.clone()>{f.name.clone()}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Format"</span>
-                                    <span class="setting-value">{meta.format}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Duration"</span>
-                                    <span class="setting-value">{format!("{:.3} s", f.audio.duration_secs)}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Sample rate"</span>
-                                    <span class="setting-value">{format!("{} kHz", f.audio.sample_rate / 1000)}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Channels"</span>
-                                    <span class="setting-value">{f.audio.channels.to_string()}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"Bit depth"</span>
-                                    <span class="setting-value">{format!("{}-bit", meta.bits_per_sample)}</span>
-                                </div>
-                                <div class="setting-row">
-                                    <span class="setting-label">"File size"</span>
-                                    <span class="setting-value">{size_str}</span>
-                                </div>
+                                {metadata_row("Name".into(), f.name.clone(), None)}
+                                {metadata_row("Format".into(), meta.format.to_string(), None)}
+                                {metadata_row("Duration".into(), format!("{:.3} s", f.audio.duration_secs), None)}
+                                {metadata_row("Sample rate".into(), format!("{} kHz", f.audio.sample_rate / 1000), None)}
+                                {metadata_row("Channels".into(), f.audio.channels.to_string(), None)}
+                                {metadata_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
+                                {metadata_row("File size".into(), size_str, None)}
                             </div>
+                            {if has_xc {
+                                let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
+                                    metadata_row(label, value, None).into_any()
+                                }).collect();
+                                view! {
+                                    <div class="setting-group">
+                                        <div class="setting-group-title">"Xeno-canto"</div>
+                                        {items}
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
                             {if has_guano {
                                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
                                 let mut current_section: Option<String> = None;
@@ -881,19 +897,20 @@ fn MetadataPanel() -> impl IntoView {
                                     let (section, display_key) = categorize_guano_key(&k);
                                     if current_section.as_ref() != Some(&section) {
                                         let heading = section.clone();
+                                        let show_badge = heading != "GUANO";
                                         items.push(view! {
-                                            <div class="setting-group-title">{heading}</div>
+                                            <div class="setting-group-title">
+                                                {heading}
+                                                {if show_badge {
+                                                    view! { <span class="metadata-source-badge">"GUANO"</span> }.into_any()
+                                                } else {
+                                                    view! { <span></span> }.into_any()
+                                                }}
+                                            </div>
                                         }.into_any());
                                         current_section = Some(section);
                                     }
-                                    let label_title = k;
-                                    let value_title = v.clone();
-                                    items.push(view! {
-                                        <div class="setting-row">
-                                            <span class="setting-label" title=label_title>{display_key}</span>
-                                            <span class="setting-value metadata-value" title=value_title>{v}</span>
-                                        </div>
-                                    }.into_any());
+                                    items.push(metadata_row(display_key, v, Some(k)).into_any());
                                 }
                                 view! {
                                     <div class="setting-group">
@@ -954,10 +971,10 @@ fn PreviewCanvas(preview: PreviewImage) -> impl IntoView {
 async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
     let name = file.name();
     let bytes = read_file_bytes(&file).await?;
-    load_named_bytes(name, &bytes, state).await
+    load_named_bytes(name, &bytes, None, state).await
 }
 
-async fn load_named_bytes(name: String, bytes: &[u8], state: AppState) -> Result<(), String> {
+async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState) -> Result<(), String> {
     let audio = load_audio(bytes)?;
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
@@ -990,6 +1007,7 @@ async fn load_named_bytes(name: String, bytes: &[u8], state: AppState) -> Result
                 audio,
                 spectrogram: placeholder_spec,
                 preview: Some(preview),
+                xc_metadata,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -1065,6 +1083,50 @@ async fn fetch_text(url: &str) -> Result<String, String> {
     text.as_string().ok_or("Not a string".to_string())
 }
 
+fn parse_xc_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
+    let s = |key: &str| json[key].as_str().unwrap_or("").to_string();
+
+    let en = s("en");
+    if !en.is_empty() {
+        fields.push(("Species".into(), en));
+    }
+    let gen = s("gen");
+    let sp = s("sp");
+    if !gen.is_empty() && !sp.is_empty() {
+        fields.push(("Scientific name".into(), format!("{} {}", gen, sp)));
+    }
+    for (key, label) in [
+        ("rec", "Recordist"),
+        ("lic", "License"),
+        ("attribution", "Attribution"),
+        ("cnt", "Country"),
+        ("loc", "Location"),
+    ] {
+        let v = s(key);
+        if !v.is_empty() {
+            fields.push((label.into(), v));
+        }
+    }
+    let lat = s("lat");
+    let lon = s("lon");
+    if !lat.is_empty() && !lon.is_empty() {
+        fields.push(("Coordinates".into(), format!("{}, {}", lat, lon)));
+    }
+    for (key, label) in [
+        ("date", "Date"),
+        ("type", "Sound type"),
+        ("q", "Quality"),
+        ("url", "URL"),
+    ] {
+        let v = s(key);
+        if !v.is_empty() {
+            fields.push((label.into(), v));
+        }
+    }
+    fields
+}
+
 async fn load_demo_sounds(state: AppState) -> Result<(), String> {
     let index_url = format!("{}/index.json", DEMO_SOUNDS_BASE);
     let index_text = fetch_text(&index_url).await?;
@@ -1079,6 +1141,34 @@ async fn load_demo_sounds(state: AppState) -> Result<(), String> {
         let filename = sound["filename"]
             .as_str()
             .ok_or("Missing filename in index entry")?;
+
+        // Fetch XC metadata sidecar if available
+        let xc_metadata = if let Some(meta_file) = sound["metadata"].as_str() {
+            let encoded = js_sys::encode_uri_component(meta_file);
+            let meta_url = format!(
+                "{}/sounds/{}",
+                DEMO_SOUNDS_BASE,
+                encoded.as_string().unwrap_or_default()
+            );
+            match fetch_text(&meta_url).await {
+                Ok(text) => {
+                    match serde_json::from_str::<serde_json::Value>(&text) {
+                        Ok(json) => Some(parse_xc_metadata(&json)),
+                        Err(e) => {
+                            log::warn!("Failed to parse XC metadata for {}: {}", filename, e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch XC metadata for {}: {}", filename, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let encoded = js_sys::encode_uri_component(filename);
         let audio_url = format!(
             "{}/sounds/{}",
@@ -1087,7 +1177,7 @@ async fn load_demo_sounds(state: AppState) -> Result<(), String> {
         );
         log::info!("Fetching demo: {}", filename);
         let bytes = fetch_bytes(&audio_url).await?;
-        load_named_bytes(filename.to_string(), &bytes, state.clone()).await?;
+        load_named_bytes(filename.to_string(), &bytes, xc_metadata, state.clone()).await?;
     }
 
     Ok(())

@@ -200,7 +200,52 @@ body.sidebar-resizing {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 120px;
+    min-width: 0;
+    flex: 1;
+}
+
+.metadata-row {
+    position: relative;
+}
+
+.copy-btn {
+    display: none;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 3px;
+    color: #aaa;
+    font-size: 11px;
+    padding: 1px 4px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.copy-btn:hover {
+    background: #444;
+    color: #ddd;
+    border-color: #777;
+}
+
+.metadata-row:hover .copy-btn {
+    display: block;
+}
+
+.metadata-source-badge {
+    font-size: 9px;
+    color: #666;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-left: 6px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    vertical-align: middle;
 }
 
 .drop-zone {

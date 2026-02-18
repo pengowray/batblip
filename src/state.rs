@@ -7,6 +7,7 @@ pub struct LoadedFile {
     pub audio: AudioData,
     pub spectrogram: SpectrogramData,
     pub preview: Option<PreviewImage>,
+    pub xc_metadata: Option<Vec<(String, String)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
