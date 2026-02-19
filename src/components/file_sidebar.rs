@@ -1029,7 +1029,7 @@ fn AnalysisPanel() -> impl IntoView {
                 grade, w.snr_db, w.signal_db, w.noise_db
             ));
             if let Some(xc) = xc_quality.get() {
-                report.push_str(&format!("  XC quality: {}\n", xc.trim()));
+                report.push_str(&format!("  XC quality (metadata): {}\n", xc.trim()));
             }
             for msg in &w.warnings {
                 report.push_str(&format!("  \u{26a0} {}\n", msg));
@@ -1259,26 +1259,27 @@ fn AnalysisPanel() -> impl IntoView {
 
                         view! {
                             <div class="setting-group">
-                                <div class="setting-group-title">"Recording Quality (wSNR)"</div>
+                                <div class="setting-group-title">"Recording Quality"</div>
                                 <div class="wsnr-result">
+                                    <div class="wsnr-detail">Estimated wSNR:</div>
                                     <div class="wsnr-header">
                                         <span class=grade_class>{grade_label}</span>
                                         <span class="wsnr-snr">{snr_text}</span>
                                     </div>
                                     <div class="wsnr-detail">{signal_text}</div>
                                     <div class="wsnr-detail">{noise_text}</div>
-                                    {xc_comparison.map(|(letter, badge_class, note)| view! {
-                                        <div class="wsnr-comparison">
-                                            "XC assessment: "
-                                            <span class=badge_class>{letter}</span>
-                                            " " {note}
-                                        </div>
-                                    })}
                                     {if !warnings.is_empty() {
                                         view! { <div class="wsnr-warnings">{warnings}</div> }.into_any()
                                     } else {
                                         view! { <span></span> }.into_any()
                                     }}
+                                    {xc_comparison.map(|(letter, badge_class, note)| view! {
+                                        <div class="wsnr-comparison">
+                                            "Metadata: "
+                                            <span class=badge_class>{letter}</span>
+                                            " (XC grade)" {note}
+                                        </div>
+                                    })}
                                 </div>
                             </div>
                         }.into_any()
