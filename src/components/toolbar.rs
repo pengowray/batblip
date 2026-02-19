@@ -31,6 +31,9 @@ pub fn Toolbar() -> impl IntoView {
     let current_mode = move || state.playback_mode.get();
 
     let set_mode = move |mode: PlaybackMode| {
+        if mode == PlaybackMode::ZeroCrossing {
+            state.auto_gain.set(false);
+        }
         state.playback_mode.set(mode);
     };
 
@@ -305,6 +308,7 @@ pub fn Toolbar() -> impl IntoView {
                 class=move || if state.auto_gain.get() { "mode-btn active" } else { "mode-btn" }
                 on:click=on_auto_gain_toggle
                 title="Auto-gain: normalize playback to -3 dB peak"
+                style:display=move || if current_mode() == PlaybackMode::ZeroCrossing { "none" } else { "" }
             >
                 "Auto"
             </button>
