@@ -218,6 +218,11 @@ body.sidebar-resizing {
     color: #8cf;
 }
 
+.bit-cell.used.full {
+    background: #3a1a1a;
+    color: #f88;
+}
+
 .bit-cell.unused-expected {
     background: #3a1a1a;
     color: #f88;

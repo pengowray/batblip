@@ -75,7 +75,7 @@ fn MainArea() -> impl IntoView {
                 } else {
                     view! {
                         <div class="empty-state">
-                            "Drop WAV or FLAC files into the sidebar"
+                            "Drop WAV, FLAC or MP3 files into the sidebar"
                         </div>
                     }.into_any()
                 }

@@ -1419,7 +1419,9 @@ fn AnalysisPanel() -> impl IntoView {
                                 }
                                 let used = count > 0;
                                 let expected = bit_analysis::is_expected_used(idx, bits_per_sample, is_float, effective_bits);
-                                let cell_class = if used {
+                                let cell_class = if sign_total > 0 && count == sign_total {
+                                    "bit-cell used full"
+                                } else if used {
                                     "bit-cell used"
                                 } else if expected {
                                     "bit-cell unused-expected"
@@ -1457,8 +1459,8 @@ fn AnalysisPanel() -> impl IntoView {
                         let pos_pct = if total > 0 { format!("{:.0}%", pos_total as f64 / total as f64 * 100.0) } else { "0%".into() };
                         let neg_pct = if total > 0 { format!("{:.0}%", neg_total as f64 / total as f64 * 100.0) } else { "0%".into() };
                         let zero_pct = if total > 0 { format!("{:.0}%", zero_total as f64 / total as f64 * 100.0) } else { "0%".into() };
-                        let pos_tooltip = format!("{} samples", pos_total);
-                        let neg_tooltip = format!("{} samples", neg_total);
+                        let pos_tooltip = format!("{} samples above 0", pos_total);
+                        let neg_tooltip = format!("{} samples below 0", neg_total);
                         let zero_tooltip = format!("{} samples", zero_total);
 
                         view! {
