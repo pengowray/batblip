@@ -1240,12 +1240,15 @@ fn AnalysisPanel() -> impl IntoView {
                                 "D" => "wsnr-grade-sm wsnr-grade-d",
                                 _ => "wsnr-grade-sm wsnr-grade-e",
                             };
-                            let computed = grade_label.clone();
+                            //let computed = grade_label.clone();
+                            let note = "";
+                            /*
                             let note = if xc_letter == computed {
                                 "(matches)".to_string()
                             } else {
                                 format!("(estimated: {})", computed)
                             };
+                            */
                             (xc_letter, xc_badge_class.to_string(), note)
                         });
 

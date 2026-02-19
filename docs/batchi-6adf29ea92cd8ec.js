@@ -839,17 +839,17 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 321, function: Function { arguments: [NamedExternref("KeyboardEvent")], shim_idx: 831, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 298, function: Function { arguments: [NamedExternref("KeyboardEvent")], shim_idx: 838, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
             const ret = makeClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h70706f1564a21b1e, wasm_bindgen__convert__closures_____invoke__h5c5af33dd2ea9bd7);
             return ret;
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 321, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 831, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 298, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 838, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
             const ret = makeClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h70706f1564a21b1e, wasm_bindgen__convert__closures_____invoke__h5c5af33dd2ea9bd7);
             return ret;
         },
         __wbindgen_cast_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 321, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 832, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 298, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 839, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h70706f1564a21b1e, wasm_bindgen__convert__closures_____invoke__hd4719e4dd7499c99);
             return ret;
         },
