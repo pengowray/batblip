@@ -104,12 +104,17 @@ pub fn zc_rate_per_bin(
     samples: &[f32],
     sample_rate: u32,
     bin_duration: f64,
+    skip_bandpass: bool,
 ) -> Vec<(f64, bool)> {
     if samples.len() < 2 {
         return Vec::new();
     }
 
-    let filtered = bandpass_ultrasonic(samples, sample_rate);
+    let filtered = if skip_bandpass {
+        samples.to_vec()
+    } else {
+        bandpass_ultrasonic(samples, sample_rate)
+    };
     let env_samples = ((sample_rate as f64 * 0.001) as usize).max(1);
     let envelope = smooth_envelope(&filtered, env_samples);
     let (threshold_high, threshold_low) = adaptive_threshold(&filtered);
@@ -258,7 +263,7 @@ mod tests {
             .iter()
             .map(|s| s * 0.5)
             .collect();
-        let bins = zc_rate_per_bin(&input, sr, 0.001);
+        let bins = zc_rate_per_bin(&input, sr, 0.001, false);
         assert!(!bins.is_empty());
         // Most bins should show ~45 kHz and be armed
         let armed_bins: Vec<_> = bins.iter().filter(|(_, armed)| *armed).collect();

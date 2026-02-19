@@ -2,8 +2,9 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
+use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
-use crate::state::{AppState, PlaybackMode};
+use crate::state::{AppState, FilterQuality, PlaybackMode};
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 
@@ -12,12 +13,32 @@ pub fn Waveform() -> impl IntoView {
     let state = expect_context::<AppState>();
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
 
-    // Cache ZC bins — only recompute when the file changes, not on scroll/zoom.
+    // Cache ZC bins — recompute when the file or EQ settings change.
     let zc_bins = Memo::new(move |_| {
         let files = state.files.get();
         let idx = state.current_file_index.get();
+        let filter_enabled = state.filter_enabled.get();
+        // Subscribe to EQ params so memo recomputes when they change
+        let freq_low = state.filter_freq_low.get();
+        let freq_high = state.filter_freq_high.get();
+        let db_below = state.filter_db_below.get();
+        let db_selected = state.filter_db_selected.get();
+        let db_harmonics = state.filter_db_harmonics.get();
+        let db_above = state.filter_db_above.get();
+        let band_mode = state.filter_band_mode.get();
+        let quality = state.filter_quality.get();
+
         idx.and_then(|i| files.get(i).cloned()).map(|file| {
-            zc_rate_per_bin(&file.audio.samples, file.audio.sample_rate, ZC_BIN_DURATION)
+            let sr = file.audio.sample_rate;
+            let samples = if filter_enabled {
+                match quality {
+                    FilterQuality::Fast => apply_eq_filter_fast(&file.audio.samples, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+                    FilterQuality::HQ => apply_eq_filter(&file.audio.samples, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+                }
+            } else {
+                file.audio.samples.clone()
+            };
+            zc_rate_per_bin(&samples, sr, ZC_BIN_DURATION, filter_enabled)
         })
     });
 
