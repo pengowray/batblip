@@ -1013,8 +1013,33 @@ fn AnalysisPanel() -> impl IntoView {
                         let min_db = if sig_min.abs() > 0.0 { format!("{:.1} dB", 20.0 * (sig_min.abs() as f64).log10()) } else { "-\u{221E} dB".into() };
                         let max_db = if sig_max.abs() > 0.0 { format!("{:.1} dB", 20.0 * (sig_max.abs() as f64).log10()) } else { "-\u{221E} dB".into() };
                         let rms_db = if rms > 0.0 { format!("{:.1} dB", 20.0 * rms.log10()) } else { "-\u{221E} dB".into() };
-                        let dc_text = format!("{:.6}", dc_bias);
                         let dc_db = if dc_bias.abs() > 0.0 { format!("{:.1} dB", 20.0 * dc_bias.abs().log10()) } else { "-\u{221E} dB".into() };
+                        let dc_raw_tooltip = format!("{:.6} (raw)", dc_bias);
+                        // DC relative to RMS: gives perceptual sense of DC severity
+                        let dc_rms_ratio = if rms > 0.0 { dc_bias.abs() / rms } else { 0.0 };
+                        // Pos/neg asymmetry from bit analysis (already computed)
+                        let (pos_pct_sig, neg_pct_sig, pos_neg_tooltip) = analysis.get()
+                            .map(|a| {
+                                let ns = a.positive_total + a.negative_total;
+                                if ns > 0 {
+                                    let pp = a.positive_total as f64 / ns as f64 * 100.0;
+                                    let np = a.negative_total as f64 / ns as f64 * 100.0;
+                                    let tip = format!("{} positive / {} negative (of {} non-silent)",
+                                        a.positive_total, a.negative_total, ns);
+                                    (format!("+{:.0}%", pp), format!("-{:.0}%", np), tip)
+                                } else {
+                                    ("—".into(), "—".into(), "No non-silent samples".into())
+                                }
+                            })
+                            .unwrap_or_else(|| ("—".into(), "—".into(), String::new()));
+                        let posneg_text = format!("{} / {}", pos_pct_sig, neg_pct_sig);
+                        // Warning: notable DC if |dc| > 1% of full scale OR dc/rms > 5%, gated on N
+                        let dc_notable = len > 10_000 && (dc_bias.abs() > 0.01 || dc_rms_ratio > 0.05);
+                        let dc_warning = if dc_notable {
+                            Some(format!("DC offset: {} \u{2014} {:.0}% of RMS level", dc_db, dc_rms_ratio * 100.0))
+                        } else {
+                            None
+                        };
 
                         view! {
                             <div class="setting-group">
@@ -1058,10 +1083,15 @@ fn AnalysisPanel() -> impl IntoView {
                                         <span class="analysis-stat-label">"RMS"</span>
                                     </div>
                                     <div class="analysis-stat">
-                                        <span class="analysis-stat-value">{dc_text}</span>
-                                        <span class="analysis-stat-label" title=dc_db>"DC bias"</span>
+                                        <span class="analysis-stat-value">{dc_db}</span>
+                                        <span class="analysis-stat-label" title=dc_raw_tooltip>"DC bias"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{posneg_text}</span>
+                                        <span class="analysis-stat-label" title=pos_neg_tooltip>"Pos/Neg"</span>
                                     </div>
                                 </div>
+                                {dc_warning.map(|w| view! { <div class="analysis-warning">{w}</div> })}
                             </div>
                         }.into_any()
                     }
@@ -1162,7 +1192,7 @@ fn AnalysisPanel() -> impl IntoView {
                             let expected = bit_analysis::is_expected_used(idx, a.bits_per_sample, a.is_float, a.effective_bits);
 
                             let cell_class = if used {
-                                if cautions.iter().any(|c| matches!(c, BitCaution::OnlyInFade | BitCaution::VeryLowUsage)) {
+                                if cautions.iter().any(|c| matches!(c, BitCaution::SignBitSkewed | BitCaution::OnlyInFade | BitCaution::VeryLowUsage)) {
                                     "bit-cell used caution"
                                 } else if cautions.iter().any(|c| matches!(c, BitCaution::Always1)) {
                                     "bit-cell used always1"
@@ -1199,6 +1229,7 @@ fn AnalysisPanel() -> impl IntoView {
                             }
                             for c in cautions {
                                 match c {
+                                    BitCaution::SignBitSkewed => tooltip.push_str("\n\u{26A0} Asymmetric — sample distribution is far from 50/50 +/\u{2212}"),
                                     BitCaution::OnlyInFade => tooltip.push_str("\n\u{26A0} Only used in fade regions"),
                                     BitCaution::Always1 => tooltip.push_str("\n\u{26A0} Always 1 (100%)"),
                                     BitCaution::VeryLowUsage => tooltip.push_str("\n\u{26A0} Very low usage"),

@@ -311,6 +311,12 @@ body.sidebar-resizing {
     margin-top: 1px;
 }
 
+.analysis-warning {
+    padding: 3px 12px 4px;
+    font-size: 10px;
+    color: #fc8;
+}
+
 /* Bit Details fold-down */
 .bit-details {
     margin: 0 12px 4px;

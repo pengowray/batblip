@@ -15,6 +15,8 @@ pub enum BitCaution {
     Always1,
     /// Very low usage count for a bit that should be populated
     VeryLowUsage,
+    /// Sign bit usage is far from 50% among non-silent samples
+    SignBitSkewed,
 }
 
 /// Full bit-depth analysis result.
@@ -104,6 +106,8 @@ pub fn analyze_bits(
         is_float,
         total,
         duration_secs,
+        pos_total,
+        neg_total,
     );
 
     let mut warnings = Vec::new();
@@ -286,6 +290,8 @@ fn compute_cautions(
     is_float: bool,
     total: usize,
     duration_secs: f64,
+    pos_total: usize,
+    neg_total: usize,
 ) -> Vec<Vec<BitCaution>> {
     let n = bits_per_sample as usize;
     let sample_rate_approx = if duration_secs > 0.0 {
@@ -296,6 +302,13 @@ fn compute_cautions(
     let one_sec_samples = sample_rate_approx as usize;
     let track_fades = duration_secs >= 3.0 && one_sec_samples > 0;
 
+    // Sign bit skew: among non-silent samples, is the negative fraction far from 50%?
+    let non_silent = pos_total + neg_total;
+    let sign_bit_skewed = non_silent >= 5_000 && {
+        let neg_frac = neg_total as f64 / non_silent as f64;
+        (neg_frac - 0.5).abs() > 0.15
+    };
+
     (0..n)
         .map(|b| {
             let stat = &stats[b];
@@ -303,6 +316,11 @@ fn compute_cautions(
 
             if stat.count == 0 {
                 return cautions;
+            }
+
+            // Sign bit skew (only applies to bit index 0)
+            if b == 0 && sign_bit_skewed {
+                cautions.push(BitCaution::SignBitSkewed);
             }
 
             // Always 1
@@ -326,7 +344,6 @@ fn compute_cautions(
 
             // Very low usage for bits that should be populated
             if !is_float {
-                // For lower value bits (not sign bit) or sign bit with very few uses
                 let is_sign = b == 0;
                 let threshold = if is_sign { total / 1000 } else { total / 10000 };
                 if stat.count > 0 && stat.count <= threshold.max(1) && total > 1000 {
