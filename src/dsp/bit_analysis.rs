@@ -35,6 +35,8 @@ pub struct BitAnalysis {
     pub negative_counts: Vec<usize>,
     pub positive_total: usize,
     pub negative_total: usize,
+    /// Samples that are exactly zero (silence)
+    pub zero_total: usize,
     /// Adjacent non-overlapping bit pair analysis: pair_counts[p] = [count_00, count_01, count_10, count_11]
     pub pair_counts: Vec<[usize; 4]>,
 }
@@ -75,14 +77,15 @@ pub fn analyze_bits(
     let mut neg_counts = vec![0usize; n_bits];
     let mut pos_total = 0usize;
     let mut neg_total = 0usize;
+    let mut zero_total = 0usize;
     let mut pair_counts = vec![[0usize; 4]; n_pairs];
 
     if is_float && bits_per_sample == 32 {
         analyze_float_bits(samples, &mut counts, &mut first, &mut last,
-            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut pair_counts);
+            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut zero_total, &mut pair_counts);
     } else {
         analyze_int_bits(samples, bits_per_sample, &mut counts, &mut first, &mut last,
-            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut pair_counts);
+            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut zero_total, &mut pair_counts);
     }
 
     let bit_stats: Vec<BitStat> = (0..n_bits)
@@ -124,6 +127,7 @@ pub fn analyze_bits(
         negative_counts: neg_counts,
         positive_total: pos_total,
         negative_total: neg_total,
+        zero_total,
         pair_counts,
     }
 }
@@ -138,6 +142,7 @@ fn analyze_int_bits(
     neg_counts: &mut [usize],
     pos_total: &mut usize,
     neg_total: &mut usize,
+    zero_total: &mut usize,
     pair_counts: &mut [[usize; 4]],
 ) {
     let n_bits = bits_per_sample as usize;
@@ -149,7 +154,10 @@ fn analyze_int_bits(
         let int_val = (s as f64 * max_val).round() as i32;
         let bits = int_val as u32;
         let is_negative = bits & (1 << (mask_bits - 1)) != 0;
-        if is_negative {
+        let is_zero = int_val == 0;
+        if is_zero {
+            *zero_total += 1;
+        } else if is_negative {
             *neg_total += 1;
         } else {
             *pos_total += 1;
@@ -191,13 +199,18 @@ fn analyze_float_bits(
     neg_counts: &mut [usize],
     pos_total: &mut usize,
     neg_total: &mut usize,
+    zero_total: &mut usize,
     pair_counts: &mut [[usize; 4]],
 ) {
     let n_pairs = 16; // 32 bits / 2
     for (idx, &s) in samples.iter().enumerate() {
         let bits = s.to_bits();
         let is_negative = bits & (1 << 31) != 0;
-        if is_negative {
+        // Treat both +0.0 and -0.0 as zero
+        let is_zero = s == 0.0;
+        if is_zero {
+            *zero_total += 1;
+        } else if is_negative {
             *neg_total += 1;
         } else {
             *pos_total += 1;

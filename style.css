@@ -280,6 +280,37 @@ body.sidebar-resizing {
     background: #1a3a25;
 }
 
+/* Analysis stats grid */
+.analysis-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 4px 12px;
+}
+
+.analysis-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #1a1a1a;
+    border-radius: 3px;
+    padding: 4px 8px;
+    min-width: 60px;
+    flex: 1;
+}
+
+.analysis-stat-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ccc;
+}
+
+.analysis-stat-label {
+    font-size: 9px;
+    color: #777;
+    margin-top: 1px;
+}
+
 /* Bit Details fold-down */
 .bit-details {
     margin: 0 12px 4px;
@@ -332,24 +363,11 @@ body.sidebar-resizing {
     font-size: 8px;
 }
 
-.bit-pair-list {
-    padding: 2px 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-}
-
-.pair-item {
+.bit-zero-row {
     font-size: 10px;
     color: #999;
-    background: #1a1a1a;
-    padding: 2px 6px;
-    border-radius: 3px;
-}
-
-.pair-item.pair-zero {
-    color: #f88;
-    background: #3a1a1a;
+    text-align: center;
+    padding: 4px 0 2px;
 }
 
 /* wSNR recording quality */

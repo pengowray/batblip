@@ -961,12 +961,116 @@ fn AnalysisPanel() -> impl IntoView {
 
     view! {
         <div class="sidebar-panel">
-            // wSNR section
+            // File info + signal stats
             {move || {
-                match wsnr_result.get().as_ref() {
+                let files = state.files.get();
+                let idx = state.current_file_index.get();
+                let file = idx.and_then(|i| files.get(i).cloned());
+                match file.as_ref() {
                     None => view! {
                         <div class="sidebar-panel-empty">"No file selected"</div>
                     }.into_any(),
+                    Some(f) => {
+                        let meta = &f.audio.metadata;
+                        let sr = f.audio.sample_rate;
+                        let sr_text = if sr % 1000 == 0 {
+                            format!("{} kHz", sr / 1000)
+                        } else {
+                            format!("{:.1} kHz", sr as f64 / 1000.0)
+                        };
+                        let ch_text = match f.audio.channels {
+                            1 => "Mono".to_string(),
+                            2 => "Stereo".to_string(),
+                            n => format!("{} ch", n),
+                        };
+                        let bit_text = if meta.is_float {
+                            format!("{}-bit float", meta.bits_per_sample)
+                        } else {
+                            format!("{}-bit", meta.bits_per_sample)
+                        };
+                        let total_samples = f.audio.samples.len();
+                        let dur_text = format!("{:.3} s", f.audio.duration_secs);
+                        let samples_text = format!("{}", total_samples);
+
+                        // Signal stats
+                        let samples = &f.audio.samples;
+                        let len = samples.len();
+                        let (sig_min, sig_max, dc_bias, rms) = if len > 0 {
+                            let mut smin = f32::INFINITY;
+                            let mut smax = f32::NEG_INFINITY;
+                            let mut sum = 0.0f64;
+                            let mut sum_sq = 0.0f64;
+                            for &s in samples.iter() {
+                                if s < smin { smin = s; }
+                                if s > smax { smax = s; }
+                                sum += s as f64;
+                                sum_sq += (s as f64) * (s as f64);
+                            }
+                            (smin, smax, sum / len as f64, (sum_sq / len as f64).sqrt())
+                        } else {
+                            (0.0f32, 0.0f32, 0.0f64, 0.0f64)
+                        };
+                        let min_db = if sig_min.abs() > 0.0 { format!("{:.1} dB", 20.0 * (sig_min.abs() as f64).log10()) } else { "-\u{221E} dB".into() };
+                        let max_db = if sig_max.abs() > 0.0 { format!("{:.1} dB", 20.0 * (sig_max.abs() as f64).log10()) } else { "-\u{221E} dB".into() };
+                        let rms_db = if rms > 0.0 { format!("{:.1} dB", 20.0 * rms.log10()) } else { "-\u{221E} dB".into() };
+                        let dc_text = format!("{:.6}", dc_bias);
+                        let dc_db = if dc_bias.abs() > 0.0 { format!("{:.1} dB", 20.0 * dc_bias.abs().log10()) } else { "-\u{221E} dB".into() };
+
+                        view! {
+                            <div class="setting-group">
+                                <div class="setting-group-title">"File"</div>
+                                <div class="analysis-stats">
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{sr_text}</span>
+                                        <span class="analysis-stat-label">"Sample rate"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{ch_text}</span>
+                                        <span class="analysis-stat-label">"Channels"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{bit_text}</span>
+                                        <span class="analysis-stat-label">"Bit depth"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{dur_text}</span>
+                                        <span class="analysis-stat-label">"Duration"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{samples_text}</span>
+                                        <span class="analysis-stat-label">"Samples"</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-group">
+                                <div class="setting-group-title">"Signal"</div>
+                                <div class="analysis-stats">
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{format!("{:.4}", sig_min)}</span>
+                                        <span class="analysis-stat-label" title=min_db>"Min"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{format!("{:.4}", sig_max)}</span>
+                                        <span class="analysis-stat-label" title=max_db>"Max"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{rms_db}</span>
+                                        <span class="analysis-stat-label">"RMS"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{dc_text}</span>
+                                        <span class="analysis-stat-label" title=dc_db>"DC bias"</span>
+                                    </div>
+                                </div>
+                            </div>
+                        }.into_any()
+                    }
+                }
+            }}
+            // wSNR section
+            {move || {
+                match wsnr_result.get().as_ref() {
+                    None => view! { <span></span> }.into_any(),
                     Some(w) => {
                         let grade_class = match w.grade {
                             wsnr::WsnrGrade::A => "wsnr-grade wsnr-grade-a",
@@ -1127,9 +1231,10 @@ fn AnalysisPanel() -> impl IntoView {
                             view! { <div class="bit-warning">{w}</div> }
                         }).collect();
 
-                        // Positive/negative split grids
+                        // Positive/negative/zero split grids
                         let pos_total = a.positive_total;
                         let neg_total = a.negative_total;
+                        let zero_total = a.zero_total;
                         let pos_counts = a.positive_counts.clone();
                         let neg_counts = a.negative_counts.clone();
                         let bits_per_sample = a.bits_per_sample;
@@ -1140,6 +1245,21 @@ fn AnalysisPanel() -> impl IntoView {
                             (0..bits).map(|idx| {
                                 let count = sign_counts[idx];
                                 let label = bit_analysis::bit_label(idx, bits_per_sample, is_float);
+                                let is_sign_bit = idx == 0;
+                                // Sign bit is always 0% or 100% by definition in pos/neg splits — grey it out
+                                if is_sign_bit {
+                                    let value_text = if sign_total > 0 && count == sign_total {
+                                        "100%".to_string()
+                                    } else {
+                                        "0%".to_string()
+                                    };
+                                    return view! {
+                                        <div class="bit-cell unused">
+                                            <span class="bit-label">{label}</span>
+                                            <span class="bit-value">{value_text}</span>
+                                        </div>
+                                    };
+                                }
                                 let used = count > 0;
                                 let expected = bit_analysis::is_expected_used(idx, bits_per_sample, is_float, effective_bits);
                                 let cell_class = if used {
@@ -1171,34 +1291,12 @@ fn AnalysisPanel() -> impl IntoView {
                         let pos_grid = make_sign_grid(&pos_counts, pos_total);
                         let neg_grid = make_sign_grid(&neg_counts, neg_total);
 
-                        // Pair analysis: find lowest-% combo per pair, show notable ones
-                        let pair_items: Vec<_> = a.pair_counts.iter().enumerate().filter_map(|(p, counts)| {
-                            let pair_total: usize = counts.iter().sum();
-                            if pair_total == 0 { return None; }
-                            let (min_idx, &min_count) = counts.iter().enumerate()
-                                .min_by_key(|(_, c)| **c).unwrap();
-                            let min_pct = min_count as f64 / pair_total as f64 * 100.0;
-                            // Skip if all combos are reasonably balanced (lowest > 15%)
-                            if min_pct > 15.0 { return None; }
-                            let b0 = 2 * p;
-                            let b1 = 2 * p + 1;
-                            let label0 = bit_analysis::bit_label(b0, bits_per_sample, is_float);
-                            let label1 = bit_analysis::bit_label(b1, bits_per_sample, is_float);
-                            let combo_str = match min_idx {
-                                0 => "00",
-                                1 => "01",
-                                2 => "10",
-                                3 => "11",
-                                _ => unreachable!(),
-                            };
-                            let notable_class = if min_count == 0 { "pair-item pair-zero" } else { "pair-item" };
-                            let text = if min_count == 0 {
-                                format!("{}+{}: {} \u{2192} 0%", label0, label1, combo_str)
-                            } else {
-                                format!("{}+{}: {} \u{2192} {:.1}%", label0, label1, combo_str, min_pct)
-                            };
-                            Some(view! { <div class=notable_class>{text}</div> })
-                        }).collect();
+                        let pos_pct = if total > 0 { format!("{:.0}%", pos_total as f64 / total as f64 * 100.0) } else { "0%".into() };
+                        let neg_pct = if total > 0 { format!("{:.0}%", neg_total as f64 / total as f64 * 100.0) } else { "0%".into() };
+                        let zero_pct = if total > 0 { format!("{:.0}%", zero_total as f64 / total as f64 * 100.0) } else { "0%".into() };
+                        let pos_tooltip = format!("{} samples", pos_total);
+                        let neg_tooltip = format!("{} samples", neg_total);
+                        let zero_tooltip = format!("{} samples", zero_total);
 
                         view! {
                             <div class="setting-group">
@@ -1217,31 +1315,22 @@ fn AnalysisPanel() -> impl IntoView {
                                 <div class="setting-group">
                                     <div class="bit-sign-split">
                                         <div class="bit-sign-col">
-                                            <div class="bit-sign-header">{format!("+ ({})", pos_total)}</div>
+                                            <div class="bit-sign-header" title=pos_tooltip>{format!("+ {}", pos_pct)}</div>
                                             <div class="bit-grid bit-grid-mini" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
                                                 {pos_grid}
                                             </div>
                                         </div>
                                         <div class="bit-sign-col">
-                                            <div class="bit-sign-header">{format!("\u{2212} ({})", neg_total)}</div>
+                                            <div class="bit-sign-header" title=neg_tooltip>{format!("\u{2212} {}", neg_pct)}</div>
                                             <div class="bit-grid bit-grid-mini" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
                                                 {neg_grid}
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="bit-zero-row" title=zero_tooltip>
+                                        {format!("0 (silence): {}", zero_pct)}
+                                    </div>
                                 </div>
-                                {if !pair_items.is_empty() {
-                                    view! {
-                                        <div class="setting-group">
-                                            <div class="setting-group-title">"Bit Pairs (lowest combo)"</div>
-                                            <div class="bit-pair-list">
-                                                {pair_items}
-                                            </div>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
                             </details>
                         }.into_any()
                     }
