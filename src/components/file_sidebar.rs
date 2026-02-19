@@ -277,7 +277,7 @@ fn FilesPanel() -> impl IntoView {
             <input
                 node_ref=file_input_ref
                 type="file"
-                accept=".wav,.flac"
+                accept=".wav,.flac,.mp3,.ogg"
                 multiple=true
                 style="display:none"
                 on:change=on_file_input_change
@@ -288,7 +288,7 @@ fn FilesPanel() -> impl IntoView {
                 if file_vec.is_empty() && lc == 0 {
                     view! {
                         <div class="drop-hint">
-                            "Drop WAV/FLAC files here"
+                            "Drop audio files here"
                             <button class="upload-btn" on:click=on_upload_click>"Browse files"</button>
                             <button class="upload-btn demo-btn" on:click=on_demo_click>
                                 {move || if demo_loading.get() { "Loading..." } else { "Load demo" }}
