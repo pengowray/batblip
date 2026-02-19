@@ -56,6 +56,7 @@ pub struct WsnrResult {
     pub is_ultrasonic: bool,
     pub dense_soundscape: bool,
     pub dense_pct: f64,
+    pub has_silent_gaps: bool,
     pub warnings: Vec<String>,
 }
 
@@ -78,6 +79,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
             is_ultrasonic: false,
             dense_soundscape: false,
             dense_pct: 0.0,
+            has_silent_gaps: false,
             warnings,
         };
     }
@@ -96,6 +98,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
             is_ultrasonic: false,
             dense_soundscape: false,
             dense_pct: 0.0,
+            has_silent_gaps: false,
             warnings,
         };
     }
@@ -127,6 +130,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
             is_ultrasonic,
             dense_soundscape: false,
             dense_pct: 0.0,
+            has_silent_gaps: false,
             warnings,
         };
     }
@@ -175,6 +179,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
             is_ultrasonic,
             dense_soundscape: false,
             dense_pct: 0.0,
+            has_silent_gaps: false,
             warnings,
         };
     }
@@ -183,7 +188,9 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
 
     // Step 8: ITU-R 468 noise measurement
     let itu_filtered = apply_weighting(analysis_region, sample_rate, itu_r_468_gain, sample_rate);
-    let noise_db = min_rms_windowed(&itu_filtered, 40);
+    // Use ~5ms windows (matching the plugin's 240 samples @ 48kHz) and exclude silent gaps
+    let noise_window = ((sample_rate / 200) as usize).max(40).min(2400);
+    let (noise_db, has_silent_gaps) = noise_floor_db(&itu_filtered, noise_window);
 
     // Step 9: ISO 226 @ 80 phon signal measurement
     let iso_filtered = apply_weighting(analysis_region, sample_rate, iso_226_80phon_gain, sample_rate);
@@ -202,6 +209,18 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     if snr_db < 20.0 && !dense_soundscape {
         warnings.push("Low SNR detected \u{2014} reliability may be reduced below 20 dB".into());
     }
+    if has_silent_gaps {
+        warnings.push(
+            "Silent gaps detected \u{2014} noise floor estimated from active audio only; \
+             SNR may still be overestimated in files with very low ITU-band noise".into()
+        );
+    }
+    if is_ultrasonic && grade == WsnrGrade::A {
+        warnings.push(
+            "A grade reflects low audible-band noise (expected for ultrasonic equipment); \
+             does not assess bat call quality".into()
+        );
+    }
 
     WsnrResult {
         snr_db,
@@ -214,6 +233,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         is_ultrasonic,
         dense_soundscape,
         dense_pct,
+        has_silent_gaps,
         warnings,
     }
 }
@@ -708,33 +728,66 @@ fn parametric_eq(freq: f64, center: f64, gain_db: f64, q: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// Minimum RMS over sliding windows (noise floor measurement)
+// Gap-aware noise floor measurement
+//
+// Uses non-overlapping windows (~5ms, matching the plugin's 240 samples @ 48kHz).
+// Windows with RMS below GAP_THRESHOLD (−80 dBFS) are treated as silent gaps
+// and excluded from the noise floor estimate, matching the plugin's intent of
+// measuring background noise during "active" audio rather than digital silence
+// between calls.
 // ---------------------------------------------------------------------------
 
-fn min_rms_windowed(samples: &[f32], window_size: usize) -> f64 {
+fn noise_floor_db(samples: &[f32], window_size: usize) -> (f64, bool) {
     if samples.is_empty() || window_size == 0 {
-        return -120.0;
+        return (-120.0, false);
     }
-
     let ws = window_size.min(samples.len());
 
-    // Initial window sum of squares
-    let mut sum_sq: f64 = samples[..ws].iter().map(|&s| (s as f64) * (s as f64)).sum();
-    let mut min_rms = (sum_sq / ws as f64).sqrt();
+    // Windows below this RMS (−80 dBFS linear) are considered silent gaps
+    const GAP_THRESHOLD: f64 = 1e-4;
 
-    // Slide window
-    for i in ws..samples.len() {
-        let old = samples[i - ws] as f64;
-        let new = samples[i] as f64;
-        sum_sq += new * new - old * old;
-        // Guard against floating point going slightly negative
-        let rms = (sum_sq.max(0.0) / ws as f64).sqrt();
-        if rms < min_rms {
-            min_rms = rms;
+    let mut min_active_rms: Option<f64> = None;
+    let mut min_all_rms: f64 = f64::MAX;
+    let mut total_windows = 0usize;
+    let mut active_windows = 0usize;
+
+    let mut pos = 0;
+    while pos + ws <= samples.len() {
+        let sum_sq: f64 = samples[pos..pos + ws]
+            .iter()
+            .map(|&s| (s as f64) * (s as f64))
+            .sum();
+        let rms = (sum_sq / ws as f64).sqrt();
+
+        total_windows += 1;
+        if rms < min_all_rms {
+            min_all_rms = rms;
         }
+        if rms > GAP_THRESHOLD {
+            active_windows += 1;
+            match min_active_rms {
+                None => min_active_rms = Some(rms),
+                Some(prev) if rms < prev => min_active_rms = Some(rms),
+                _ => {}
+            }
+        }
+
+        pos += ws;
     }
 
-    linear_to_db(min_rms as f32)
+    let has_silent_gaps = active_windows < total_windows;
+
+    match min_active_rms {
+        Some(rms) => (linear_to_db(rms as f32), has_silent_gaps),
+        None => {
+            // All windows are silent — no content in this frequency band at all
+            // (e.g. ultrasonic recording with nothing in audible ITU band).
+            // Fall back to absolute minimum; has_silent_gaps is false because
+            // there are no "gaps between calls", just uniform silence in this band.
+            let fallback = if min_all_rms < f64::MAX { min_all_rms } else { 0.0 };
+            (linear_to_db(fallback as f32), false)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
