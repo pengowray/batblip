@@ -192,7 +192,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     // Step 10: Dense soundscape detection
     let (dense_soundscape, dense_pct) = detect_dense_soundscape(&itu_filtered, noise_db);
     if dense_soundscape {
-        warnings.push(format!("Dense soundscape detected ({:.1}% near noise floor) \u{2014} measurement may be less accurate", dense_pct));
+        warnings.push(format!("(Beta) Dense soundscape detected ({:.1}% near noise floor) \u{2014} measurement may be less accurate", dense_pct));
     }
 
     // Step 11: Compute SNR and grade
@@ -306,7 +306,7 @@ fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>
     let ratio = total_above / total;
     if ratio > 0.5 {
         (true, Some(format!(
-            "Ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz). wSNR reflects audible-band quality only.",
+            "(Beta) Ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz). wSNR reflects audible-band quality only.",
             sample_rate / 1000, ratio * 100.0
         )))
     } else {
