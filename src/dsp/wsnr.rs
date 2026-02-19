@@ -212,7 +212,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     if has_silent_gaps {
         warnings.push(
             "Silent gaps detected \u{2014} noise floor estimated from active audio only; \
-             SNR may still be overestimated in files with very low ITU-band noise".into()
+             SNR may be overestimated in files with very low ITU-band noise".into()
         );
     }
     if is_ultrasonic && grade == WsnrGrade::A {
