@@ -233,6 +233,11 @@ body.sidebar-resizing {
     color: #555;
 }
 
+.bit-cell.zero-padded {
+    background: #2a1212;
+    color: #c44;
+}
+
 .bit-label {
     font-size: 8px;
     opacity: 0.7;
@@ -244,12 +249,6 @@ body.sidebar-resizing {
     font-weight: 600;
 }
 
-.bit-summary {
-    padding: 4px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #ccc;
-}
 
 .bit-warning {
     padding: 2px 12px;
@@ -322,39 +321,13 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
-/* Bit Details fold-down */
-.bit-details {
-    margin: 0 12px 4px;
-}
-
-.bit-details-summary {
-    font-size: 10px;
-    color: #999;
-    cursor: pointer;
-    padding: 4px 0;
-    user-select: none;
-}
-
-.bit-details-summary:hover {
-    color: #ccc;
-}
-
-.bit-sign-split {
-    display: flex;
-    gap: 8px;
-}
-
-.bit-sign-col {
-    flex: 1;
-    min-width: 0;
-}
 
 .bit-sign-header {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
-    color: #999;
-    padding: 2px 0;
-    text-align: center;
+    color: #aaa;
+    padding: 6px 12px 2px;
+    text-align: left;
 }
 
 .bit-grid-mini {
@@ -379,6 +352,19 @@ body.sidebar-resizing {
     color: #999;
     text-align: center;
     padding: 4px 0 2px;
+}
+
+.bit-depth-stat {
+    padding: 2px 12px;
+    font-size: 10px;
+    color: #bbb;
+}
+
+.bit-depth-stat.bit-depth-primary {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ddd;
+    padding-top: 4px;
 }
 
 /* wSNR recording quality */
