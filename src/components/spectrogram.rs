@@ -527,12 +527,20 @@ fn draw_coherence_heatmap(
         return;
     }
 
+    // Initialise all pixels to opaque black; columns past the end of the file stay black.
     let mut pixels = vec![0u8; w * h * 4];
+    for i in 0..w * h {
+        pixels[i * 4 + 3] = 255;
+    }
 
     for px_x in 0..w {
         // Map pixel column → source frame index.
         let frame_f = scroll_col + px_x as f64 / zoom;
-        let frame_i = (frame_f as usize).min(n_frames - 1);
+        // Past the end of the recording → leave as black.
+        if frame_f >= n_frames as f64 {
+            break;
+        }
+        let frame_i = frame_f as usize;
         let frame_row = &frames[frame_i];
 
         for px_y in 0..h {
@@ -548,7 +556,7 @@ fn draw_coherence_heatmap(
             pixels[idx] = r;
             pixels[idx + 1] = g;
             pixels[idx + 2] = b;
-            pixels[idx + 3] = 255;
+            // alpha already 255
         }
     }
 
@@ -558,18 +566,18 @@ fn draw_coherence_heatmap(
     }
 }
 
-/// Map a coherence value [0,1] to an RGB colour using a viridis-inspired palette.
-/// 0.00 → dark purple (#440154)
-/// 0.33 → navy blue  (#3b528b)
-/// 0.67 → teal       (#21918c)
-/// 1.00 → pale yellow (#fde725)
+/// Map a coherence value [0,1] to an RGB colour.
+/// Sequential blue scale: black → navy → steel blue → pale blue-white.
+/// 0.00 → #000000 (black)
+/// 0.40 → #0d3a6e (dark navy)
+/// 0.70 → #2d7fc0 (steel blue)
+/// 1.00 → #c8e8ff (pale ice blue)
 fn coherence_to_rgb(c: f32) -> [u8; 3] {
-    // Four colour stops: (r, g, b)
     const STOPS: [(u8, u8, u8); 4] = [
-        (0x44, 0x01, 0x54), // 0.00 — dark purple
-        (0x3b, 0x52, 0x8b), // 0.33 — navy blue
-        (0x21, 0x91, 0x8c), // 0.67 — teal
-        (0xfd, 0xe7, 0x25), // 1.00 — pale yellow
+        (0x00, 0x00, 0x00), // 0.00 — black
+        (0x0d, 0x3a, 0x6e), // 0.40 — dark navy
+        (0x2d, 0x7f, 0xc0), // 0.70 — steel blue
+        (0xc8, 0xe8, 0xff), // 1.00 — pale ice blue
     ];
     let c = c.clamp(0.0, 1.0);
     let scaled = c * (STOPS.len() - 1) as f32;

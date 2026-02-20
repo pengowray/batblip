@@ -1719,19 +1719,43 @@ fn HarmonicsPanel() -> impl IntoView {
                             // --- Phase Coherence ---
                             <div class="setting-group">
                                 <div class="setting-group-title">"Phase Coherence"</div>
+                                <div style="padding:2px 12px 6px;font-size:10px;color:#666;line-height:1.5">
+                                    "Each FFT frame's phase is compared to the previous one. Natural harmonics have a \
+                                    stable, predictable phase relationship between frames. Heavy DSP (e.g. 10× pitch \
+                                    shifting) randomises this, leaving a fingerprint of drifting phase."
+                                </div>
+                                // Heatmap colour scale legend
+                                <div style="padding:0 12px 2px">
+                                    <div style="background:linear-gradient(to right,#000000,#0d3a6e,#2d7fc0,#c8e8ff);\
+                                        height:7px;border-radius:2px"/>
+                                    <div style="display:flex;justify-content:space-between;\
+                                        font-size:9px;color:#555;margin-top:2px">
+                                        <span>"Low (processed)"</span>
+                                        <span>"High (natural)"</span>
+                                    </div>
+                                </div>
+                                <div style="padding:2px 12px 4px;font-size:10px;color:#555">
+                                    "The spectrogram above uses this scale. \u{2192} bright = phase-locked; dark = drifting."
+                                </div>
                                 <div class="analysis-stats">
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Mean phase coherence across all frequency bins above the noise floor. \
+                                               Above 65% suggests natural signal; below 45% suggests heavy processing.">
                                         <span class="analysis-stat-value"
                                             style=format!("color:{}", coherence_color)>
                                             {coherence_pct}
                                         </span>
                                         <span class="analysis-stat-label">"Mean coherence"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Overall verdict based on mean coherence score.">
                                         <span class="analysis-stat-value">{coherence_label}</span>
                                         <span class="analysis-stat-label">"Assessment"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Ratio of coherence at the detected harmonic frequencies vs. the overall \
+                                               mean. Values below 1.0× mean the harmonic bins are less coherent than the \
+                                               background — a sign of synthetic harmonics introduced by processing.">
                                         <span class="analysis-stat-value">{ratio_text}</span>
                                         <span class="analysis-stat-label">"Harmonic ratio"</span>
                                     </div>
@@ -1744,16 +1768,32 @@ fn HarmonicsPanel() -> impl IntoView {
                             // --- Harmonic Decay ---
                             <div class="setting-group">
                                 <div class="setting-group-title">"Harmonic Decay"</div>
+                                <div style="padding:2px 12px 6px;font-size:10px;color:#666;line-height:1.5">
+                                    "Natural overtones follow a power-law: each harmonic (2f, 3f\u{2026}) has less \
+                                    energy than the one below it, roughly A\u{2099} \u{221d} 1/n\u{1d45}. Pitch-shifting \
+                                    can produce alias harmonics that violate this — a higher overtone equalling or \
+                                    exceeding the one below it is a red flag. The dashed curve on the chart shows the \
+                                    fitted decay law; red bars are anomalies."
+                                </div>
                                 <div class="analysis-stats">
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="The fundamental frequency detected via Harmonic Product Spectrum. \
+                                               For bat calls this is typically 20–100 kHz.">
                                         <span class="analysis-stat-value">{fund_text}</span>
                                         <span class="analysis-stat-label">"Fundamental"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Power-law decay exponent \u{3B1} fitted to A\u{2099} \u{2248} 1/n\u{1d45}. \
+                                               Natural sounds typically fall in the range 0.8–2.5. Very low values \
+                                               (flat decay) suggest aliasing; very high values suggest steep roll-off \
+                                               from aggressive filtering.">
                                         <span class="analysis-stat-value">{decay_text}</span>
                                         <span class="analysis-stat-label">"\u{03B1} exponent"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Whether each successive harmonic is strictly weaker than the previous. \
+                                               Non-monotonic decay (No) means at least one overtone has more energy \
+                                               than the one below it — a common artifact of aliasing.">
                                         <span class="analysis-stat-value">
                                             {if h.decay_is_monotonic { "Yes" } else { "No" }}
                                         </span>
@@ -1780,23 +1820,42 @@ fn HarmonicsPanel() -> impl IntoView {
                             // --- Spectral Flux ---
                             <div class="setting-group">
                                 <div class="setting-group-title">"Spectral Flux"</div>
+                                <div style="padding:2px 12px 6px;font-size:10px;color:#666;line-height:1.5">
+                                    "Spectral flux measures how much the frequency content changes between frames. \
+                                    Pre-ringing is energy that appears just before a sudden onset — a fingerprint of \
+                                    FFT windowing smear in heavily processed audio. Staircasing is when the peak \
+                                    frequency stays stuck at the same bin despite energy changing, revealing that \
+                                    frequency has been quantised into discrete steps."
+                                </div>
                                 <div class="analysis-stats">
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Average frame-to-frame onset flux (half-wave rectified). \
+                                               Higher values mean more rapid spectral change overall.">
                                         <span class="analysis-stat-value">{flux_mean_text}</span>
                                         <span class="analysis-stat-label">"Mean flux"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Maximum onset flux across all frame transitions. \
+                                               Used as a reference to scale the pre-ringing and staircasing thresholds.">
                                         <span class="analysis-stat-value">{flux_peak_text}</span>
                                         <span class="analysis-stat-label">"Peak flux"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Number of frames with significant flux that immediately precede a \
+                                               much larger onset. In clean recordings this should be zero; in \
+                                               STFT-processed audio the window smear can deposit energy in adjacent \
+                                               frames before the true transient.">
                                         <span class="analysis-stat-value"
                                             style=format!("color:{}", preringing_color)>
                                             {preringing_text}
                                         </span>
                                         <span class="analysis-stat-label">"Pre-ringing"</span>
                                     </div>
-                                    <div class="analysis-stat">
+                                    <div class="analysis-stat"
+                                        title="Fraction of active transitions where the peak frequency bin does not \
+                                               move despite energy changing. High values indicate the frequency sweep \
+                                               is advancing in discrete steps (a staircase pattern) rather than \
+                                               smoothly, which is characteristic of pitch-shifted audio.">
                                         <span class="analysis-stat-value"
                                             style=format!("color:{}", staircase_color)>
                                             {staircase_pct}
@@ -1816,6 +1875,9 @@ fn HarmonicsPanel() -> impl IntoView {
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }}
+                                <div style="padding:2px 12px 0;font-size:9px;color:#555">
+                                    "Grey area = flux over time \u{2014} dashed line = mean \u{2014} red dots = pre-ringing"
+                                </div>
                             </div>
 
                             // --- Artifact Indicators ---
@@ -1835,8 +1897,11 @@ fn HarmonicsPanel() -> impl IntoView {
                                         }
                                     }).collect::<Vec<_>>()}
                                 </div>
-                                <div style="padding:4px 12px 8px;font-size:10px;color:#555;font-style:italic">
-                                    "Tip: switch to Harmonics view in the spectrogram to see phase coherence as a heatmap"
+                                <div style="padding:4px 12px 8px;font-size:10px;color:#555;line-height:1.5">
+                                    "These metrics detect processing artifacts but cannot make a definitive judgement — \
+                                    some natural recordings have low phase coherence (broadband noise, complex calls), \
+                                    and clean pitch-shifted audio may score well. Use alongside the heatmap and your \
+                                    own knowledge of the recording."
                                 </div>
                             </div>
                         }.into_any()
