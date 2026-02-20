@@ -1164,14 +1164,6 @@ fn AnalysisPanel() -> impl IntoView {
                         let dc_raw_tooltip = format!("{:.6} (raw)", dc_bias);
                         // DC relative to RMS: gives perceptual sense of DC severity
                         let dc_rms_ratio = if rms > 0.0 { dc_bias.abs() / rms } else { 0.0 };
-                        // Fractional bit depth estimate from bit analysis
-                        let (precision_text, precision_tooltip) = analysis.get()
-                            .map(|a| {
-                                let text = format!("~{:.1}", a.effective_bits_f64);
-                                let tip = format!("Estimated effective bit depth (entropy-based); nominal: {}-bit", a.bits_per_sample);
-                                (text, tip)
-                            })
-                            .unwrap_or_else(|| ("—".into(), String::new()));
                         // Warning: notable DC if |dc| > 1% of full scale OR dc/rms > 5%, gated on N
                         let dc_notable = len > 10_000 && (dc_bias.abs() > 0.01 || dc_rms_ratio > 0.05);
                         let dc_warning = if dc_notable {
@@ -1224,10 +1216,6 @@ fn AnalysisPanel() -> impl IntoView {
                                     <div class="analysis-stat">
                                         <span class="analysis-stat-value">{dc_db}</span>
                                         <span class="analysis-stat-label" title=dc_raw_tooltip>"DC bias"</span>
-                                    </div>
-                                    <div class="analysis-stat">
-                                        <span class="analysis-stat-value">{precision_text}</span>
-                                        <span class="analysis-stat-label" title=precision_tooltip>"Precision"</span>
                                     </div>
                                 </div>
                                 {dc_warning.map(|w| view! { <div class="analysis-warning">{w}</div> })}
@@ -1315,90 +1303,18 @@ fn AnalysisPanel() -> impl IntoView {
                     Some(a) => {
                         let bits = a.bits_per_sample as usize;
                         let cols = 4usize;
-                        let rows = (bits + cols - 1) / cols;
                         let total = a.total_samples;
                         let summary = a.summary.clone();
                         let warnings = a.warnings.clone();
+                        let is_float = a.is_float;
+                        let bits_per_sample = a.bits_per_sample;
+                        let effective_bits = a.effective_bits;
+                        let effective_bits_f64 = a.effective_bits_f64;
+                        let headroom_bits = a.headroom_bits;
 
-                        let grid_cells: Vec<_> = (0..rows).flat_map(|row| {
-                            (0..cols).map(move |col| {
-                                let idx = row * cols + col;
-                                (row, col, idx)
-                            })
-                        }).filter(|&(_, _, idx)| idx < bits)
-                        .map(|(_, _, idx)| {
-                            let stat = &a.bit_stats[idx];
-                            let cautions = &a.bit_cautions[idx];
-                            let label = bit_analysis::bit_label(idx, a.bits_per_sample, a.is_float);
-                            let count = stat.count;
-                            let used = count > 0;
-                            let expected = bit_analysis::is_expected_used(idx, a.bits_per_sample, a.is_float, a.effective_bits);
-
-                            let cell_class = if used {
-                                if cautions.iter().any(|c| matches!(c, BitCaution::SignBitSkewed | BitCaution::OnlyInFade | BitCaution::VeryLowUsage)) {
-                                    "bit-cell used caution"
-                                } else if cautions.iter().any(|c| matches!(c, BitCaution::Always1)) {
-                                    "bit-cell used always1"
-                                } else {
-                                    "bit-cell used"
-                                }
-                            } else if expected {
-                                "bit-cell unused-expected"
-                            } else {
-                                "bit-cell unused"
-                            };
-
-                            let value_text = if count == 0 {
-                                "\u{2013}".to_string() // em-dash
-                            } else if total > 0 {
-                                let pct = count as f64 / total as f64 * 100.0;
-                                if pct >= 1.0 {
-                                    format!("{:.0}%", pct)
-                                } else if count > 99 {
-                                    "99+".into()
-                                } else {
-                                    format!("{}", count)
-                                }
-                            } else {
-                                "\u{2013}".to_string()
-                            };
-
-                            let mut tooltip = format!("Bit {}: {} / {} samples", label, count, total);
-                            if let Some(fi) = stat.first_index {
-                                tooltip.push_str(&format!("\nFirst: sample {}", fi));
-                            }
-                            if let Some(li) = stat.last_index {
-                                tooltip.push_str(&format!("\nLast: sample {}", li));
-                            }
-                            for c in cautions {
-                                match c {
-                                    BitCaution::SignBitSkewed => tooltip.push_str("\n\u{26A0} Asymmetric — sample distribution is far from 50/50 +/\u{2212}"),
-                                    BitCaution::OnlyInFade => tooltip.push_str("\n\u{26A0} Only used in fade regions"),
-                                    BitCaution::Always1 => tooltip.push_str("\n\u{26A0} Always 1 (100%)"),
-                                    BitCaution::VeryLowUsage => tooltip.push_str("\n\u{26A0} Very low usage"),
-                                }
-                            }
-
-                            view! {
-                                <div class=cell_class title=tooltip>
-                                    <span class="bit-label">{label}</span>
-                                    <span class="bit-value">{value_text}</span>
-                                </div>
-                            }
-                        }).collect();
-
-                        // Float region labels
-                        let region_labels = if a.is_float && a.bits_per_sample == 32 {
-                            view! {
-                                <div class="bit-region-labels">
-                                    <span class="bit-region sign">"S"</span>
-                                    <span class="bit-region exponent">"Exponent"</span>
-                                    <span class="bit-region mantissa">"Mantissa"</span>
-                                </div>
-                            }.into_any()
-                        } else {
-                            view! { <span></span> }.into_any()
-                        };
+                        let is_asymmetric = a.bit_cautions.first()
+                            .map(|c| c.iter().any(|x| matches!(x, BitCaution::SignBitSkewed)))
+                            .unwrap_or(false);
 
                         let warning_items: Vec<_> = warnings.iter().map(|w| {
                             let w = w.clone();
@@ -1411,16 +1327,13 @@ fn AnalysisPanel() -> impl IntoView {
                         let zero_total = a.zero_total;
                         let pos_counts = a.positive_counts.clone();
                         let neg_counts = a.negative_counts.clone();
-                        let bits_per_sample = a.bits_per_sample;
-                        let is_float = a.is_float;
-                        let effective_bits = a.effective_bits;
 
                         let make_sign_grid = |sign_counts: &[usize], sign_total: usize, polarity: &str| -> Vec<_> {
                             (0..bits).map(|idx| {
                                 let count = sign_counts[idx];
                                 let label = bit_analysis::bit_label(idx, bits_per_sample, is_float);
                                 let is_sign_bit = idx == 0;
-                                // Sign bit is always 0% or 100% by definition in pos/neg splits — grey it out
+                                // Sign bit is always 0% or 100% by definition — keep grey
                                 if is_sign_bit {
                                     let value_text = if sign_total > 0 && count == sign_total {
                                         "100%".to_string()
@@ -1442,15 +1355,13 @@ fn AnalysisPanel() -> impl IntoView {
                                     };
                                 }
                                 let used = count > 0;
-                                let expected = bit_analysis::is_expected_used(idx, bits_per_sample, is_float, effective_bits);
+                                // Zero-count non-sign bits are zero-padded (red); used bits get normal coloring
                                 let cell_class = if sign_total > 0 && count == sign_total {
                                     "bit-cell used full"
                                 } else if used {
                                     "bit-cell used"
-                                } else if expected {
-                                    "bit-cell unused-expected"
                                 } else {
-                                    "bit-cell unused"
+                                    "bit-cell zero-padded"
                                 };
                                 let value_text = if count == 0 {
                                     "\u{2013}".to_string()
@@ -1485,42 +1396,62 @@ fn AnalysisPanel() -> impl IntoView {
                         let zero_pct = if total > 0 { format!("{:.0}%", zero_total as f64 / total as f64 * 100.0) } else { "0%".into() };
                         let pos_tooltip = format!("{} samples above 0", pos_total);
                         let neg_tooltip = format!("{} samples below 0", neg_total);
-                        let zero_tooltip = format!("{} samples", zero_total);
+                        let zero_tooltip = format!("{} samples exactly zero", zero_total);
+
+                        // Integer-only bit depth stats
+                        let int_stats = if !is_float {
+                            let zero_padding = bits_per_sample - effective_bits;
+                            let effective_depth = bits_per_sample.saturating_sub(headroom_bits).saturating_sub(zero_padding);
+                            let headroom_db = headroom_bits as f64 * 20.0 * 2f64.log10();
+
+                            let headroom_text = if headroom_bits > 0 {
+                                Some(format!("Headroom: {} bit{} ({:.1} dB)", headroom_bits, if headroom_bits == 1 { "" } else { "s" }, headroom_db))
+                            } else {
+                                None
+                            };
+                            let zp_text = if zero_padding > 0 {
+                                Some(format!("Zero padding: {} bit{}", zero_padding, if zero_padding == 1 { "" } else { "s" }))
+                            } else {
+                                None
+                            };
+                            let eff_text = format!("Effective bit depth: {} bits", effective_depth);
+
+                            Some((headroom_text, zp_text, eff_text))
+                        } else {
+                            None
+                        };
+
+                        let entropy_text = format!("Entropy estimate: ~{:.1} bits", effective_bits_f64);
+                        let entropy_tooltip = format!("Estimated effective bit depth (Shannon entropy sum); nominal: {}-bit", bits_per_sample);
 
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"Bit Usage"</div>
-                                {region_labels}
-                                <div class="bit-grid" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
-                                    {grid_cells}
-                                </div>
-                            </div>
-                            <div class="setting-group">
                                 <div class="bit-summary">{summary}</div>
+                                {if is_asymmetric {
+                                    view! { <div class="bit-warning">"\u{26A0} Asymmetric \u{2014} sample distribution is far from 50/50 +/\u{2212}"</div> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }}
                                 {warning_items}
-                            </div>
-                            <details class="bit-details">
-                                <summary class="bit-details-summary">"Bit Details"</summary>
-                                <div class="setting-group">
-                                    <div class="bit-sign-split">
-                                        <div class="bit-sign-col">
-                                            <div class="bit-sign-header" title=pos_tooltip>{format!("+ {}", pos_pct)}</div>
-                                            <div class="bit-grid bit-grid-mini" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
-                                                {pos_grid}
-                                            </div>
-                                        </div>
-                                        <div class="bit-sign-col">
-                                            <div class="bit-sign-header" title=neg_tooltip>{format!("\u{2212} {}", neg_pct)}</div>
-                                            <div class="bit-grid bit-grid-mini" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
-                                                {neg_grid}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="bit-zero-row" title=zero_tooltip>
-                                        {format!("0 (silence): {}", zero_pct)}
-                                    </div>
+                                <div class="bit-sign-header" title=pos_tooltip>{format!("Positive samples ({})", pos_pct)}</div>
+                                <div class="bit-grid" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
+                                    {pos_grid}
                                 </div>
-                            </details>
+                                <div class="bit-sign-header" title=neg_tooltip>{format!("Negative samples ({})", neg_pct)}</div>
+                                <div class="bit-grid" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
+                                    {neg_grid}
+                                </div>
+                                <div class="bit-sign-header" title=zero_tooltip>{format!("Silence ({})", zero_pct)}</div>
+                                {int_stats.map(|(headroom_text, zp_text, eff_text)| view! {
+                                    <div>
+                                        {headroom_text.map(|t| view! { <div class="bit-depth-stat">{t}</div> })}
+                                        {zp_text.map(|t| view! { <div class="bit-depth-stat">{t}</div> })}
+                                        <div class="bit-depth-stat">{eff_text}</div>
+                                    </div>
+                                })}
+                                <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
+                            </div>
                         }.into_any()
                     }
                 }

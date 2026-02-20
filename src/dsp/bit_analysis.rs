@@ -43,6 +43,9 @@ pub struct BitAnalysis {
     pub zero_total: usize,
     /// Adjacent non-overlapping bit pair analysis: pair_counts[p] = [count_00, count_01, count_10, count_11]
     pub pair_counts: Vec<[usize; 4]>,
+    /// For integer files: number of MSBs (below sign bit) that are always 0 in positive
+    /// samples and always 1 in negative samples (sign-extension headroom). 0 for floats.
+    pub headroom_bits: u16,
 }
 
 /// Bit label for display in the grid.
@@ -102,6 +105,7 @@ pub fn analyze_bits(
 
     let effective_bits = detect_effective_bits(&bit_stats, bits_per_sample, is_float);
     let effective_bits_f64 = estimate_fractional_bits(&bit_stats, bits_per_sample, is_float, total);
+    let headroom_bits = detect_headroom(&pos_counts, &neg_counts, pos_total, neg_total, bits_per_sample, is_float);
 
     let bit_cautions = compute_cautions(
         &bit_stats,
@@ -137,6 +141,7 @@ pub fn analyze_bits(
         negative_total: neg_total,
         zero_total,
         pair_counts,
+        headroom_bits,
     }
 }
 
@@ -320,6 +325,32 @@ fn detect_effective_bits(
         }
         bits_per_sample - unused_lsb
     }
+}
+
+fn detect_headroom(
+    pos_counts: &[usize],
+    neg_counts: &[usize],
+    pos_total: usize,
+    neg_total: usize,
+    bits_per_sample: u16,
+    is_float: bool,
+) -> u16 {
+    if is_float || (pos_total == 0 && neg_total == 0) {
+        return 0;
+    }
+    let n = bits_per_sample as usize;
+    let mut headroom = 0u16;
+    for idx in 1..n {
+        // bit is headroom if always 0 in positive and always 1 in negative
+        let pos_ok = pos_total == 0 || pos_counts[idx] == 0;
+        let neg_ok = neg_total == 0 || neg_counts[idx] == neg_total;
+        if pos_ok && neg_ok {
+            headroom += 1;
+        } else {
+            break;
+        }
+    }
+    headroom
 }
 
 fn compute_cautions(
