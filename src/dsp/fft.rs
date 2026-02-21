@@ -80,6 +80,49 @@ pub fn compute_spectrogram(
     }
 }
 
+/// Compute a partial spectrogram — only columns `col_start .. col_start + col_count`.
+///
+/// Identical FFT parameters to `compute_spectrogram`.  Used for chunked async
+/// computation so the browser stays responsive between chunks.
+pub fn compute_spectrogram_partial(
+    audio: &AudioData,
+    fft_size: usize,
+    hop_size: usize,
+    col_start: usize,
+    col_count: usize,
+) -> Vec<SpectrogramColumn> {
+    if audio.samples.len() < fft_size || col_count == 0 {
+        return vec![];
+    }
+
+    let fft = FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let window = hann_window(fft_size);
+    let mut input = fft.make_input_vec();
+    let mut spectrum = fft.make_output_vec();
+
+    let total_cols = (audio.samples.len() - fft_size) / hop_size + 1;
+    let col_end = (col_start + col_count).min(total_cols);
+
+    let mut columns = Vec::with_capacity(col_end.saturating_sub(col_start));
+    for col_i in col_start..col_end {
+        let pos = col_i * hop_size;
+        if pos + fft_size > audio.samples.len() {
+            break;
+        }
+        for (inp, (&s, &w)) in input
+            .iter_mut()
+            .zip(audio.samples[pos..pos + fft_size].iter().zip(window.iter()))
+        {
+            *inp = s * w;
+        }
+        fft.process(&mut input, &mut spectrum).expect("FFT failed");
+        let magnitudes: Vec<f32> = spectrum.iter().map(|c| c.norm()).collect();
+        let time_offset = pos as f64 / audio.sample_rate as f64;
+        columns.push(SpectrogramColumn { magnitudes, time_offset });
+    }
+    columns
+}
+
 /// Compute a fast low-resolution preview spectrogram as an RGBA pixel buffer.
 /// Uses FFT=256 with a dynamic hop to produce roughly `target_width` columns.
 pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32) -> PreviewImage {

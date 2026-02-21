@@ -28,10 +28,11 @@ pub fn ToolButton() -> impl IntoView {
                     on:click=move |_| toggle_panel(&state, LayerPanel::Tool)
                     title="Tool"
                 >
-                    {move || match state.canvas_tool.get() {
+                    <span class="layer-btn-category">"Tool"</span>
+                    <span class="layer-btn-value">{move || match state.canvas_tool.get() {
                         CanvasTool::Hand => "Hand",
                         CanvasTool::Selection => "Select",
-                    }}
+                    }}</span>
                 </button>
                 {move || is_open().then(|| view! {
                     <div class="layer-panel" style="bottom: 34px; right: 0;">

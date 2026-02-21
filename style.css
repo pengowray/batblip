@@ -1150,8 +1150,15 @@ body.sidebar-resizing {
     position: relative;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    /* overflow: visible so layer-panels can extend above this container */
+    overflow: visible;
     min-height: 0;
+}
+
+/* Spectrogram and waveform canvases clip their own content */
+.spectrogram-container,
+.waveform-container {
+    overflow: hidden;
 }
 
 .main-overlays {
@@ -1162,6 +1169,8 @@ body.sidebar-resizing {
     height: 100%;
     pointer-events: none;
     z-index: 10;
+    /* Allow panels to overflow upward into the overview strip area */
+    overflow: visible;
 }
 
 /* ── Layer buttons (shared pattern) ────────────────────────────────────── */
@@ -1175,12 +1184,31 @@ body.sidebar-resizing {
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    padding: 5px 9px;
+    padding: 4px 9px 5px;
     backdrop-filter: blur(4px);
     user-select: none;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
     white-space: nowrap;
     letter-spacing: 0.2px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.2;
+}
+
+.layer-btn-category {
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    line-height: 1.1;
+}
+
+.layer-btn-value {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
 }
 
 .layer-btn:hover {
@@ -1208,6 +1236,8 @@ body.sidebar-resizing {
     min-width: 170px;
     z-index: 30;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7);
+    max-height: 70vh;
+    overflow-y: auto;
 }
 
 .layer-panel-title {

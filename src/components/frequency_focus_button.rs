@@ -56,9 +56,10 @@ pub fn FrequencyFocusButton() -> impl IntoView {
                     on:click=move |_| toggle_panel(&state, LayerPanel::FrequencyFocus)
                     title="Frequency Focus"
                 >
-                    {move || {
+                    <span class="layer-btn-category">"Focus"</span>
+                    <span class="layer-btn-value">{move || {
                         match state.frequency_focus.get() {
-                            FrequencyFocus::None => "FF",
+                            FrequencyFocus::None => "All",
                             FrequencyFocus::HumanHearing => "Human",
                             FrequencyFocus::HumanSpeech => "Speech",
                             FrequencyFocus::Bat1 => "Bat 1",
@@ -67,7 +68,7 @@ pub fn FrequencyFocusButton() -> impl IntoView {
                             FrequencyFocus::FullUltrasound => "Ultra",
                             FrequencyFocus::FullSpectrum => "Full",
                         }
-                    }}
+                    }}</span>
                 </button>
                 {move || is_open().then(|| {
                     view! {

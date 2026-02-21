@@ -115,7 +115,8 @@ pub fn ListenModeButton() -> impl IntoView {
                     on:click=move |_| toggle_panel(&state, LayerPanel::ListenMode)
                     title="Listen mode"
                 >
-                    {listen_label}
+                    <span class="layer-btn-category">"Mode"</span>
+                    <span class="layer-btn-value">{listen_label}</span>
                 </button>
                 {move || is_open().then(|| {
                     let adj = state.listen_adjustment.get();

@@ -6,7 +6,7 @@ use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CanvasRenderingContext2d, DragEvent, File, FileReader, HtmlCanvasElement, HtmlInputElement, ImageData, MouseEvent};
 use crate::audio::loader::load_audio;
-use crate::dsp::fft::{compute_preview, compute_spectrogram};
+use crate::dsp::fft::{compute_preview, compute_spectrogram_partial};
 use crate::canvas::tile_cache;
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 use crate::audio::playback;
@@ -2207,8 +2207,58 @@ async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(S
     });
     JsFuture::from(yield_promise).await.ok();
 
-    // Phase 2: full spectrogram
-    let spectrogram = compute_spectrogram(&audio_for_stft, 2048, 512);
+    // Phase 2: full spectrogram — computed in small chunks so the browser
+    // stays responsive.  Each chunk yields via setTimeout(0) before continuing.
+    const FFT_SIZE: usize = 2048;
+    const HOP_SIZE: usize = 512;
+    const CHUNK_COLS: usize = 32; // ~50 ms of work per chunk on typical hardware
+
+    let total_cols = if audio_for_stft.samples.len() >= FFT_SIZE {
+        (audio_for_stft.samples.len() - FFT_SIZE) / HOP_SIZE + 1
+    } else {
+        0
+    };
+
+    let mut all_columns: Vec<crate::types::SpectrogramColumn> = Vec::with_capacity(total_cols);
+
+    let mut chunk_start = 0;
+    while chunk_start < total_cols {
+        // Check the file is still loaded (user may have removed it)
+        let still_present = state.files.get_untracked()
+            .get(file_index)
+            .map(|f| f.name == name_check)
+            .unwrap_or(false);
+        if !still_present { return Ok(()); }
+
+        let chunk = compute_spectrogram_partial(
+            &audio_for_stft,
+            FFT_SIZE,
+            HOP_SIZE,
+            chunk_start,
+            CHUNK_COLS,
+        );
+        all_columns.extend(chunk);
+        chunk_start += CHUNK_COLS;
+
+        // Yield so the browser can process events / paint between chunks
+        let p = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
+        });
+        JsFuture::from(p).await.ok();
+    }
+
+    let freq_resolution = audio_for_stft.sample_rate as f64 / FFT_SIZE as f64;
+    let time_resolution = HOP_SIZE as f64 / audio_for_stft.sample_rate as f64;
+    let max_freq = audio_for_stft.sample_rate as f64 / 2.0;
+
+    let spectrogram = SpectrogramData {
+        columns: all_columns,
+        freq_resolution,
+        time_resolution,
+        max_freq,
+        sample_rate: audio_for_stft.sample_rate,
+    };
+
     log::info!(
         "Spectrogram: {} columns, freq_res={:.1} Hz, time_res={:.4}s",
         spectrogram.columns.len(),
@@ -2223,11 +2273,6 @@ async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(S
             }
         }
     });
-
-    // Schedule progressive tile generation for the full spectrogram
-    if let Some(file) = state.files.get_untracked().get(file_index).cloned() {
-        tile_cache::schedule_all_tiles(state.clone(), file, file_index);
-    }
 
     Ok(())
 }
