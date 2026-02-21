@@ -30,6 +30,9 @@ jobs:
       - name: Build
         run: trunk build --release --public-url /batchi/ --dist docs
 
+      - name: Bypass Jekyll
+        run: touch docs/.nojekyll
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
