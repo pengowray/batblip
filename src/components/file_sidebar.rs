@@ -1100,12 +1100,8 @@ fn AnalysisPanel() -> impl IntoView {
                 if let Some(ref vc) = a.value_coverage {
                     report.push_str(&format!("  Value coverage: {:.1}% ({} of {})\n",
                         vc.coverage_pct, vc.unique_count, vc.value_space));
-                    report.push_str(&format!("  Value resolution: ~{:.1} bits\n", vc.resolution_bits));
-                    let rounded = vc.resolution_bits.round() as u16;
-                    if rounded + 2 <= a.bits_per_sample {
-                        report.push_str(&format!("  \u{26a0} Possibly {}-bit audio in {}-bit container\n",
-                            rounded, a.bits_per_sample));
-                    }
+                    let ceiled = vc.resolution_bits.ceil() as u16;
+                    report.push_str(&format!("  Value resolution: ~{:.1} bits ({}-bit)\n", vc.resolution_bits, ceiled));
                 }
             } else {
                 report.push_str(&format!("  {}\n", a.summary));
@@ -1519,19 +1515,21 @@ fn AnalysisPanel() -> impl IntoView {
                                                         vc.coverage_pct, vc.unique_count, vc.value_space);
                                                     let coverage_tooltip = format!("{} distinct sample values observed out of {} possible for {}-bit audio",
                                                         vc.unique_count, vc.value_space, bits_per_sample);
-                                                    let resolution_text = format!("Value resolution: ~{:.1} bits", vc.resolution_bits);
+                                                    let resolution_text = format!("Value resolution: ~{:.1} bits ", vc.resolution_bits);
                                                     let resolution_tooltip = format!("log\u{2082}({}) = {:.2} — equivalent bit depth based on number of distinct values used",
                                                         vc.unique_count, vc.resolution_bits);
-                                                    let rounded = vc.resolution_bits.round() as u16;
-                                                    let low_res = rounded + 2 <= bits_per_sample;
-                                                    let warning_text = format!("Possibly {}-bit audio in {}-bit container", rounded, bits_per_sample);
+                                                    let ceiled = vc.resolution_bits.ceil() as u16;
+                                                    let notable = (bits_per_sample == 16 && ceiled <= 12)
+                                                        || (bits_per_sample == 24 && ceiled <= 16);
+                                                    let suffix_text = format!("({}-bit)", ceiled);
+                                                    let suffix_class = if notable { "bit-warning-inline" } else { "" };
                                                     view! {
                                                         <div>
                                                             <div class="bit-depth-stat" title=coverage_tooltip>{coverage_text}</div>
-                                                            <div class="bit-depth-stat" title=resolution_tooltip>{resolution_text}</div>
-                                                            {if low_res {
-                                                                view! { <div class="bit-warning">{warning_text}</div> }.into_any()
-                                                            } else { view! { <span></span> }.into_any() }}
+                                                            <div class="bit-depth-stat" title=resolution_tooltip>
+                                                                {resolution_text}
+                                                                <span class=suffix_class>{suffix_text}</span>
+                                                            </div>
                                                         </div>
                                                     }.into_any()
                                                 }

@@ -256,6 +256,10 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
+.bit-warning-inline {
+    color: #fc8;
+}
+
 .bit-region-labels {
     display: flex;
     gap: 4px;
