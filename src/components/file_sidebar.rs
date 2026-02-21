@@ -1103,7 +1103,7 @@ fn AnalysisPanel() -> impl IntoView {
                     report.push_str(&format!("  Value resolution: ~{:.1} bits\n", vc.resolution_bits));
                     let rounded = vc.resolution_bits.round() as u16;
                     if rounded + 2 <= a.bits_per_sample {
-                        report.push_str(&format!("  \u{26a0} Likely {}-bit audio in {}-bit container\n",
+                        report.push_str(&format!("  \u{26a0} Possibly {}-bit audio in {}-bit container\n",
                             rounded, a.bits_per_sample));
                     }
                 }
@@ -1524,7 +1524,7 @@ fn AnalysisPanel() -> impl IntoView {
                                                         vc.unique_count, vc.resolution_bits);
                                                     let rounded = vc.resolution_bits.round() as u16;
                                                     let low_res = rounded + 2 <= bits_per_sample;
-                                                    let warning_text = format!("Likely {}-bit audio in {}-bit container", rounded, bits_per_sample);
+                                                    let warning_text = format!("Possibly {}-bit audio in {}-bit container", rounded, bits_per_sample);
                                                     view! {
                                                         <div>
                                                             <div class="bit-depth-stat" title=coverage_tooltip>{coverage_text}</div>
