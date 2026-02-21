@@ -131,12 +131,13 @@ fn MainViewButton() -> impl IntoView {
 
     view! {
         <div
-            style="position: absolute; bottom: 82px; left: 28px; pointer-events: none;"
+            style=move || format!("position: absolute; bottom: 82px; left: 28px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
+                if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
             <button
                 class="layer-btn"
-                style="pointer-events: auto;"
+                style=move || format!("pointer-events: {};", if state.mouse_in_label_area.get() { "none" } else { "auto" })
                 title="Toggle view (Spectrogram / Waveform)"
                 on:click=move |_| {
                     state.main_view.update(|v| {

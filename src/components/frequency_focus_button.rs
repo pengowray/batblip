@@ -53,10 +53,12 @@ pub fn FrequencyFocusButton() -> impl IntoView {
         // Stacked above Mode button at bottom-left of main-overlays
         // z-index: 20 ensures the panel (z-index:30) renders above sibling layer buttons.
         <div
-            style="position: absolute; left: 28px; bottom: 46px; pointer-events: none; z-index: 20;"
+            style=move || format!("position: absolute; left: 28px; bottom: 46px; pointer-events: none; z-index: 20; opacity: {}; transition: opacity 0.1s;",
+                if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
-            <div style="position: relative; pointer-events: auto;">
+            <div style=move || format!("position: relative; pointer-events: {};",
+                if state.mouse_in_label_area.get() { "none" } else { "auto" })>
                 <button
                     class=move || if is_open() { "layer-btn open" } else { "layer-btn" }
                     on:click=move |_| toggle_panel(&state, LayerPanel::FrequencyFocus)

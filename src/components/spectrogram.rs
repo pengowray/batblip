@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
 use wasm_bindgen::closure::Closure;
+use std::cell::Cell;
+use std::rc::Rc;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, MouseEvent};
 use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
 use crate::dsp::harmonics;
@@ -24,27 +26,33 @@ pub fn Spectrogram() -> impl IntoView {
     // Hand-tool drag state: (initial_client_x, initial_scroll_offset)
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
 
-    // Label hover animation: lerp label_hover_opacity toward target
+    // Label hover animation: lerp label_hover_opacity toward target.
+    // A generation counter ensures that if the target changes mid-flight, the old
+    // in-flight rAF callback sees a stale generation and bails out immediately,
+    // preventing two animation chains from running simultaneously.
     let label_hover_target = RwSignal::new(0.0f64);
+    let anim_gen: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     Effect::new(move || {
         let target = label_hover_target.get();
         let current = state.label_hover_opacity.get_untracked();
         if (current - target).abs() < 0.01 {
-            // Snap to target
             if current != target {
                 state.label_hover_opacity.set(target);
             }
             return;
         }
-        // Schedule animation frame
+        let gen = anim_gen.get().wrapping_add(1);
+        anim_gen.set(gen);
+        let ag = anim_gen.clone();
         let cb = Closure::once(move || {
+            if ag.get() != gen { return; }
             let cur = state.label_hover_opacity.get_untracked();
             let tgt = label_hover_target.get_untracked();
-            let lerp_speed = 0.15;
-            let next = cur + (tgt - cur) * lerp_speed;
+            // Faster in (0.35) than out (0.20) for a snappy feel
+            let speed = if tgt > cur { 0.35 } else { 0.20 };
+            let next = cur + (tgt - cur) * speed;
             let next = if (next - tgt).abs() < 0.01 { tgt } else { next };
             state.label_hover_opacity.set(next);
-            // Re-trigger if not at target
             if next != tgt {
                 label_hover_target.set(tgt);
             }
@@ -489,8 +497,9 @@ pub fn Spectrogram() -> impl IntoView {
             state.mouse_freq.set(Some(f));
             state.mouse_canvas_x.set(px_x);
 
-            // Update label hover target
+            // Update label hover target and in-label-area state
             let in_label_area = px_x < LABEL_AREA_WIDTH;
+            state.mouse_in_label_area.set(in_label_area);
             let current_target = label_hover_target.get_untracked();
             let new_target = if in_label_area { 1.0 } else { 0.0 };
             if current_target != new_target {
@@ -534,6 +543,7 @@ pub fn Spectrogram() -> impl IntoView {
 
     let on_mouseleave = move |_ev: MouseEvent| {
         state.mouse_freq.set(None);
+        state.mouse_in_label_area.set(false);
         label_hover_target.set(0.0);
         state.is_dragging.set(false);
     };

@@ -108,10 +108,12 @@ pub fn ListenModeButton() -> impl IntoView {
     view! {
         // Anchored bottom-left of main-overlays (above tool button)
         <div
-            style="position: absolute; bottom: 10px; left: 28px; pointer-events: none;"
+            style=move || format!("position: absolute; bottom: 10px; left: 28px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
+                if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
-            <div style="position: relative; pointer-events: auto;">
+            <div style=move || format!("position: relative; pointer-events: {};",
+                if state.mouse_in_label_area.get() { "none" } else { "auto" })>
                 <button
                     class=move || if is_open() { "layer-btn open" } else { "layer-btn" }
                     on:click=move |_| toggle_panel(&state, LayerPanel::ListenMode)
