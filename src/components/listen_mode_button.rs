@@ -26,17 +26,19 @@ pub fn ListenModeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode);
 
+    let mode_abbr = move || match state.playback_mode.get() {
+        PlaybackMode::Heterodyne   => "HET",
+        PlaybackMode::TimeExpansion => "TE",
+        PlaybackMode::PitchShift   => "PS",
+        PlaybackMode::ZeroCrossing => "ZC",
+        PlaybackMode::Normal       => "1:1",
+    };
+
     let listen_label = move || {
         if state.listen_adjustment.get() == ListenAdjustment::Auto {
-            "AUTO"
+            format!("AUTO·{}", mode_abbr())
         } else {
-            match state.playback_mode.get() {
-                PlaybackMode::Heterodyne   => "HET",
-                PlaybackMode::TimeExpansion => "TE",
-                PlaybackMode::PitchShift   => "PS",
-                PlaybackMode::ZeroCrossing => "ZC",
-                PlaybackMode::Normal       => "1:1",
-            }
+            mode_abbr().to_string()
         }
     };
 

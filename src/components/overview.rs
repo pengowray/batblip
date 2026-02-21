@@ -61,20 +61,22 @@ fn get_canvas_ctx(canvas: &HtmlCanvasElement) -> Option<CanvasRenderingContext2d
 }
 
 /// Blit a PreviewImage (RGBA) to the entire canvas at full width.
-/// Also draws a viewport highlight rect and bookmark dots.
+/// Also draws a viewport highlight rect (matching both time AND freq range of the main view)
+/// and bookmark/playhead dots.
 fn draw_overview_spectrogram(
     ctx: &CanvasRenderingContext2d,
     canvas: &HtmlCanvasElement,
     preview: &PreviewImage,
-    scroll_offset: f64,  // in seconds
-    zoom: f64,
-    time_resolution: f64, // seconds per spectrogram column
-    _max_display_freq: Option<f64>, // Hz, None = show all (currently used only for freq_crop)
-    _max_freq: f64,       // file Nyquist Hz
-    bookmarks: &[(f64,)], // list of bookmark times
+    scroll_offset: f64,       // main view left edge, seconds
+    zoom: f64,                // main view zoom (px per spectrogram column)
+    spec_time_res: f64,       // seconds per full-FFT spectrogram column (for viewport width)
+    total_duration: f64,      // total file duration in seconds (from audio, always correct)
+    main_canvas_width: f64,   // actual pixel width of main spectrogram canvas
+    main_freq_crop: f64,      // 0..1: fraction of Nyquist shown in main view (1=all)
+    bookmarks: &[(f64,)],
     playhead_time: f64,
     is_playing: bool,
-    freq_crop: f64,       // 0..1, what fraction of vertical to show (1.0 = all)
+    overview_freq_crop: f64,  // 0..1: fraction shown in the overview itself
 ) {
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
@@ -86,17 +88,13 @@ fn draw_overview_spectrogram(
         return;
     }
 
-    let fc = freq_crop.clamp(0.01, 2.0);
+    // Vertical crop: show overview_freq_crop fraction of the image (low-to-mid freqs hidden)
+    let ofc = overview_freq_crop.clamp(0.01, 1.0);
     let full_h = preview.height as f64;
-    let (src_y, src_h, dst_y, dst_h) = if fc <= 1.0 {
-        let sy = full_h * (1.0 - fc);
-        (sy, full_h * fc, 0.0, ch)
-    } else {
-        let frac = 1.0 / fc;
-        (0.0, full_h, ch * (1.0 - frac), ch * frac)
-    };
+    let src_y = full_h * (1.0 - ofc);
+    let src_h = full_h * ofc;
 
-    // Blit entire image into canvas
+    // Blit via temporary canvas (ImageData → drawImage for scaling)
     let clamped = Clamped(&preview.pixels[..]);
     let image_data = ImageData::new_with_u8_clamped_array_and_sh(
         clamped, preview.width, preview.height,
@@ -116,33 +114,37 @@ fn draw_overview_spectrogram(
                 &tmp,
                 0.0, src_y,
                 preview.width as f64, src_h,
-                0.0, dst_y,
-                cw, dst_h,
+                0.0, 0.0,
+                cw, ch,
             );
         }
     }
 
-    // Total file duration in spectrogram columns
-    let total_cols = preview.width as f64;
-    if total_cols == 0.0 { return; }
-    let total_duration = total_cols * time_resolution;
-
-    // Pixels per second in overview
+    // Convert to px/sec using the true audio duration (not preview columns × FFT hop)
+    if total_duration <= 0.0 { return; }
     let px_per_sec = cw / total_duration;
 
-    // Viewport highlight: show where the main view currently is
-    // Visible time in main view at this zoom
-    // Approximate: use a reasonable canvas width (use a stored signal or estimate)
-    // We'll use 1000px as a reasonable estimate; actual width tracked via js
-    let approx_main_w = 1000.0_f64;
-    let visible_time = (approx_main_w / zoom) * time_resolution;
-    let vp_x = scroll_offset * px_per_sec;
+    // ── Viewport highlight rect ───────────────────────────────────────────────
+    // Horizontal: scroll_offset (left edge) + visible time
+    // visible_time = (canvas_px / zoom) * spec_time_res  (zoom = px per FFT column)
+    let visible_cols = main_canvas_width / zoom.max(0.001);
+    let visible_time = visible_cols * spec_time_res;
+    let vp_x = (scroll_offset * px_per_sec).max(0.0);
     let vp_w = (visible_time * px_per_sec).max(2.0);
-    ctx.set_fill_style_str("rgba(80, 180, 130, 0.15)");
-    ctx.fill_rect(vp_x, 0.0, vp_w, ch);
-    ctx.set_stroke_style_str("rgba(80, 180, 130, 0.5)");
+
+    // Vertical: map main_freq_crop into the overview's freq coordinate space.
+    // overview y=0 → top freq (ofc * Nyquist), y=ch → 0 Hz.
+    // main shows 0 Hz .. main_freq_crop*Nyquist.
+    // Top of main range in overview coords:
+    let vp_y1 = (ch * (1.0 - main_freq_crop / ofc)).clamp(0.0, ch);
+    let vp_y2 = ch;
+    let vp_h = vp_y2 - vp_y1;
+
+    ctx.set_fill_style_str("rgba(80, 180, 130, 0.12)");
+    ctx.fill_rect(vp_x, vp_y1, vp_w, vp_h);
+    ctx.set_stroke_style_str("rgba(80, 180, 130, 0.55)");
     ctx.set_line_width(1.0);
-    ctx.stroke_rect(vp_x, 0.0, vp_w, ch);
+    ctx.stroke_rect(vp_x, vp_y1, vp_w, vp_h);
 
     // Bookmark dots (yellow, top edge)
     ctx.set_fill_style_str("rgba(255, 200, 50, 0.9)");
@@ -175,6 +177,7 @@ fn draw_overview_waveform(
     time_resolution: f64,
     scroll_offset: f64,
     zoom: f64,
+    main_canvas_width: f64,
     bookmarks: &[(f64,)],
 ) {
     let cw = canvas.width() as f64;
@@ -185,23 +188,23 @@ fn draw_overview_waveform(
     let wv_zoom = cw / total_cols;
     waveform_renderer::draw_waveform(
         ctx, samples, sample_rate,
-        0.0, // start from beginning
+        0.0,
         wv_zoom,
         time_resolution,
         cw, ch,
         None,
     );
 
-    // Viewport highlight
+    // Viewport highlight (full height — no freq axis on waveform)
     let total_duration = samples.len() as f64 / sample_rate as f64;
     let px_per_sec = cw / total_duration;
-    let approx_main_w = 1000.0_f64;
-    let visible_time = (approx_main_w / zoom) * time_resolution;
-    let vp_x = scroll_offset * px_per_sec;
+    let visible_cols = main_canvas_width / zoom.max(0.001);
+    let visible_time = visible_cols * time_resolution;
+    let vp_x = (scroll_offset * px_per_sec).max(0.0);
     let vp_w = (visible_time * px_per_sec).max(2.0);
-    ctx.set_fill_style_str("rgba(80, 180, 130, 0.15)");
+    ctx.set_fill_style_str("rgba(80, 180, 130, 0.12)");
     ctx.fill_rect(vp_x, 0.0, vp_w, ch);
-    ctx.set_stroke_style_str("rgba(80, 180, 130, 0.5)");
+    ctx.set_stroke_style_str("rgba(80, 180, 130, 0.55)");
     ctx.set_line_width(1.0);
     ctx.stroke_rect(vp_x, 0.0, vp_w, ch);
 
@@ -245,7 +248,7 @@ fn OverviewLayersButton() -> impl IntoView {
                     style="font-size: 10px; padding: 3px 7px;"
                     on:click=move |_| toggle_panel(&state, LayerPanel::OverviewLayers)
                     title="Overview options"
-                >"Layers"</button>
+                >"View"</button>
                 {move || is_open().then(|| view! {
                     <div class="layer-panel" style="bottom: 28px; left: 0;">
                         <div class="layer-panel-title">"View"</div>
@@ -297,6 +300,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let bookmarks = state.bookmarks.get();
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
+        let main_canvas_w = state.spectrogram_canvas_width.get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -316,40 +320,48 @@ pub fn OverviewPanel() -> impl IntoView {
         let Some(file) = files.get(i) else { return };
 
         let bm_tuples: Vec<(f64,)> = bookmarks.iter().map(|b| (b.time,)).collect();
+        let max_freq = if file.spectrogram.max_freq > 0.0 {
+            file.spectrogram.max_freq
+        } else {
+            file.audio.sample_rate as f64 / 2.0
+        };
+
+        // Fraction of Nyquist shown in the main view (1.0 = show all)
+        let main_freq_crop = max_display_freq
+            .map(|mdf| (mdf / max_freq).clamp(0.001, 1.0))
+            .unwrap_or(1.0);
 
         match overview_view {
             OverviewView::Spectrogram => {
-                // Use file.preview if available, else nothing for now
                 if let Some(ref preview) = file.preview {
-                    // Compute freq_crop
-                    let max_freq = file.spectrogram.max_freq;
+                    // Overview freq crop
                     let display_max = match freq_mode {
                         OverviewFreqMode::All => max_freq,
                         OverviewFreqMode::Human => 20_000.0f64.min(max_freq),
                         OverviewFreqMode::MatchMain => max_display_freq.unwrap_or(max_freq),
                     };
-                    let freq_crop = (display_max / max_freq).clamp(0.01, 1.0);
+                    let overview_freq_crop = (display_max / max_freq).clamp(0.001, 1.0);
 
                     draw_overview_spectrogram(
                         &ctx, canvas, preview,
                         scroll, zoom,
-                        file.spectrogram.time_resolution,
-                        max_display_freq,
-                        max_freq,
+                        file.spectrogram.time_resolution, // spec_time_res (for viewport width)
+                        file.audio.duration_secs,         // true total duration
+                        main_canvas_w,
+                        main_freq_crop,
                         &bm_tuples,
                         playhead,
                         is_playing,
-                        freq_crop,
+                        overview_freq_crop,
                     );
                 } else {
-                    // No preview yet — show loading message
                     ctx.set_fill_style_str("#333");
                     ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
                     ctx.set_fill_style_str("#666");
                     ctx.set_font("11px system-ui");
                     ctx.set_text_align("center");
                     ctx.set_text_baseline("middle");
-                    let _ = ctx.fill_text("Loading overview…", w as f64 / 2.0, h as f64 / 2.0);
+                    let _ = ctx.fill_text("Loading…", w as f64 / 2.0, h as f64 / 2.0);
                 }
             }
             OverviewView::Waveform => {
@@ -359,6 +371,7 @@ pub fn OverviewPanel() -> impl IntoView {
                     file.audio.sample_rate,
                     file.spectrogram.time_resolution,
                     scroll, zoom,
+                    main_canvas_w,
                     &bm_tuples,
                 );
             }
@@ -367,16 +380,20 @@ pub fn OverviewPanel() -> impl IntoView {
 
     // ── Mouse handlers ────────────────────────────────────────────────────────
 
-    // Convert a click x-coordinate to a time offset (seconds)
-    let x_to_time = move |canvas_x: f64, canvas_w: f64| -> Option<f64> {
+    // Get the true total duration for the current file (always from audio data)
+    let file_duration = move || -> f64 {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
-        let file = idx.and_then(|i| files.get(i))?;
-        let total_cols = file.preview.as_ref().map(|p| p.width as f64)
-            .unwrap_or_else(|| file.spectrogram.columns.len() as f64);
-        if total_cols == 0.0 || canvas_w == 0.0 { return None; }
-        let total_duration = total_cols * file.spectrogram.time_resolution;
-        Some((canvas_x / canvas_w) * total_duration)
+        idx.and_then(|i| files.get(i))
+            .map(|f| f.audio.duration_secs)
+            .unwrap_or(0.0)
+    };
+
+    // Convert a click x-coordinate to a time offset (seconds)
+    let x_to_time = move |canvas_x: f64, canvas_w: f64| -> Option<f64> {
+        let dur = file_duration();
+        if dur <= 0.0 || canvas_w <= 0.0 { return None; }
+        Some((canvas_x / canvas_w) * dur)
     };
 
     let on_mousedown = move |ev: MouseEvent| {
@@ -401,13 +418,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
         let rect = canvas.get_bounding_client_rect();
         let cw = rect.width();
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
-        let Some(file) = idx.and_then(|i| files.get(i)) else { return };
-        let total_cols = file.preview.as_ref().map(|p| p.width as f64)
-            .unwrap_or_else(|| file.spectrogram.columns.len() as f64);
-        if total_cols == 0.0 || cw == 0.0 { return; }
-        let total_duration = total_cols * file.spectrogram.time_resolution;
+        let total_duration = file_duration();
+        if total_duration <= 0.0 || cw <= 0.0 { return; }
         let dx = ev.client_x() as f64 - drag_start_x.get_untracked();
         let dt = -(dx / cw) * total_duration;
         let new_scroll = (drag_start_scroll.get_untracked() + dt).max(0.0);
@@ -420,7 +432,9 @@ pub fn OverviewPanel() -> impl IntoView {
 
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
-        let delta = ev.delta_y() * 0.001;
+        // Scale wheel delta by file duration so one full swipe ≈ scrolling the file
+        let total_duration = file_duration();
+        let delta = ev.delta_y() * 0.0003 * total_duration.max(1.0);
         state.scroll_offset.update(|s| *s = (*s + delta).max(0.0));
     };
 

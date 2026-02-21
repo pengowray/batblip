@@ -292,6 +292,12 @@ pub struct AppState {
 
     // Which floating layer panel is currently open
     pub layer_panel_open: RwSignal<Option<LayerPanel>>,
+
+    // Actual pixel width of the main spectrogram canvas (written by Spectrogram, read by Overview)
+    pub spectrogram_canvas_width: RwSignal<f64>,
+
+    // Main panel view mode (Spectrogram or Waveform)
+    pub main_view: RwSignal<OverviewView>,
 }
 
 impl AppState {
@@ -342,7 +348,7 @@ impl AppState {
             sidebar_width: RwSignal::new(220.0),
             sidebar_dropdown_open: RwSignal::new(false),
             gain_db: RwSignal::new(0.0),
-            auto_gain: RwSignal::new(false),
+            auto_gain: RwSignal::new(true),
 
             // New
             canvas_tool: RwSignal::new(CanvasTool::Hand),
@@ -361,6 +367,8 @@ impl AppState {
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             layer_panel_open: RwSignal::new(None),
+            spectrogram_canvas_width: RwSignal::new(1000.0),
+            main_view: RwSignal::new(OverviewView::Spectrogram),
         }
     }
 

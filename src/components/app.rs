@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::AppState;
+use crate::state::{AppState, LayerPanel, OverviewView};
 use crate::audio::playback;
 use crate::components::file_sidebar::FileSidebar;
 use crate::components::spectrogram::Spectrogram;
@@ -78,16 +78,25 @@ fn MainArea() -> impl IntoView {
             {move || {
                 if has_file() {
                     view! {
-                        // Overview strip (top, thin)
+                        // Overview strip (top)
                         <OverviewPanel />
 
                         // Main view (takes remaining space)
                         <div class="main-view">
-                            <Spectrogram />
-                            <Waveform />
+                            // Show spectrogram or waveform based on main_view signal
+                            {move || match state.main_view.get() {
+                                OverviewView::Spectrogram => view! { <Spectrogram /> }.into_any(),
+                                OverviewView::Waveform => view! {
+                                    <div class="main-waveform-full">
+                                        <Waveform />
+                                    </div>
+                                }.into_any(),
+                            }}
+
                             // Floating overlay layer
                             <div class="main-overlays">
                                 <PlayControls />
+                                <MainViewButton />
                                 <FrequencyFocusButton />
                                 <ListenModeButton />
                                 <ToolButton />
@@ -104,6 +113,46 @@ fn MainArea() -> impl IntoView {
                     }.into_any()
                 }
             }}
+        </div>
+    }
+}
+
+/// Floating button (top-left of main overlays) to toggle the main panel between
+/// Spectrogram and Waveform view.
+#[component]
+fn MainViewButton() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::Tool);
+
+    // Use a dedicated LayerPanel variant for view — reuse OverviewLayers isn't right.
+    // We'll create an inline toggle without a panel (simpler):
+    // Clicking cycles Spectrogram → Waveform → Spectrogram.
+    let _ = is_open; // suppress unused warning
+
+    view! {
+        <div
+            style="position: absolute; top: 10px; left: 10px; pointer-events: none;"
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+        >
+            <button
+                class="layer-btn"
+                style="pointer-events: auto;"
+                title="Toggle view (Spectrogram / Waveform)"
+                on:click=move |_| {
+                    state.main_view.update(|v| {
+                        *v = match *v {
+                            OverviewView::Spectrogram => OverviewView::Waveform,
+                            OverviewView::Waveform    => OverviewView::Spectrogram,
+                        };
+                    });
+                }
+            >
+                <span class="layer-btn-category">"View"</span>
+                <span class="layer-btn-value">{move || match state.main_view.get() {
+                    OverviewView::Spectrogram => "Spec",
+                    OverviewView::Waveform    => "Wave",
+                }}</span>
+            </button>
         </div>
     }
 }

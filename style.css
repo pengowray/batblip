@@ -1161,6 +1161,21 @@ body.sidebar-resizing {
     overflow: hidden;
 }
 
+/* When waveform is the main panel (not the sub-strip below spectrogram),
+   wrap it in this to override the max-height cap */
+.main-waveform-full {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.main-waveform-full .waveform-container {
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+}
+
 .main-overlays {
     position: absolute;
     top: 0;
