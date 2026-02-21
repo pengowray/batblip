@@ -521,26 +521,25 @@ pub fn draw_freq_markers(
                 }
             }
             _ => {
-                if ms.label_hover_opacity > 0.01 {
-                    format!("{base_label} kHz")
-                } else {
-                    base_label.clone()
-                }
+                // For FreqShiftMode::None, never include " kHz" here;
+                // it's drawn separately below with a smooth fade.
+                base_label.clone()
             }
         };
 
-        // kHz fade: use opacity^2 for faster fade
+        // kHz fade: use opacity^2 for faster visual fade
         let khz_fade = ms.label_hover_opacity * ms.label_hover_opacity;
-        if matches!(shift_mode, FreqShiftMode::None) && khz_fade > 0.01 && khz_fade < 0.99 {
-            // Draw number at full alpha
+        if matches!(shift_mode, FreqShiftMode::None) && ms.label_hover_opacity > 0.001 {
+            // Split rendering: number at full alpha, " kHz" suffix fading
             ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
             let _ = ctx.fill_text(&base_label, label_x, y - 2.0);
-            // Draw " kHz" suffix at faded alpha
-            let metrics = ctx.measure_text(&base_label).unwrap();
-            let num_w = metrics.width();
             let khz_alpha = label_alpha * khz_fade;
-            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
-            let _ = ctx.fill_text(" kHz", label_x + num_w, y - 2.0);
+            if khz_alpha > 0.002 {
+                let metrics = ctx.measure_text(&base_label).unwrap();
+                let num_w = metrics.width();
+                ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
+                let _ = ctx.fill_text(" kHz", label_x + num_w, y - 2.0);
+            }
         } else {
             ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
             let _ = ctx.fill_text(&label, label_x, y - 2.0);

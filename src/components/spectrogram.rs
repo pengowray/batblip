@@ -27,14 +27,16 @@ pub fn Spectrogram() -> impl IntoView {
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
 
     // Label hover animation: lerp label_hover_opacity toward target.
-    // A generation counter ensures that if the target changes mid-flight, the old
-    // in-flight rAF callback sees a stale generation and bails out immediately,
-    // preventing two animation chains from running simultaneously.
+    // The Effect subscribes to BOTH label_hover_target and label_hover_opacity.
+    // When the rAF callback sets opacity, the Effect re-runs automatically —
+    // no need to re-trigger via setting the target signal.
+    // A generation counter ensures stale rAF callbacks are discarded when a new
+    // animation cycle starts (e.g. target changes mid-flight).
     let label_hover_target = RwSignal::new(0.0f64);
     let anim_gen: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     Effect::new(move || {
         let target = label_hover_target.get();
-        let current = state.label_hover_opacity.get_untracked();
+        let current = state.label_hover_opacity.get();
         if (current - target).abs() < 0.01 {
             if current != target {
                 state.label_hover_opacity.set(target);
@@ -48,14 +50,10 @@ pub fn Spectrogram() -> impl IntoView {
             if ag.get() != gen { return; }
             let cur = state.label_hover_opacity.get_untracked();
             let tgt = label_hover_target.get_untracked();
-            // Faster in (0.35) than out (0.20) for a snappy feel
             let speed = if tgt > cur { 0.35 } else { 0.20 };
             let next = cur + (tgt - cur) * speed;
             let next = if (next - tgt).abs() < 0.01 { tgt } else { next };
             state.label_hover_opacity.set(next);
-            if next != tgt {
-                label_hover_target.set(tgt);
-            }
         });
         let _ = web_sys::window().unwrap().request_animation_frame(
             cb.as_ref().unchecked_ref(),
