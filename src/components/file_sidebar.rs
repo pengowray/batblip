@@ -1097,6 +1097,16 @@ fn AnalysisPanel() -> impl IntoView {
                     report.push_str(&format!("  Zero padding: {} bits\n", zero_padding));
                 }
                 report.push_str(&format!("  {}\n", a.summary));
+                if let Some(ref vc) = a.value_coverage {
+                    report.push_str(&format!("  Value coverage: {:.1}% ({} of {})\n",
+                        vc.coverage_pct, vc.unique_count, vc.value_space));
+                    report.push_str(&format!("  Value resolution: ~{:.1} bits\n", vc.resolution_bits));
+                    let rounded = vc.resolution_bits.round() as u16;
+                    if rounded + 2 <= a.bits_per_sample {
+                        report.push_str(&format!("  \u{26a0} Likely {}-bit audio in {}-bit container\n",
+                            rounded, a.bits_per_sample));
+                    }
+                }
             } else {
                 report.push_str(&format!("  {}\n", a.summary));
                 report.push_str(&format!("  Entropy estimate: ~{:.1} bits\n", a.effective_bits_f64));
@@ -1359,6 +1369,7 @@ fn AnalysisPanel() -> impl IntoView {
                         let effective_bits_f64 = a.effective_bits_f64;
                         let headroom_bits = a.headroom_bits;
                         let noise_floor_db = a.noise_floor_db;
+                        let value_coverage = a.value_coverage.clone();
 
                         // Positive/negative/zero split grids
                         let pos_total = a.positive_total;
@@ -1502,6 +1513,30 @@ fn AnalysisPanel() -> impl IntoView {
                                             {if zero_padding > 0 {
                                                 view! { <div class="bit-depth-stat">{format!("Zero padding: {} bit{}", zero_padding, if zero_padding == 1 { "" } else { "s" })}</div> }.into_any()
                                             } else { view! { <span></span> }.into_any() }}
+                                            {match value_coverage {
+                                                Some(ref vc) => {
+                                                    let coverage_text = format!("Value coverage: {:.1}% ({} of {})",
+                                                        vc.coverage_pct, vc.unique_count, vc.value_space);
+                                                    let coverage_tooltip = format!("{} distinct sample values observed out of {} possible for {}-bit audio",
+                                                        vc.unique_count, vc.value_space, bits_per_sample);
+                                                    let resolution_text = format!("Value resolution: ~{:.1} bits", vc.resolution_bits);
+                                                    let resolution_tooltip = format!("log\u{2082}({}) = {:.2} — equivalent bit depth based on number of distinct values used",
+                                                        vc.unique_count, vc.resolution_bits);
+                                                    let rounded = vc.resolution_bits.round() as u16;
+                                                    let low_res = rounded + 2 <= bits_per_sample;
+                                                    let warning_text = format!("Likely {}-bit audio in {}-bit container", rounded, bits_per_sample);
+                                                    view! {
+                                                        <div>
+                                                            <div class="bit-depth-stat" title=coverage_tooltip>{coverage_text}</div>
+                                                            <div class="bit-depth-stat" title=resolution_tooltip>{resolution_text}</div>
+                                                            {if low_res {
+                                                                view! { <div class="bit-warning">{warning_text}</div> }.into_any()
+                                                            } else { view! { <span></span> }.into_any() }}
+                                                        </div>
+                                                    }.into_any()
+                                                }
+                                                None => view! { <span></span> }.into_any(),
+                                            }}
                                             <div class=summary_class>{summary}</div>
                                         </div>
                                     }.into_any()

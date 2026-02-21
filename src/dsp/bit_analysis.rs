@@ -19,6 +19,19 @@ pub enum BitCaution {
     SignBitSkewed,
 }
 
+/// Value space coverage analysis for integer audio (16-bit and 24-bit).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValueCoverage {
+    /// Number of distinct sample values observed
+    pub unique_count: u32,
+    /// Total possible values for this bit depth (2^bits_per_sample)
+    pub value_space: u32,
+    /// Percentage of value space used (0..100)
+    pub coverage_pct: f64,
+    /// log2(unique_count) — equivalent bit depth based on distinct values
+    pub resolution_bits: f64,
+}
+
 /// Full bit-depth analysis result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BitAnalysis {
@@ -49,6 +62,8 @@ pub struct BitAnalysis {
     /// Estimated noise floor in dBFS: minimum RMS of 512-sample windows above -80 dBFS.
     /// -120.0 if no active windows found.
     pub noise_floor_db: f64,
+    /// Value space coverage (only for 16-bit and 24-bit integer files)
+    pub value_coverage: Option<ValueCoverage>,
 }
 
 /// Bit label for display in the grid.
@@ -90,12 +105,19 @@ pub fn analyze_bits(
     let mut zero_total = 0usize;
     let mut pair_counts = vec![[0usize; 4]; n_pairs];
 
+    let mut unique_seen = if !is_float && (bits_per_sample == 16 || bits_per_sample == 24) {
+        vec![0u8; 1usize << (bits_per_sample - 3)]
+    } else {
+        Vec::new()
+    };
+
     if is_float && bits_per_sample == 32 {
         analyze_float_bits(samples, &mut counts, &mut first, &mut last,
             &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut zero_total, &mut pair_counts);
     } else {
         analyze_int_bits(samples, bits_per_sample, &mut counts, &mut first, &mut last,
-            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut zero_total, &mut pair_counts);
+            &mut pos_counts, &mut neg_counts, &mut pos_total, &mut neg_total, &mut zero_total, &mut pair_counts,
+            &mut unique_seen);
     }
 
     let bit_stats: Vec<BitStat> = (0..n_bits)
@@ -155,6 +177,25 @@ pub fn analyze_bits(
         }
     };
 
+    let value_coverage = if !unique_seen.is_empty() {
+        let unique_count: u32 = unique_seen.iter().map(|&b| b.count_ones()).sum();
+        let value_space = 1u32 << bits_per_sample;
+        let coverage_pct = unique_count as f64 / value_space as f64 * 100.0;
+        let resolution_bits = if unique_count > 1 {
+            (unique_count as f64).log2()
+        } else {
+            0.0
+        };
+        Some(ValueCoverage {
+            unique_count,
+            value_space,
+            coverage_pct,
+            resolution_bits,
+        })
+    } else {
+        None
+    };
+
     BitAnalysis {
         bits_per_sample,
         is_float,
@@ -174,6 +215,7 @@ pub fn analyze_bits(
         pair_counts,
         headroom_bits,
         noise_floor_db,
+        value_coverage,
     }
 }
 
@@ -189,6 +231,7 @@ fn analyze_int_bits(
     neg_total: &mut usize,
     zero_total: &mut usize,
     pair_counts: &mut [[usize; 4]],
+    unique_seen: &mut [u8],
 ) {
     let n_bits = bits_per_sample as usize;
     let max_val = (1u32 << (bits_per_sample - 1)) as f64;
@@ -198,6 +241,10 @@ fn analyze_int_bits(
     for (idx, &s) in samples.iter().enumerate() {
         let int_val = (s as f64 * max_val).round() as i32;
         let bits = int_val as u32;
+        if !unique_seen.is_empty() {
+            let unsigned_idx = (int_val + max_val as i32) as usize;
+            unique_seen[unsigned_idx >> 3] |= 1 << (unsigned_idx & 7);
+        }
         let is_negative = bits & (1 << (mask_bits - 1)) != 0;
         let is_zero = int_val == 0;
         if is_zero {
