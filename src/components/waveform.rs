@@ -1,10 +1,11 @@
 use leptos::prelude::*;
+use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
-use crate::state::{AppState, FilterQuality, PlaybackMode};
+use crate::state::{AppState, CanvasTool, FilterQuality, PlaybackMode};
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 
@@ -12,6 +13,7 @@ const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 pub fn Waveform() -> impl IntoView {
     let state = expect_context::<AppState>();
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+    let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
 
     // Cache ZC bins — recompute when the file or EQ settings change.
     let zc_bins = Memo::new(move |_| {
@@ -137,17 +139,77 @@ pub fn Waveform() -> impl IntoView {
             });
         } else {
             let delta = ev.delta_y() * 0.001;
+            let max_scroll = {
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked().unwrap_or(0);
+                if let Some(file) = files.get(idx) {
+                    let zoom = state.zoom_level.get_untracked();
+                    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                    let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
+                    (file.audio.duration_secs - visible_time).max(0.0)
+                } else {
+                    f64::MAX
+                }
+            };
             state.scroll_offset.update(|s| {
-                *s = (*s + delta).max(0.0);
+                *s = (*s + delta).clamp(0.0, max_scroll);
             });
         }
     };
 
+    let on_mousedown = move |ev: MouseEvent| {
+        if ev.button() != 0 { return; }
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.is_playing.get_untracked() {
+            let t = state.playhead_time.get_untracked();
+            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            return;
+        }
+        state.is_dragging.set(true);
+        hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+    };
+
+    let on_mousemove = move |ev: MouseEvent| {
+        if !state.is_dragging.get_untracked() { return; }
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+        let dx = ev.client_x() as f64 - start_client_x;
+        let cw = state.spectrogram_canvas_width.get_untracked();
+        if cw == 0.0 { return; }
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file = idx.and_then(|i| files.get(i));
+        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let zoom = state.zoom_level.get_untracked();
+        let visible_time = (cw / zoom) * time_res;
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+        let max_scroll = (duration - visible_time).max(0.0);
+        let dt = -(dx / cw) * visible_time;
+        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+    };
+
+    let on_mouseup = move |_ev: MouseEvent| {
+        state.is_dragging.set(false);
+    };
+
+    let on_mouseleave = move |_ev: MouseEvent| {
+        state.is_dragging.set(false);
+    };
+
     view! {
-        <div class="waveform-container">
+        <div class="waveform-container"
+            style=move || match state.canvas_tool.get() {
+                CanvasTool::Hand => "cursor: grab;",
+                CanvasTool::Selection => "cursor: crosshair;",
+            }
+        >
             <canvas
                 node_ref=canvas_ref
                 on:wheel=on_wheel
+                on:mousedown=on_mousedown
+                on:mousemove=on_mousemove
+                on:mouseup=on_mouseup
+                on:mouseleave=on_mouseleave
             />
         </div>
     }
