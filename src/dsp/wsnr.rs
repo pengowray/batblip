@@ -329,7 +329,7 @@ fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>
             "Ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz). wSNR reflects audible-band quality only.",
             sample_rate / 1000, ratio * 100.0
         )))
-    } else if ratio > 0.01 && sample_rate >= 256000 {
+    } else if ratio > 0.001 && sample_rate >= 256000 {
         // High sample rate with some detectable ultrasonic energy — likely a bat detector
         // recording where the target calls didn't happen to land in the analysis windows.
         (false, Some(format!(
