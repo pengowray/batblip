@@ -87,24 +87,25 @@ pub enum FrequencyFocus {
     None,
     HumanHearing,    // 20 Hz – 20 kHz
     HumanSpeech,     // 300 Hz – 3.4 kHz
-    Bat1,            // 20 – 35 kHz
-    Bat2,            // 35 – 50 kHz
-    Infra,           // 10 – 20 kHz
-    FullUltrasound,  // 20 kHz – Nyquist
-    FullSpectrum,    // entire file
+    Bat1,            // 20k – 35 kHz
+    Bat2,            // 35k – 50 kHz
+    Infra,           // 10 – 20 Hz
+    FullUltrasound,  // 18 kHz – Nyquist
+    FullSpectrum,    // 10 Hz – Nyquist
 }
 
 impl FrequencyFocus {
     /// Display-range in Hz (low, high). None = show all.
     pub fn freq_range_hz(self) -> Option<(f64, f64)> {
         match self {
-            Self::None | Self::FullSpectrum => None,
+            Self::None | 
             Self::HumanHearing   => Some((20.0, 20_000.0)),
             Self::HumanSpeech    => Some((300.0, 3_400.0)),
             Self::Bat1           => Some((20_000.0, 35_000.0)),
             Self::Bat2           => Some((35_000.0, 50_000.0)),
-            Self::Infra          => Some((10_000.0, 20_000.0)),
-            Self::FullUltrasound => Some((20_000.0, f64::MAX)),
+            Self::Infra          => Some((10.0, 20.0)),
+            Self::FullUltrasound => Some((18_000.0, f64::MAX)),
+            Self::FullSpectrum   => Some((10.0, f64::MAX))
         }
     }
 
@@ -125,9 +126,9 @@ impl FrequencyFocus {
             Self::HumanSpeech    => "Human speech",
             Self::Bat1           => "Bat 1 (20–35k)",
             Self::Bat2           => "Bat 2 (35–50k)",
-            Self::Infra          => "Infra (10–20k)",
-            Self::FullUltrasound => "Full ultrasound",
-            Self::FullSpectrum   => "Full spectrum",
+            Self::Infra          => "Infra (10–20)",
+            Self::FullUltrasound => "Full ultrasound (18k+)",
+            Self::FullSpectrum   => "Full spectrum (10hz+)",
         }
     }
 
