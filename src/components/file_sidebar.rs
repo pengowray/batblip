@@ -1093,6 +1093,11 @@ fn AnalysisPanel() -> impl IntoView {
                 report.push_str(&format!("  {}\n", a.summary));
                 report.push_str(&format!("  Entropy estimate: ~{:.1} bits\n", a.effective_bits_f64));
             }
+            {
+                let nf_db = a.noise_floor_db;
+                let nf_bits = -nf_db / (20.0 * 2f64.log10());
+                report.push_str(&format!("  Noise floor: {:.1} dBFS (~{:.1} bits)\n", nf_db, nf_bits));
+            }
             report.push_str(&split_line);
 
             for w in &a.warnings {
@@ -1345,6 +1350,7 @@ fn AnalysisPanel() -> impl IntoView {
                         let effective_bits = a.effective_bits;
                         let effective_bits_f64 = a.effective_bits_f64;
                         let headroom_bits = a.headroom_bits;
+                        let noise_floor_db = a.noise_floor_db;
 
                         // Positive/negative/zero split grids
                         let pos_total = a.positive_total;
@@ -1468,11 +1474,16 @@ fn AnalysisPanel() -> impl IntoView {
                         let pos_grid = make_sign_grid(&pos_counts, pos_total, "positive");
                         let neg_grid = make_sign_grid(&neg_counts, neg_total, "negative");
 
+                        let nf_bits = -noise_floor_db / (20.0 * 2f64.log10());
+                        let noise_floor_text = format!("Noise floor: {:.1} dBFS (~{:.1} bits)", noise_floor_db, nf_bits);
+                        let noise_floor_tooltip = "Minimum RMS level of 512-sample windows above digital silence (−80 dBFS); converted to equivalent bit depth at 6 dB/bit".to_string();
+
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"Bit Usage"</div>
                                 // Stats block at top — effective depth first, then breakdown
                                 {if !is_float {
+                                    let summary_class = if effective_bits < bits_per_sample { "bit-warning" } else { "bit-depth-stat" };
                                     view! {
                                         <div>
                                             <div class="bit-depth-stat bit-depth-primary">{format!("Effective bit depth: {} bits", effective_depth)}</div>
@@ -1483,18 +1494,19 @@ fn AnalysisPanel() -> impl IntoView {
                                             {if zero_padding > 0 {
                                                 view! { <div class="bit-depth-stat">{format!("Zero padding: {} bit{}", zero_padding, if zero_padding == 1 { "" } else { "s" })}</div> }.into_any()
                                             } else { view! { <span></span> }.into_any() }}
-                                            <div class="bit-warning">{summary}</div>
+                                            <div class=summary_class>{summary}</div>
                                         </div>
                                     }.into_any()
                                 } else {
                                     view! {
                                         <div>
-                                            <div class="bit-warning">{summary}</div>
+                                            <div class="bit-depth-stat">{summary}</div>
                                             <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
                                         </div>
                                     }.into_any()
                                 }}
-                                <div class="bit-warning" title=split_tooltip>{split_text}</div>
+                                <div class="bit-depth-stat" title=noise_floor_tooltip>{noise_floor_text}</div>
+                                <div class=if is_asymmetric { "bit-warning" } else { "bit-depth-stat" } title=split_tooltip>{split_text}</div>
                                 {warning_items}
                                 <div class="bit-sign-header" title=pos_tooltip>{format!("Samples above zero ({})", pos_pct)}</div>
                                 <div class="bit-grid" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>

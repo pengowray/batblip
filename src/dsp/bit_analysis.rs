@@ -46,6 +46,9 @@ pub struct BitAnalysis {
     /// For integer files: number of MSBs (below sign bit) that are always 0 in positive
     /// samples and always 1 in negative samples (sign-extension headroom). 0 for floats.
     pub headroom_bits: u16,
+    /// Estimated noise floor in dBFS: minimum RMS of 512-sample windows above -80 dBFS.
+    /// -120.0 if no active windows found.
+    pub noise_floor_db: f64,
 }
 
 /// Bit label for display in the grid.
@@ -124,6 +127,34 @@ pub fn analyze_bits(
 
     let summary = make_summary(bits_per_sample, is_float, effective_bits, total);
 
+    // Noise floor: minimum RMS of 512-sample non-overlapping windows above -80 dBFS
+    let noise_floor_db = {
+        const WINDOW: usize = 512;
+        const GAP_THRESHOLD: f64 = 1e-4; // -80 dBFS
+        let ws = WINDOW.min(samples.len());
+        let mut min_rms: Option<f64> = None;
+        let mut pos = 0;
+        while pos + ws <= samples.len() {
+            let sum_sq: f64 = samples[pos..pos + ws]
+                .iter()
+                .map(|&s| (s as f64) * (s as f64))
+                .sum();
+            let rms = (sum_sq / ws as f64).sqrt();
+            if rms > GAP_THRESHOLD {
+                match min_rms {
+                    None => min_rms = Some(rms),
+                    Some(prev) if rms < prev => min_rms = Some(rms),
+                    _ => {}
+                }
+            }
+            pos += ws;
+        }
+        match min_rms {
+            Some(rms) if rms > 0.0 => 20.0 * rms.log10(),
+            _ => -120.0,
+        }
+    };
+
     BitAnalysis {
         bits_per_sample,
         is_float,
@@ -142,6 +173,7 @@ pub fn analyze_bits(
         zero_total,
         pair_counts,
         headroom_bits,
+        noise_floor_db,
     }
 }
 
