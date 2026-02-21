@@ -78,6 +78,134 @@ pub enum FilterQuality {
     HQ,
 }
 
+// ── New enums ────────────────────────────────────────────────────────────────
+
+/// Which frequency range to focus on (affects display + auto-listen mode).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum FrequencyFocus {
+    #[default]
+    None,
+    HumanHearing,    // 20 Hz – 20 kHz
+    HumanSpeech,     // 300 Hz – 3.4 kHz
+    Bat1,            // 20 – 35 kHz
+    Bat2,            // 35 – 50 kHz
+    Infra,           // 10 – 20 kHz
+    FullUltrasound,  // 20 kHz – Nyquist
+    FullSpectrum,    // entire file
+}
+
+impl FrequencyFocus {
+    /// Display-range in Hz (low, high). None = show all.
+    pub fn freq_range_hz(self) -> Option<(f64, f64)> {
+        match self {
+            Self::None | Self::FullSpectrum => None,
+            Self::HumanHearing   => Some((20.0, 20_000.0)),
+            Self::HumanSpeech    => Some((300.0, 3_400.0)),
+            Self::Bat1           => Some((20_000.0, 35_000.0)),
+            Self::Bat2           => Some((35_000.0, 50_000.0)),
+            Self::Infra          => Some((10_000.0, 20_000.0)),
+            Self::FullUltrasound => Some((20_000.0, f64::MAX)),
+        }
+    }
+
+    /// Auto listen-mode implied by this focus (used when ListenAdjustment::Auto).
+    pub fn auto_listen_mode(self) -> PlaybackMode {
+        match self {
+            Self::None | Self::HumanHearing | Self::HumanSpeech => PlaybackMode::Normal,
+            Self::Bat1 | Self::Bat2 => PlaybackMode::Heterodyne,
+            Self::Infra => PlaybackMode::TimeExpansion,
+            Self::FullUltrasound | Self::FullSpectrum => PlaybackMode::PitchShift,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None           => "None",
+            Self::HumanHearing   => "Human hearing",
+            Self::HumanSpeech    => "Human speech",
+            Self::Bat1           => "Bat 1 (20–35k)",
+            Self::Bat2           => "Bat 2 (35–50k)",
+            Self::Infra          => "Infra (10–20k)",
+            Self::FullUltrasound => "Full ultrasound",
+            Self::FullSpectrum   => "Full spectrum",
+        }
+    }
+
+    pub const ALL: &'static [FrequencyFocus] = &[
+        Self::None, Self::HumanHearing, Self::HumanSpeech,
+        Self::Bat1, Self::Bat2, Self::Infra,
+        Self::FullUltrasound, Self::FullSpectrum,
+    ];
+}
+
+/// Whether the listen mode is driven automatically by FrequencyFocus or set manually.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ListenAdjustment {
+    #[default]
+    Auto,
+    Manual,
+}
+
+/// Bandpass filter strength applied during listen.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum BandpassStrength {
+    #[default]
+    Auto,
+    Off,
+    Some,
+    Strong,
+    Custom,
+}
+
+/// Active interaction tool for the main spectrogram canvas.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum CanvasTool {
+    #[default]
+    Hand,      // drag to pan
+    Selection, // drag to select
+}
+
+/// What the overview strip shows.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum OverviewView {
+    #[default]
+    Spectrogram,
+    Waveform,
+}
+
+/// Which frequency range the overview displays.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum OverviewFreqMode {
+    #[default]
+    All,
+    Human,      // 20 Hz – 20 kHz
+    MatchMain,  // tracks max_display_freq
+}
+
+/// Which floating layer panel is currently open (only one at a time).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LayerPanel {
+    OverviewLayers,
+    FrequencyFocus,
+    ListenMode,
+    Tool,
+}
+
+/// A navigation history entry (for overview back/forward buttons).
+#[derive(Clone, Copy, Debug)]
+pub struct NavEntry {
+    pub scroll_offset: f64,
+    pub zoom_level: f64,
+}
+
+/// A time-position bookmark created during or after playback.
+#[derive(Clone, Copy, Debug)]
+pub struct Bookmark {
+    pub time: f64,
+}
+
+// ── AppState ─────────────────────────────────────────────────────────────────
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     pub files: RwSignal<Vec<LoadedFile>>,
@@ -128,6 +256,42 @@ pub struct AppState {
     // Gain
     pub gain_db: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
+
+    // ── New signals ──────────────────────────────────────────────────────────
+
+    // Tool
+    pub canvas_tool: RwSignal<CanvasTool>,
+
+    // Frequency Focus
+    pub frequency_focus: RwSignal<FrequencyFocus>,
+    pub ff_filter_strength: RwSignal<BandpassStrength>,
+
+    // Listen adjustment
+    pub listen_adjustment: RwSignal<ListenAdjustment>,
+    pub bandpass_strength: RwSignal<BandpassStrength>,
+    pub bandpass_freq_low: RwSignal<f64>,
+    pub bandpass_freq_high: RwSignal<f64>,
+
+    // Overview
+    pub overview_view: RwSignal<OverviewView>,
+    pub overview_freq_mode: RwSignal<OverviewFreqMode>,
+
+    // Navigation history (for back/forward buttons in overview)
+    pub nav_history: RwSignal<Vec<NavEntry>>,
+    pub nav_index: RwSignal<usize>,
+
+    // Bookmarks
+    pub bookmarks: RwSignal<Vec<Bookmark>>,
+    pub show_bookmark_popup: RwSignal<bool>,
+
+    // Play-from-here time (updated by Spectrogram on scroll/zoom change)
+    pub play_from_here_time: RwSignal<f64>,
+
+    // Tile system: incrementing this triggers a spectrogram redraw
+    pub tile_ready_signal: RwSignal<u32>,
+
+    // Which floating layer panel is currently open
+    pub layer_panel_open: RwSignal<Option<LayerPanel>>,
 }
 
 impl AppState {
@@ -179,6 +343,24 @@ impl AppState {
             sidebar_dropdown_open: RwSignal::new(false),
             gain_db: RwSignal::new(0.0),
             auto_gain: RwSignal::new(false),
+
+            // New
+            canvas_tool: RwSignal::new(CanvasTool::Hand),
+            frequency_focus: RwSignal::new(FrequencyFocus::None),
+            ff_filter_strength: RwSignal::new(BandpassStrength::Off),
+            listen_adjustment: RwSignal::new(ListenAdjustment::Auto),
+            bandpass_strength: RwSignal::new(BandpassStrength::Auto),
+            bandpass_freq_low: RwSignal::new(20_000.0),
+            bandpass_freq_high: RwSignal::new(60_000.0),
+            overview_view: RwSignal::new(OverviewView::Spectrogram),
+            overview_freq_mode: RwSignal::new(OverviewFreqMode::All),
+            nav_history: RwSignal::new(Vec::new()),
+            nav_index: RwSignal::new(0),
+            bookmarks: RwSignal::new(Vec::new()),
+            show_bookmark_popup: RwSignal::new(false),
+            play_from_here_time: RwSignal::new(0.0),
+            tile_ready_signal: RwSignal::new(0),
+            layer_panel_open: RwSignal::new(None),
         }
     }
 

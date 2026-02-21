@@ -1,0 +1,101 @@
+use leptos::prelude::*;
+use crate::state::{AppState, BandpassStrength, FrequencyFocus, LayerPanel, ListenAdjustment};
+
+fn layer_opt_class(active: bool) -> &'static str {
+    if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
+}
+
+fn toggle_panel(state: &AppState, panel: LayerPanel) {
+    state.layer_panel_open.update(|p| {
+        *p = if *p == Some(panel) { None } else { Some(panel) };
+    });
+}
+
+#[component]
+pub fn FrequencyFocusButton() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::FrequencyFocus);
+
+    // When FrequencyFocus changes, update display freq and auto-listen mode
+    Effect::new(move || {
+        let ff = state.frequency_focus.get();
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+        let file_nyquist = idx
+            .and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .unwrap_or(96_000.0);
+
+        let new_max = match ff.freq_range_hz() {
+            Some((_, high)) => Some(high.min(file_nyquist)),
+            None => None,
+        };
+        state.max_display_freq.set(new_max);
+
+        if state.listen_adjustment.get_untracked() == ListenAdjustment::Auto {
+            state.playback_mode.set(ff.auto_listen_mode());
+            // Auto-set HET frequency for bat ranges
+            match ff {
+                FrequencyFocus::Bat1 => state.het_frequency.set(27_500.0),
+                FrequencyFocus::Bat2 => state.het_frequency.set(42_500.0),
+                _ => {}
+            }
+        }
+    });
+
+    view! {
+        // Anchored left-center of main-overlays
+        <div
+            style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;"
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+        >
+            <div style="position: relative; pointer-events: auto;">
+                <button
+                    class=move || if is_open() { "layer-btn open" } else { "layer-btn" }
+                    on:click=move |_| toggle_panel(&state, LayerPanel::FrequencyFocus)
+                    title="Frequency Focus"
+                >
+                    {move || {
+                        match state.frequency_focus.get() {
+                            FrequencyFocus::None => "FF",
+                            FrequencyFocus::HumanHearing => "Human",
+                            FrequencyFocus::HumanSpeech => "Speech",
+                            FrequencyFocus::Bat1 => "Bat 1",
+                            FrequencyFocus::Bat2 => "Bat 2",
+                            FrequencyFocus::Infra => "Infra",
+                            FrequencyFocus::FullUltrasound => "Ultra",
+                            FrequencyFocus::FullSpectrum => "Full",
+                        }
+                    }}
+                </button>
+                {move || is_open().then(|| {
+                    view! {
+                        <div class="layer-panel" style="left: 0; top: 34px;">
+                            <div class="layer-panel-title">"Frequency Focus"</div>
+                            {FrequencyFocus::ALL.iter().map(|&variant| {
+                                view! {
+                                    <button
+                                        class=move || layer_opt_class(state.frequency_focus.get() == variant)
+                                        on:click=move |_| state.frequency_focus.set(variant)
+                                    >{variant.label()}</button>
+                                }
+                            }).collect_view()}
+                            <hr />
+                            <div class="layer-panel-title">"Filter other freqs"</div>
+                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Off)
+                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Off)
+                            >"Off"</button>
+                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Some)
+                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Some)
+                            >"Some"</button>
+                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Strong)
+                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Strong)
+                            >"Strong"</button>
+                        </div>
+                    }
+                })}
+            </div>
+        </div>
+    }
+}

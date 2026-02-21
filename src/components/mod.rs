@@ -4,3 +4,8 @@ pub mod spectrogram;
 pub mod waveform;
 pub mod toolbar;
 pub mod analysis_panel;
+pub mod overview;
+pub mod play_controls;
+pub mod frequency_focus_button;
+pub mod listen_mode_button;
+pub mod tool_button;

@@ -8,6 +8,11 @@ use crate::components::spectrogram::Spectrogram;
 use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
+use crate::components::overview::OverviewPanel;
+use crate::components::play_controls::PlayControls;
+use crate::components::frequency_focus_button::FrequencyFocusButton;
+use crate::components::listen_mode_button::ListenModeButton;
+use crate::components::tool_button::ToolButton;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -62,14 +67,33 @@ fn MainArea() -> impl IntoView {
     let state = expect_context::<AppState>();
     let has_file = move || state.current_file_index.get().is_some();
 
+    // Click anywhere in the main area closes open layer panels
+    let on_main_click = move |_: web_sys::MouseEvent| {
+        state.layer_panel_open.set(None);
+    };
+
     view! {
-        <div class="main">
+        <div class="main" on:click=on_main_click>
             <Toolbar />
             {move || {
                 if has_file() {
                     view! {
-                        <Spectrogram />
-                        <Waveform />
+                        // Overview strip (top, thin)
+                        <OverviewPanel />
+
+                        // Main view (takes remaining space)
+                        <div class="main-view">
+                            <Spectrogram />
+                            <Waveform />
+                            // Floating overlay layer
+                            <div class="main-overlays">
+                                <PlayControls />
+                                <FrequencyFocusButton />
+                                <ListenModeButton />
+                                <ToolButton />
+                            </div>
+                        </div>
+
                         <AnalysisPanel />
                     }.into_any()
                 } else {

@@ -4,7 +4,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, MouseEvent};
 use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
 use crate::dsp::harmonics;
-use crate::state::{AppState, PlaybackMode, Selection, SidebarTab, SpectrogramDisplay};
+use crate::state::{AppState, CanvasTool, PlaybackMode, Selection, SidebarTab, SpectrogramDisplay};
 
 const LABEL_AREA_WIDTH: f64 = 60.0;
 
@@ -19,8 +19,10 @@ pub fn Spectrogram() -> impl IntoView {
     // Phase coherence heatmap data — computed only when Harmonics tab is active.
     let coherence_frames: RwSignal<Option<Vec<Vec<f32>>>> = RwSignal::new(None);
 
-    // Drag state for selection
+    // Drag state for selection (time, freq)
     let drag_start = RwSignal::new((0.0f64, 0.0f64));
+    // Hand-tool drag state: (initial_client_x, initial_scroll_offset)
+    let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
 
     // Label hover animation: lerp label_hover_opacity toward target
     let label_hover_target = RwSignal::new(0.0f64);
@@ -122,10 +124,13 @@ pub fn Spectrogram() -> impl IntoView {
         coherence_frames.set(frames);
     });
 
-    // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, or hover change
+    // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, hover, or new tile change
     Effect::new(move || {
+        let _tile_ready = state.tile_ready_signal.get(); // trigger redraw when tiles arrive
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
+        let bookmarks = state.bookmarks.get();
+        let canvas_tool = state.canvas_tool.get();
         let selection = state.selection.get();
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
@@ -334,10 +339,11 @@ pub fn Spectrogram() -> impl IntoView {
                     }
                 }
 
-                // Draw playhead
+                let visible_time = (display_w as f64 / zoom) * time_res;
+                let px_per_sec = display_w as f64 / visible_time;
+
+                // Draw playhead (or static position marker when not playing)
                 if is_playing {
-                    let visible_time = (display_w as f64 / zoom) * time_res;
-                    let px_per_sec = display_w as f64 / visible_time;
                     let x = (playhead - scroll) * px_per_sec;
                     if x >= 0.0 && x <= display_w as f64 {
                         ctx.set_stroke_style_str("rgba(255, 80, 80, 0.9)");
@@ -346,6 +352,34 @@ pub fn Spectrogram() -> impl IntoView {
                         ctx.move_to(x, 0.0);
                         ctx.line_to(x, display_h as f64);
                         ctx.stroke();
+                    }
+                } else if canvas_tool == CanvasTool::Hand {
+                    // Static "play from here" position at 10% from left
+                    let here_x = display_w as f64 * 0.10;
+                    let here_time = scroll + visible_time * 0.10;
+                    // Update play_from_here_time signal (untracked to avoid loop)
+                    state.play_from_here_time.set(here_time);
+                    ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
+                    ctx.set_line_width(1.5);
+                    let _ = ctx.set_line_dash(&js_sys::Array::of2(
+                        &wasm_bindgen::JsValue::from_f64(4.0),
+                        &wasm_bindgen::JsValue::from_f64(3.0),
+                    ));
+                    ctx.begin_path();
+                    ctx.move_to(here_x, 0.0);
+                    ctx.line_to(here_x, display_h as f64);
+                    ctx.stroke();
+                    let _ = ctx.set_line_dash(&js_sys::Array::new()); // reset
+                }
+
+                // Draw bookmark dots (yellow circles at top edge)
+                ctx.set_fill_style_str("rgba(255, 200, 50, 0.9)");
+                for bm in &bookmarks {
+                    let x = (bm.time - scroll) * px_per_sec;
+                    if x >= 0.0 && x <= display_w as f64 {
+                        ctx.begin_path();
+                        let _ = ctx.arc(x, 6.0, 4.0, 0.0, std::f64::consts::TAU);
+                        let _ = ctx.fill();
                     }
                 }
             } else {
@@ -413,10 +447,25 @@ pub fn Spectrogram() -> impl IntoView {
 
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
-        if let Some((_, t, f)) = mouse_to_xtf(&ev) {
-            state.is_dragging.set(true);
-            drag_start.set((t, f));
-            state.selection.set(None);
+        match state.canvas_tool.get_untracked() {
+            CanvasTool::Hand => {
+                // Bookmark tap while playing
+                if state.is_playing.get_untracked() {
+                    let t = state.playhead_time.get_untracked();
+                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                    return;
+                }
+                // Start hand panning
+                state.is_dragging.set(true);
+                hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+            }
+            CanvasTool::Selection => {
+                if let Some((_, t, f)) = mouse_to_xtf(&ev) {
+                    state.is_dragging.set(true);
+                    drag_start.set((t, f));
+                    state.selection.set(None);
+                }
+            }
         }
     };
 
@@ -434,15 +483,35 @@ pub fn Spectrogram() -> impl IntoView {
                 label_hover_target.set(new_target);
             }
 
-            // Update selection if dragging
             if state.is_dragging.get_untracked() {
-                let (t0, f0) = drag_start.get_untracked();
-                state.selection.set(Some(Selection {
-                    time_start: t0.min(t),
-                    time_end: t0.max(t),
-                    freq_low: f0.min(f),
-                    freq_high: f0.max(f),
-                }));
+                match state.canvas_tool.get_untracked() {
+                    CanvasTool::Hand => {
+                        // Pan view
+                        let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+                        let dx = ev.client_x() as f64 - start_client_x;
+                        let Some(canvas_el) = canvas_ref.get() else { return };
+                        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                        let cw = canvas.width() as f64;
+                        if cw == 0.0 { return; }
+                        let files = state.files.get_untracked();
+                        let idx = state.current_file_index.get_untracked();
+                        let time_res = idx.and_then(|i| files.get(i))
+                            .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                        let zoom = state.zoom_level.get_untracked();
+                        let visible_time = (cw / zoom) * time_res;
+                        let dt = -(dx / cw) * visible_time;
+                        state.scroll_offset.set((start_scroll + dt).max(0.0));
+                    }
+                    CanvasTool::Selection => {
+                        let (t0, f0) = drag_start.get_untracked();
+                        state.selection.set(Some(Selection {
+                            time_start: t0.min(t),
+                            time_end: t0.max(t),
+                            freq_low: f0.min(f),
+                            freq_high: f0.max(f),
+                        }));
+                    }
+                }
             }
         }
     };
@@ -450,11 +519,13 @@ pub fn Spectrogram() -> impl IntoView {
     let on_mouseleave = move |_ev: MouseEvent| {
         state.mouse_freq.set(None);
         label_hover_target.set(0.0);
+        state.is_dragging.set(false);
     };
 
     let on_mouseup = move |ev: MouseEvent| {
         if !state.is_dragging.get_untracked() { return; }
         state.is_dragging.set(false);
+        if state.canvas_tool.get_untracked() != CanvasTool::Selection { return; }
         if let Some((_, t, f)) = mouse_to_xtf(&ev) {
             let (t0, f0) = drag_start.get_untracked();
             let sel = Selection {
@@ -487,7 +558,12 @@ pub fn Spectrogram() -> impl IntoView {
     };
 
     view! {
-        <div class="spectrogram-container">
+        <div class="spectrogram-container"
+            style=move || match state.canvas_tool.get() {
+                CanvasTool::Hand => "cursor: grab;",
+                CanvasTool::Selection => "cursor: crosshair;",
+            }
+        >
             <canvas
                 node_ref=canvas_ref
                 on:wheel=on_wheel
@@ -538,7 +614,7 @@ fn draw_coherence_heatmap(
         let frame_f = scroll_col + px_x as f64 / zoom;
         // Past the end of the recording → leave as black.
         if frame_f >= n_frames as f64 {
-            break;
+            continue;
         }
         let frame_i = frame_f as usize;
         let frame_row = &frames[frame_i];

@@ -7,6 +7,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CanvasRenderingContext2d, DragEvent, File, FileReader, HtmlCanvasElement, HtmlInputElement, ImageData, MouseEvent};
 use crate::audio::loader::load_audio;
 use crate::dsp::fft::{compute_preview, compute_spectrogram};
+use crate::canvas::tile_cache;
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 use crate::audio::playback;
 use crate::dsp::bit_analysis::{self, BitCaution};
@@ -340,6 +341,10 @@ fn FilesPanel() -> impl IntoView {
                         let preview = f.preview.clone();
                         let is_active = move || current_idx.get() == Some(i);
                         let on_click = move |_| {
+                            // Clear navigation history and bookmarks when switching files
+                            state.nav_history.set(vec![]);
+                            state.nav_index.set(0);
+                            state.bookmarks.set(vec![]);
                             current_idx.set(Some(i));
                         };
                         let on_close = move |ev: MouseEvent| {
@@ -347,6 +352,8 @@ fn FilesPanel() -> impl IntoView {
                             if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
                                 playback::stop(&state);
                             }
+                            // Clear tile cache for this file
+                            tile_cache::clear_file(i);
                             state.files.update(|files| { files.remove(i); });
                             state.current_file_index.update(|idx| {
                                 *idx = match *idx {
@@ -2216,6 +2223,11 @@ async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(S
             }
         }
     });
+
+    // Schedule progressive tile generation for the full spectrogram
+    if let Some(file) = state.files.get_untracked().get(file_index).cloned() {
+        tile_cache::schedule_all_tiles(state.clone(), file, file_index);
+    }
 
     Ok(())
 }

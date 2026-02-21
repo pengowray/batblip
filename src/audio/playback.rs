@@ -27,9 +27,8 @@ pub fn stop(state: &AppState) {
             let _ = ctx.close();
         }
     });
-    if state.follow_cursor.get_untracked() {
-        state.scroll_offset.set(state.pre_play_scroll.get_untracked());
-    }
+    // Restore scroll to pre-play position when stopping
+    state.scroll_offset.set(state.pre_play_scroll.get_untracked());
     state.is_playing.set(false);
 }
 
@@ -102,6 +101,110 @@ pub fn replay(state: &AppState) {
     if state.is_playing.get_untracked() {
         play(state);
     }
+}
+
+/// Play from the very start of the current file (ignores selection).
+pub fn play_from_start(state: &AppState) {
+    // Save scroll position before calling stop (which would overwrite scroll with old pre_play_scroll)
+    let pre = state.scroll_offset.get_untracked();
+    stop(state);
+    state.pre_play_scroll.set(pre);
+    // Clear selection so play() plays the full file from the start
+    state.selection.set(None);
+    state.scroll_offset.set(0.0);
+    play(state);
+    // Override pre_play_scroll to the position we saved before stop()
+    state.pre_play_scroll.set(pre);
+}
+
+/// Play from the current "here" time (play_from_here_time signal).
+pub fn play_from_here(state: &AppState) {
+    let pre = state.scroll_offset.get_untracked();
+    let start_secs = state.play_from_here_time.get_untracked();
+    stop(state);
+    state.pre_play_scroll.set(pre);
+    play_from_time(state, start_secs);
+    state.pre_play_scroll.set(pre);
+}
+
+/// Play from a specific time offset in the current file.
+pub fn play_from_time(state: &AppState, start_secs: f64) {
+    let files = state.files.get_untracked();
+    let idx = state.current_file_index.get_untracked();
+    let Some(file) = idx.and_then(|i| files.get(i)) else { return };
+
+    let mode = state.playback_mode.get_untracked();
+    let sr = file.audio.sample_rate;
+
+    // Slice from start_secs to end of file (or selection end if selection exists)
+    let selection = state.selection.get_untracked();
+    let end_secs = selection.map(|s| s.time_end).unwrap_or(file.audio.duration_secs);
+    let start_secs = start_secs.max(0.0).min(end_secs);
+    let start_sample = (start_secs * sr as f64) as usize;
+    let end_sample = ((end_secs * sr as f64) as usize).min(file.audio.samples.len());
+    if end_sample <= start_sample { return; }
+
+    let samples_ref = &file.audio.samples[start_sample..end_sample];
+    let filter_enabled = state.filter_enabled.get_untracked();
+    let samples: Vec<f32> = if filter_enabled {
+        let freq_low = state.filter_freq_low.get_untracked();
+        let freq_high = state.filter_freq_high.get_untracked();
+        let db_below = state.filter_db_below.get_untracked();
+        let db_selected = state.filter_db_selected.get_untracked();
+        let db_harmonics = state.filter_db_harmonics.get_untracked();
+        let db_above = state.filter_db_above.get_untracked();
+        let band_mode = state.filter_band_mode.get_untracked();
+        let quality = state.filter_quality.get_untracked();
+        match quality {
+            FilterQuality::Fast => apply_eq_filter_fast(samples_ref, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+            FilterQuality::HQ => apply_eq_filter(samples_ref, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+        }
+    } else {
+        samples_ref.to_vec()
+    };
+
+    let te_factor = state.te_factor.get_untracked();
+    let ps_factor = state.ps_factor.get_untracked();
+    let zc_factor = state.zc_factor.get_untracked();
+    let het_freq = state.het_frequency.get_untracked();
+
+    let (mut final_samples, final_rate) = match mode {
+        PlaybackMode::Normal => (samples, sr),
+        PlaybackMode::Heterodyne => {
+            let het_cutoff = state.het_cutoff.get_untracked();
+            let processed = heterodyne_mix(&samples, sr, het_freq, het_cutoff);
+            (processed, sr)
+        }
+        PlaybackMode::TimeExpansion => {
+            let te_rate = ((sr as f64 / te_factor) as u32).max(8000);
+            (samples, te_rate)
+        }
+        PlaybackMode::PitchShift => {
+            let shifted = pitch_shift_realtime(&samples, ps_factor);
+            (shifted, sr)
+        }
+        PlaybackMode::ZeroCrossing => {
+            let processed = zc_divide(&samples, sr, zc_factor as u32, filter_enabled);
+            (processed, sr)
+        }
+    };
+
+    let gain = if state.auto_gain.get_untracked() {
+        auto_gain_db(&final_samples)
+    } else {
+        state.gain_db.get_untracked()
+    };
+    apply_gain(&mut final_samples, gain);
+    play_samples(&final_samples, final_rate);
+
+    let play_duration = (end_sample - start_sample) as f64 / sr as f64;
+    let playback_speed = match mode {
+        PlaybackMode::TimeExpansion => 1.0 / te_factor,
+        _ => 1.0,
+    };
+    state.is_playing.set(true);
+    state.playhead_time.set(start_secs);
+    start_playhead(state.clone(), start_secs, play_duration, playback_speed);
 }
 
 pub fn play(state: &AppState) {
@@ -332,10 +435,23 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
 
         if current >= end_time {
             state.playhead_time.set(end_time);
-            if state.follow_cursor.get_untracked() {
-                state.scroll_offset.set(state.pre_play_scroll.get_untracked());
-            }
+            // Always restore scroll to pre-play position when playback finishes
+            state.scroll_offset.set(state.pre_play_scroll.get_untracked());
             state.is_playing.set(false);
+            // Show bookmark popup briefly if any bookmarks were made during playback
+            if !state.bookmarks.get_untracked().is_empty() {
+                state.show_bookmark_popup.set(true);
+                // Auto-dismiss after 6 seconds
+                let state_bm = state.clone();
+                let cb = wasm_bindgen::closure::Closure::once(move || {
+                    state_bm.show_bookmark_popup.set(false);
+                });
+                let _ = web_sys::window().unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.as_ref().unchecked_ref(), 6000,
+                    );
+                cb.forget();
+            }
             return;
         }
 

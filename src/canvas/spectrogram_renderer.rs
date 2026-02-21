@@ -57,6 +57,37 @@ pub fn pre_render(data: &SpectrogramData) -> PreRendered {
     }
 }
 
+/// Pre-render a slice of columns (a tile) with a given global max magnitude for normalization.
+/// The global max is passed in so all tiles use the same normalisation scale.
+pub fn pre_render_columns(
+    columns: &[crate::types::SpectrogramColumn],
+    max_mag: f32,
+) -> PreRendered {
+    if columns.is_empty() || max_mag <= 0.0 {
+        return PreRendered { width: 0, height: 0, pixels: Vec::new() };
+    }
+    let width = columns.len() as u32;
+    let height = columns[0].magnitudes.len() as u32;
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    for (col_idx, col) in columns.iter().enumerate() {
+        for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
+            let grey = magnitude_to_greyscale(mag, max_mag);
+            let y = height as usize - 1 - bin_idx;
+            let pixel_idx = (y * width as usize + col_idx) * 4;
+            pixels[pixel_idx] = grey;
+            pixels[pixel_idx + 1] = grey;
+            pixels[pixel_idx + 2] = grey;
+            pixels[pixel_idx + 3] = 255;
+        }
+    }
+    PreRendered { width, height, pixels }
+}
+
+/// Compute the global max magnitude across a full spectrogram (for tile normalisation).
+pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
+    data.columns.iter().flat_map(|c| c.magnitudes.iter()).copied().fold(0.0f32, f32::max)
+}
+
 /// Algorithm selector for movement detection.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MovementAlgo {
