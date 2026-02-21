@@ -98,7 +98,7 @@ impl FrequencyFocus {
     /// Display-range in Hz (low, high). None = show all.
     pub fn freq_range_hz(self) -> Option<(f64, f64)> {
         match self {
-            Self::None | 
+            Self::None           => None,
             Self::HumanHearing   => Some((20.0, 20_000.0)),
             Self::HumanSpeech    => Some((300.0, 3_400.0)),
             Self::Bat1           => Some((20_000.0, 35_000.0)),

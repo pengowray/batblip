@@ -46,8 +46,10 @@ pub fn FrequencyFocusButton() -> impl IntoView {
 
     view! {
         // Anchored left-center of main-overlays
+        // z-index: 20 ensures the panel (z-index:30 within this stacking context created by
+        // transform) renders above sibling layer buttons that come later in DOM order.
         <div
-            style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;"
+            style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; z-index: 20;"
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
             <div style="position: relative; pointer-events: auto;">

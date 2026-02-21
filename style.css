@@ -1095,8 +1095,11 @@ body.sidebar-resizing {
     position: relative;
     background: #000;
     border-bottom: 1px solid #2a2a2a;
-    overflow: hidden;
+    /* overflow: visible so the View panel can extend upward into the toolbar area */
+    overflow: visible;
     cursor: crosshair;
+    /* z-index creates stacking context so the panel paints above the toolbar */
+    z-index: 5;
 }
 
 .overview-strip canvas {

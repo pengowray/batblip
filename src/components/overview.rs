@@ -422,7 +422,17 @@ pub fn OverviewPanel() -> impl IntoView {
         if total_duration <= 0.0 || cw <= 0.0 { return; }
         let dx = ev.client_x() as f64 - drag_start_x.get_untracked();
         let dt = -(dx / cw) * total_duration;
-        let new_scroll = (drag_start_scroll.get_untracked() + dt).max(0.0);
+        let visible_time = {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            idx.and_then(|i| files.get(i)).map(|f| {
+                let zoom = state.zoom_level.get_untracked();
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                (canvas_w / zoom) * f.spectrogram.time_resolution
+            }).unwrap_or(0.0)
+        };
+        let max_scroll = (total_duration - visible_time).max(0.0);
+        let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.scroll_offset.set(new_scroll);
     };
 
@@ -432,10 +442,19 @@ pub fn OverviewPanel() -> impl IntoView {
 
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
-        // Scale wheel delta by file duration so one full swipe ≈ scrolling the file
         let total_duration = file_duration();
         let delta = ev.delta_y() * 0.0003 * total_duration.max(1.0);
-        state.scroll_offset.update(|s| *s = (*s + delta).max(0.0));
+        let visible_time = {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            idx.and_then(|i| files.get(i)).map(|f| {
+                let zoom = state.zoom_level.get_untracked();
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                (canvas_w / zoom) * f.spectrogram.time_resolution
+            }).unwrap_or(0.0)
+        };
+        let max_scroll = (total_duration - visible_time).max(0.0);
+        state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
     };
 
     // Back/forward can_back and can_forward

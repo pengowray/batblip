@@ -499,9 +499,10 @@ pub fn Spectrogram() -> impl IntoView {
                         let idx = state.current_file_index.get_untracked();
                         let file = idx.and_then(|i| files.get(i));
                         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                        let max_scroll = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
                         let zoom = state.zoom_level.get_untracked();
                         let visible_time = (cw / zoom) * time_res;
+                        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+                        let max_scroll = (duration - visible_time).max(0.0);
                         let dt = -(dx / cw) * visible_time;
                         state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
                     }
@@ -554,11 +555,18 @@ pub fn Spectrogram() -> impl IntoView {
             });
         } else {
             let delta = ev.delta_y() * 0.001;
-            // Clamp to [0, file_duration] so the user can't scroll off the end
-            let max_scroll = state.files.get_untracked()
-                .get(state.current_file_index.get_untracked().unwrap_or(0))
-                .map(|f| f.audio.duration_secs)
-                .unwrap_or(f64::MAX);
+            let max_scroll = {
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked().unwrap_or(0);
+                if let Some(file) = files.get(idx) {
+                    let zoom = state.zoom_level.get_untracked();
+                    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                    let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
+                    (file.audio.duration_secs - visible_time).max(0.0)
+                } else {
+                    f64::MAX
+                }
+            };
             state.scroll_offset.update(|s| {
                 *s = (*s + delta).clamp(0.0, max_scroll);
             });
