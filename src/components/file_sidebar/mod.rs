@@ -1,6 +1,5 @@
 mod files_panel;
 mod settings_panel;
-mod filter_panel;
 mod analysis;
 mod metadata_panel;
 mod harmonics;
@@ -14,7 +13,6 @@ use crate::state::{AppState, SidebarTab};
 
 use files_panel::FilesPanel;
 use settings_panel::{SpectrogramSettingsPanel, SelectionPanel};
-use filter_panel::FilterPanel;
 use analysis::AnalysisPanel;
 use metadata_panel::MetadataPanel;
 use harmonics::HarmonicsPanel;
@@ -141,7 +139,6 @@ pub fn FileSidebar() -> impl IntoView {
                 SidebarTab::Files => view! { <FilesPanel /> }.into_any(),
                 SidebarTab::Spectrogram => view! { <SpectrogramSettingsPanel /> }.into_any(),
                 SidebarTab::Selection => view! { <SelectionPanel /> }.into_any(),
-                SidebarTab::PreProcessing => view! { <FilterPanel /> }.into_any(),
                 SidebarTab::Analysis => view! { <AnalysisPanel /> }.into_any(),
                 SidebarTab::Harmonics => view! { <HarmonicsPanel /> }.into_any(),
                 SidebarTab::Metadata => view! { <MetadataPanel /> }.into_any(),

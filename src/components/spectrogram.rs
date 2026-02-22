@@ -34,6 +34,11 @@ fn hit_test_spec_handles(
         let d_lower = (mouse_y - y_lower).abs();
         if d_upper <= threshold { candidates.push((SpectrogramHandle::FfUpper, d_upper)); }
         if d_lower <= threshold { candidates.push((SpectrogramHandle::FfLower, d_lower)); }
+        // Middle handle (midpoint between boundaries)
+        let mid_freq = (ff_lo + ff_hi) / 2.0;
+        let y_mid = spectrogram_renderer::freq_to_y(mid_freq.clamp(min_freq, max_freq), min_freq, max_freq, canvas_height);
+        let d_mid = (mouse_y - y_mid).abs();
+        if d_mid <= threshold { candidates.push((SpectrogramHandle::FfMiddle, d_mid)); }
     }
 
     // HET handles (only when in HET mode and parameter is manual)
@@ -626,6 +631,18 @@ pub fn Spectrogram() -> impl IntoView {
                             let clamped = freq_at_mouse.clamp(0.0, hi - 500.0);
                             state.frequency_focus.set(crate::state::FrequencyFocus::Custom);
                             state.ff_freq_lo.set(clamped);
+                        }
+                        SpectrogramHandle::FfMiddle => {
+                            let lo = state.ff_freq_lo.get_untracked();
+                            let hi = state.ff_freq_hi.get_untracked();
+                            let bw = hi - lo;
+                            let mid = (lo + hi) / 2.0;
+                            let delta = freq_at_mouse - mid;
+                            let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
+                            let new_hi = new_lo + bw;
+                            state.frequency_focus.set(crate::state::FrequencyFocus::Custom);
+                            state.ff_freq_lo.set(new_lo);
+                            state.ff_freq_hi.set(new_hi);
                         }
                         SpectrogramHandle::HetCenter => {
                             state.het_freq_auto.set(false);

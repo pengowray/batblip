@@ -698,6 +698,19 @@ pub fn draw_ff_overlay(
         let _ = ctx.fill();
     }
 
+    // Middle handle (triangle at midpoint on right edge)
+    let mid_y = (y_top + y_bottom) / 2.0;
+    let mid_active = is_active(SpectrogramHandle::FfMiddle);
+    let mid_alpha = if mid_active { 0.9 } else { 0.3 };
+    let mid_size = if mid_active { 8.0 } else { 5.0 };
+    ctx.set_fill_style_str(&format!("rgba(255, 180, 60, {:.2})", mid_alpha));
+    ctx.begin_path();
+    ctx.move_to(canvas_width, mid_y - mid_size);
+    ctx.line_to(canvas_width - mid_size, mid_y);
+    ctx.line_to(canvas_width, mid_y + mid_size);
+    ctx.close_path();
+    let _ = ctx.fill();
+
     // FF range label (only when handles are active)
     if hover_handle.is_some() || drag_handle.is_some() {
         ctx.set_fill_style_str("rgba(255, 180, 60, 0.8)");

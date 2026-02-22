@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::state::{AppState, AutoFactorMode, BandpassStrength, FrequencyFocus, LayerPanel, ListenAdjustment};
+use crate::state::{AppState, AutoFactorMode, BandpassMode, BandpassRange, FrequencyFocus, LayerPanel, ListenAdjustment};
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -103,6 +103,35 @@ pub fn FrequencyFocusButton() -> impl IntoView {
         }
     });
 
+    // Effect D: bandpass_mode + bandpass_range → filter_enabled + filter_freq
+    Effect::new(move || {
+        let bp_mode = state.bandpass_mode.get();
+        let bp_range = state.bandpass_range.get();
+        let ff_lo = state.ff_freq_lo.get();
+        let ff_hi = state.ff_freq_hi.get();
+
+        match bp_mode {
+            BandpassMode::Off => {
+                state.filter_enabled.set(false);
+            }
+            BandpassMode::Auto => {
+                let has_ff = ff_hi > ff_lo;
+                state.filter_enabled.set(has_ff);
+                if has_ff {
+                    state.filter_freq_low.set(ff_lo);
+                    state.filter_freq_high.set(ff_hi);
+                }
+            }
+            BandpassMode::On => {
+                state.filter_enabled.set(true);
+                if bp_range == BandpassRange::FollowFocus && ff_hi > ff_lo {
+                    state.filter_freq_low.set(ff_lo);
+                    state.filter_freq_high.set(ff_hi);
+                }
+            }
+        }
+    });
+
     view! {
         // Stacked above Mode button at bottom-left of main-overlays
         // z-index: 20 ensures the panel (z-index:30) renders above sibling layer buttons.
@@ -145,17 +174,6 @@ pub fn FrequencyFocusButton() -> impl IntoView {
                                     >{variant.label()}</button>
                                 }
                             }).collect_view()}
-                            <hr />
-                            <div class="layer-panel-title">"Filter other freqs"</div>
-                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Off)
-                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Off)
-                            >"Off"</button>
-                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Some)
-                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Some)
-                            >"Some"</button>
-                            <button class=move || layer_opt_class(state.ff_filter_strength.get() == BandpassStrength::Strong)
-                                on:click=move |_| state.ff_filter_strength.set(BandpassStrength::Strong)
-                            >"Strong"</button>
                         </div>
                     }
                 })}

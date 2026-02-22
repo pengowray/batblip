@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::state::{AppState, AutoFactorMode, BandpassStrength, SpectrogramHandle, LayerPanel, ListenAdjustment, PlaybackMode};
+use crate::state::{AppState, AutoFactorMode, BandpassMode, BandpassRange, FilterQuality, SpectrogramHandle, LayerPanel, ListenAdjustment, PlaybackMode};
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -284,20 +284,141 @@ pub fn ListenModeButton() -> impl IntoView {
                             // ── Bandpass ─────────────────────────────────────
                             <hr />
                             <div class="layer-panel-title">"Bandpass"</div>
-                            <div style="display: flex; flex-wrap: wrap; gap: 2px; padding: 0 6px 4px;">
-                                <button class=move || layer_opt_class(state.bandpass_strength.get() == BandpassStrength::Auto)
-                                    on:click=move |_| state.bandpass_strength.set(BandpassStrength::Auto)
-                                >"Auto"</button>
-                                <button class=move || layer_opt_class(state.bandpass_strength.get() == BandpassStrength::Off)
-                                    on:click=move |_| state.bandpass_strength.set(BandpassStrength::Off)
-                                >"Off"</button>
-                                <button class=move || layer_opt_class(state.bandpass_strength.get() == BandpassStrength::Some)
-                                    on:click=move |_| state.bandpass_strength.set(BandpassStrength::Some)
-                                >"Some"</button>
-                                <button class=move || layer_opt_class(state.bandpass_strength.get() == BandpassStrength::Strong)
-                                    on:click=move |_| state.bandpass_strength.set(BandpassStrength::Strong)
-                                >"Strong"</button>
+                            <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
+                                <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::Auto)
+                                    on:click=move |_| state.bandpass_mode.set(BandpassMode::Auto)
+                                >"AUTO"</button>
+                                <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::Off)
+                                    on:click=move |_| state.bandpass_mode.set(BandpassMode::Off)
+                                >"OFF"</button>
+                                <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::On)
+                                    on:click=move |_| state.bandpass_mode.set(BandpassMode::On)
+                                >"ON"</button>
                             </div>
+                            {move || {
+                                let bp = state.bandpass_mode.get();
+                                let show = bp == BandpassMode::On
+                                    || (bp == BandpassMode::Auto && state.ff_freq_hi.get() > state.ff_freq_lo.get());
+                                show.then(|| {
+                                    let make_db_handler = |signal: RwSignal<f64>| {
+                                        move |ev: web_sys::Event| {
+                                            use wasm_bindgen::JsCast;
+                                            let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+                                            if let Ok(val) = input.value().parse::<f64>() {
+                                                if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
+                                                    state.bandpass_mode.set(BandpassMode::On);
+                                                }
+                                                signal.set(val);
+                                            }
+                                        }
+                                    };
+                                    let on_above_change = make_db_handler(state.filter_db_above);
+                                    let on_selected_change = make_db_handler(state.filter_db_selected);
+                                    let on_harmonics_change = make_db_handler(state.filter_db_harmonics);
+                                    let on_below_change = make_db_handler(state.filter_db_below);
+
+                                    let on_quality_click = move |q: FilterQuality| {
+                                        move |_: web_sys::MouseEvent| {
+                                            if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
+                                                state.bandpass_mode.set(BandpassMode::On);
+                                            }
+                                            state.filter_quality.set(q);
+                                        }
+                                    };
+                                    let on_band_click = move |b: u8| {
+                                        move |_: web_sys::MouseEvent| {
+                                            if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
+                                                state.bandpass_mode.set(BandpassMode::On);
+                                            }
+                                            state.filter_band_mode.set(b);
+                                        }
+                                    };
+
+                                    view! {
+                                        // Range toggle
+                                        <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
+                                            <button class=move || layer_opt_class(state.bandpass_range.get() == BandpassRange::FollowFocus)
+                                                on:click=move |_| state.bandpass_range.set(BandpassRange::FollowFocus)
+                                            >"Focus"</button>
+                                            <button class=move || layer_opt_class(state.bandpass_range.get() == BandpassRange::Custom)
+                                                on:click=move |_| state.bandpass_range.set(BandpassRange::Custom)
+                                            >"Custom"</button>
+                                        </div>
+                                        // Freq display
+                                        <div style="padding: 0 8px 2px; font-size: 10px; opacity: 0.7;">
+                                            {move || format!("{:.1}–{:.1} kHz",
+                                                state.filter_freq_low.get() / 1000.0,
+                                                state.filter_freq_high.get() / 1000.0
+                                            )}
+                                        </div>
+                                        // Quality + Bands
+                                        <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
+                                            <button class=move || layer_opt_class(state.filter_quality.get() == FilterQuality::Fast)
+                                                on:click=on_quality_click(FilterQuality::Fast)
+                                                title="IIR band-split — low latency, softer edges"
+                                            >"Fast"</button>
+                                            <button class=move || layer_opt_class(state.filter_quality.get() == FilterQuality::HQ)
+                                                on:click=on_quality_click(FilterQuality::HQ)
+                                                title="FFT spectral EQ — sharp edges, higher latency"
+                                            >"HQ"</button>
+                                            <span style="width: 8px;"></span>
+                                            <button class=move || layer_opt_class(state.filter_band_mode.get() == 3)
+                                                on:click=on_band_click(3)
+                                            >"3"</button>
+                                            <button class=move || layer_opt_class(state.filter_band_mode.get() == 4)
+                                                on:click=on_band_click(4)
+                                            >"4"</button>
+                                        </div>
+                                        // dB sliders: Above, Harmonics (4-band), Focus, Below
+                                        <div class="layer-panel-slider-row"
+                                            on:mouseenter=move |_| state.filter_hovering_band.set(Some(3))
+                                            on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                                        >
+                                            <label>"Above"</label>
+                                            <input type="range" min="-60" max="6" step="1"
+                                                prop:value=move || state.filter_db_above.get().to_string()
+                                                on:input=on_above_change
+                                            />
+                                            <span>{move || format!("{:.0}", state.filter_db_above.get())}</span>
+                                        </div>
+                                        {move || (state.filter_band_mode.get() >= 4).then(|| view! {
+                                            <div class="layer-panel-slider-row"
+                                                on:mouseenter=move |_| state.filter_hovering_band.set(Some(2))
+                                                on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                                            >
+                                                <label>"Harm"</label>
+                                                <input type="range" min="-60" max="6" step="1"
+                                                    prop:value=move || state.filter_db_harmonics.get().to_string()
+                                                    on:input=on_harmonics_change
+                                                />
+                                                <span>{move || format!("{:.0}", state.filter_db_harmonics.get())}</span>
+                                            </div>
+                                        })}
+                                        <div class="layer-panel-slider-row"
+                                            on:mouseenter=move |_| state.filter_hovering_band.set(Some(1))
+                                            on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                                        >
+                                            <label>"Focus"</label>
+                                            <input type="range" min="-60" max="6" step="1"
+                                                prop:value=move || state.filter_db_selected.get().to_string()
+                                                on:input=on_selected_change
+                                            />
+                                            <span>{move || format!("{:.0}", state.filter_db_selected.get())}</span>
+                                        </div>
+                                        <div class="layer-panel-slider-row"
+                                            on:mouseenter=move |_| state.filter_hovering_band.set(Some(0))
+                                            on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                                        >
+                                            <label>"Below"</label>
+                                            <input type="range" min="-60" max="6" step="1"
+                                                prop:value=move || state.filter_db_below.get().to_string()
+                                                on:input=on_below_change
+                                            />
+                                            <span>{move || format!("{:.0}", state.filter_db_below.get())}</span>
+                                        </div>
+                                    }
+                                })
+                            }}
 
                             // ── Gain ─────────────────────────────────────────
                             {(!is_zc).then(|| view! {

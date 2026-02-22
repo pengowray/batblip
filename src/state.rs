@@ -41,7 +41,6 @@ pub enum SidebarTab {
     Files,
     Spectrogram,
     Selection,
-    PreProcessing,
     Analysis,
     Harmonics,
     Metadata,
@@ -53,7 +52,6 @@ impl SidebarTab {
             Self::Files => "Files",
             Self::Spectrogram => "Display",
             Self::Selection => "Selection",
-            Self::PreProcessing => "EQ",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::Metadata => "Info",
@@ -64,7 +62,6 @@ impl SidebarTab {
         Self::Files,
         Self::Spectrogram,
         Self::Selection,
-        Self::PreProcessing,
         Self::Analysis,
         Self::Harmonics,
         Self::Metadata,
@@ -162,14 +159,20 @@ pub enum ListenAdjustment {
     Manual,
 }
 
-/// Bandpass filter strength applied during listen.
+/// Bandpass filter mode: Auto (from FF), Off, or On (manual).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum BandpassStrength {
+pub enum BandpassMode {
     #[default]
     Auto,
     Off,
-    Some,
-    Strong,
+    On,
+}
+
+/// Whether the bandpass frequency range follows the Focus or is set independently.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum BandpassRange {
+    #[default]
+    FollowFocus,
     Custom,
 }
 
@@ -178,6 +181,7 @@ pub enum BandpassStrength {
 pub enum SpectrogramHandle {
     FfUpper,       // FF upper boundary
     FfLower,       // FF lower boundary
+    FfMiddle,      // FF midpoint (transpose whole range)
     HetCenter,     // HET center freq
     HetBandUpper,  // HET upper band edge
     HetBandLower,  // HET lower band edge
@@ -275,10 +279,9 @@ pub struct AppState {
     pub label_hover_opacity: RwSignal<f64>,
     pub follow_cursor: RwSignal<bool>,
     pub pre_play_scroll: RwSignal<f64>,
-    // Filter EQ
+    // Filter EQ (driven by bandpass_mode effect)
     pub filter_enabled: RwSignal<bool>,
     pub filter_band_mode: RwSignal<u8>,
-    pub filter_set_from_selection: RwSignal<bool>,
     pub filter_freq_low: RwSignal<f64>,
     pub filter_freq_high: RwSignal<f64>,
     pub filter_db_below: RwSignal<f64>,
@@ -302,13 +305,13 @@ pub struct AppState {
 
     // Frequency Focus
     pub frequency_focus: RwSignal<FrequencyFocus>,
-    pub ff_filter_strength: RwSignal<BandpassStrength>,
 
     // Listen adjustment
     pub listen_adjustment: RwSignal<ListenAdjustment>,
-    pub bandpass_strength: RwSignal<BandpassStrength>,
-    pub bandpass_freq_low: RwSignal<f64>,
-    pub bandpass_freq_high: RwSignal<f64>,
+
+    // Bandpass
+    pub bandpass_mode: RwSignal<BandpassMode>,
+    pub bandpass_range: RwSignal<BandpassRange>,
 
     // Overview
     pub overview_view: RwSignal<OverviewView>,
@@ -389,15 +392,14 @@ impl AppState {
             pre_play_scroll: RwSignal::new(0.0),
             filter_enabled: RwSignal::new(false),
             filter_band_mode: RwSignal::new(3),
-            filter_set_from_selection: RwSignal::new(false),
             filter_freq_low: RwSignal::new(20_000.0),
             filter_freq_high: RwSignal::new(60_000.0),
-            filter_db_below: RwSignal::new(-60.0),
+            filter_db_below: RwSignal::new(-20.0),
             filter_db_selected: RwSignal::new(0.0),
             filter_db_harmonics: RwSignal::new(0.0),
-            filter_db_above: RwSignal::new(0.0),
+            filter_db_above: RwSignal::new(-20.0),
             filter_hovering_band: RwSignal::new(None),
-            filter_quality: RwSignal::new(FilterQuality::Fast),
+            filter_quality: RwSignal::new(FilterQuality::HQ),
             het_cutoff: RwSignal::new(15_000.0),
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
@@ -408,11 +410,9 @@ impl AppState {
             // New
             canvas_tool: RwSignal::new(CanvasTool::Hand),
             frequency_focus: RwSignal::new(FrequencyFocus::None),
-            ff_filter_strength: RwSignal::new(BandpassStrength::Off),
             listen_adjustment: RwSignal::new(ListenAdjustment::Auto),
-            bandpass_strength: RwSignal::new(BandpassStrength::Auto),
-            bandpass_freq_low: RwSignal::new(20_000.0),
-            bandpass_freq_high: RwSignal::new(60_000.0),
+            bandpass_mode: RwSignal::new(BandpassMode::Auto),
+            bandpass_range: RwSignal::new(BandpassRange::FollowFocus),
             overview_view: RwSignal::new(OverviewView::Spectrogram),
             overview_freq_mode: RwSignal::new(OverviewFreqMode::All),
             nav_history: RwSignal::new(Vec::new()),
