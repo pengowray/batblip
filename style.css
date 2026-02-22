@@ -1102,8 +1102,8 @@ body.sidebar-resizing {
     /* overflow: visible so the View panel can extend upward into the toolbar area */
     overflow: visible;
     cursor: crosshair;
-    /* z-index creates stacking context so the panel paints above the toolbar and main-overlays (z-index 10) */
-    z-index: 20;
+    /* z-index creates stacking context so the panel paints above the toolbar */
+    z-index: 5;
 }
 
 .overview-strip canvas {

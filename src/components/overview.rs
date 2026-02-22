@@ -263,7 +263,7 @@ fn OverviewLayersButton() -> impl IntoView {
                     title="Overview options"
                 >"Overview"</button>
                 {move || is_open().then(|| view! {
-                    <div class="layer-panel" style="top: 28px; left: 0;">
+                    <div class="layer-panel" style="bottom: 28px; left: 0;">
                         <div class="layer-panel-title">"Overview"</div>
                         <button class=move || layer_opt_class(state.overview_view.get() == OverviewView::Spectrogram)
                             on:click=move |_| state.overview_view.set(OverviewView::Spectrogram)
