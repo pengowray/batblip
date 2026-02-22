@@ -1,8 +1,9 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, LayerPanel, OverviewView};
+use crate::state::{AppState, LayerPanel, MicState, OverviewView};
 use crate::audio::playback;
+use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
 use crate::components::spectrogram::Spectrogram;
 use crate::components::waveform::Waveform;
@@ -41,6 +42,28 @@ pub fn App() -> impl IntoView {
                     playback::play(&state_kb);
                 }
             }
+        }
+        if ev.key() == "m" || ev.key() == "M" {
+            ev.prevent_default();
+            let st = state_kb;
+            match st.mic_state.get_untracked() {
+                MicState::Off => {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        microphone::arm(&st).await;
+                    });
+                }
+                MicState::Armed => {
+                    microphone::start_recording(&st);
+                }
+                MicState::Recording => {
+                    if let Some((samples, sr)) = microphone::stop_recording(&st) {
+                        microphone::finalize_recording(samples, sr, st);
+                    }
+                }
+            }
+        }
+        if ev.key() == "Escape" && state_kb.mic_state.get_untracked() != MicState::Off {
+            microphone::disarm(&state_kb);
         }
     });
     let window = web_sys::window().unwrap();

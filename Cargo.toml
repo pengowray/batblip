@@ -3,7 +3,7 @@ members = [".", "src-tauri"]
 
 [package]
 name = "batchi"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 [lib]
@@ -50,6 +50,13 @@ web-sys = { version = "0.3", features = [
     "Response",
     "Navigator",
     "Clipboard",
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamConstraints",
+    "MediaStreamTrack",
+    "MediaStreamAudioSourceNode",
+    "ScriptProcessorNode",
+    "AudioProcessingEvent",
 ] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"

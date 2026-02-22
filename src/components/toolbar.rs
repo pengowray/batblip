@@ -32,15 +32,28 @@ pub fn Toolbar() -> impl IntoView {
                 <div class="about-overlay" on:click=move |_| show_about.set(false)>
                     <div class="about-dialog" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                         <div class="about-header">
-                            <span class="about-title">"Batchi"</span>
-                            <span class="about-version">"v0.1.3"</span>
+                            <span class="about-title">"Batchi by Pengo Wray"</span>
+                            <span class="about-version">"v0.1.5"</span>
                         </div>
-                        <p class="about-desc">"Bat call viewer and acoustic analysis tool for WAV and FLAC recordings."</p>
+                        <p class="about-desc">"Bat call viewer and acoustic analysis tool."</p>
                         <div class="about-modes">
                             <div class="about-mode"><span class="about-mode-tag">"HET"</span>" Heterodyne — mix with a local oscillator to shift ultrasonic calls into audible range"</div>
                             <div class="about-mode"><span class="about-mode-tag">"TE"</span>" Time Expansion — slow playback to lower pitch proportionally"</div>
                             <div class="about-mode"><span class="about-mode-tag">"PS"</span>" Pitch Shift — lower pitch while preserving original duration"</div>
                             <div class="about-mode"><span class="about-mode-tag">"ZC"</span>" Zero Crossing — frequency division via zero-crossing detection"</div>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 11px; color: #666; line-height: 1.5;">
+                            "Thanks to "
+                            <a href="https://twilighttravels.org/batgizmo-app/"
+                               target="_blank"
+                               style="color: #8cf; text-decoration: none;"
+                            >"John Mears"</a>
+                            " ("
+                            <a href="https://github.com/jmears63/batgizmo-app-public"
+                               target="_blank"
+                               style="color: #8cf; text-decoration: none;"
+                            >"batgizmo-app"</a>
+                            ", MIT)"
                         </div>
                         <button class="about-close" on:click=move |_| show_about.set(false)>"Close"</button>
                     </div>

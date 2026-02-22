@@ -221,6 +221,15 @@ pub enum OverviewFreqMode {
     MatchMain,  // tracks max_display_freq
 }
 
+/// Microphone capture state machine.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum MicState {
+    #[default]
+    Off,       // Mic inactive
+    Armed,     // Mic open, monitoring through speakers
+    Recording, // Mic open, monitoring + accumulating samples
+}
+
 /// Which floating layer panel is currently open (only one at a time).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayerPanel {
@@ -355,6 +364,11 @@ pub struct AppState {
     pub ps_factor_auto: RwSignal<bool>,
     pub auto_factor_mode: RwSignal<AutoFactorMode>,
 
+    // Microphone
+    pub mic_state: RwSignal<MicState>,
+    pub mic_sample_rate: RwSignal<u32>,
+    pub mic_samples_recorded: RwSignal<usize>,
+
     // Mobile detection
     pub is_mobile: RwSignal<bool>,
 }
@@ -454,6 +468,9 @@ impl AppState {
             te_factor_auto: RwSignal::new(true),
             ps_factor_auto: RwSignal::new(true),
             auto_factor_mode: RwSignal::new(AutoFactorMode::Target3k),
+            mic_state: RwSignal::new(MicState::Off),
+            mic_sample_rate: RwSignal::new(0),
+            mic_samples_recorded: RwSignal::new(0),
             is_mobile: RwSignal::new(detect_mobile()),
         };
 

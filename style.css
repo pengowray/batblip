@@ -1245,6 +1245,24 @@ body.sidebar-resizing {
     color: #8fc;
 }
 
+.layer-btn.mic-armed {
+    background: rgba(40, 40, 20, 0.92);
+    border-color: rgba(200, 180, 60, 0.6);
+    color: #fc8;
+}
+
+.layer-btn.mic-recording {
+    background: rgba(60, 20, 20, 0.92);
+    border-color: rgba(220, 60, 60, 0.6);
+    color: #f66;
+    animation: mic-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+    0%, 100% { border-color: rgba(220, 60, 60, 0.6); }
+    50% { border-color: rgba(220, 60, 60, 1.0); }
+}
+
 /* ── Layer panels (shared popover style) ────────────────────────────────── */
 
 .layer-panel {
