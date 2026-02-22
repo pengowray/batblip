@@ -133,7 +133,7 @@ fn MainViewButton() -> impl IntoView {
 
     view! {
         <div
-            style=move || format!("position: absolute; bottom: 118px; left: 28px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
+            style=move || format!("position: absolute; top: 10px; left: 56px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
                 if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >

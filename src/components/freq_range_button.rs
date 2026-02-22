@@ -45,7 +45,7 @@ pub fn FreqRangeButton() -> impl IntoView {
 
     view! {
         <div
-            style=move || format!("position: absolute; bottom: 82px; left: 28px; pointer-events: none; z-index: 20; opacity: {}; transition: opacity 0.1s;",
+            style=move || format!("position: absolute; top: 46px; left: 56px; pointer-events: none; z-index: 20; opacity: {}; transition: opacity 0.1s;",
                 if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
@@ -74,7 +74,7 @@ pub fn FreqRangeButton() -> impl IntoView {
                     let is_100k = cur_max.map_or(false, |m| (m - 100_000.0).abs() < 100.0);
 
                     view! {
-                        <div class="layer-panel" style="left: 0; bottom: 34px; min-width: 140px;">
+                        <div class="layer-panel" style="left: 0; top: 34px; min-width: 140px;">
                             <div class="layer-panel-title">"Freq Range"</div>
                             <button class=layer_opt_class(is_full)
                                 on:click=set_range(None, None)

@@ -252,7 +252,7 @@ fn OverviewLayersButton() -> impl IntoView {
 
     view! {
         <div
-            style="position: absolute; bottom: 4px; left: 32px; pointer-events: none;"
+            style="position: absolute; bottom: 4px; left: 64px; pointer-events: none;"
             on:click=|ev: MouseEvent| ev.stop_propagation()
         >
             <div style="position: relative; pointer-events: auto;">
