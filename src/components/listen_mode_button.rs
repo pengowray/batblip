@@ -107,7 +107,7 @@ pub fn ListenModeButton() -> impl IntoView {
     view! {
         // Anchored bottom-left of main-overlays (above tool button)
         <div
-            style=move || format!("position: absolute; bottom: 10px; left: 56px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
+            style=move || format!("position: absolute; bottom: 46px; left: 56px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
                 if state.mouse_in_label_area.get() { "0" } else { "1" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >

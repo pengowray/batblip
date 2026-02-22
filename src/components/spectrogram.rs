@@ -768,6 +768,85 @@ pub fn Spectrogram() -> impl IntoView {
         }
     };
 
+    // ── Touch event handlers (mobile) ──────────────────────────────────────────
+    let on_touchstart = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        let touch = touches.get(0).unwrap();
+
+        // Check for spec handle drag first
+        if let Some(handle) = state.spec_hover_handle.get_untracked() {
+            state.spec_drag_handle.set(Some(handle));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
+
+        match state.canvas_tool.get_untracked() {
+            CanvasTool::Hand => {
+                if state.is_playing.get_untracked() {
+                    let t = state.playhead_time.get_untracked();
+                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                    return;
+                }
+                ev.prevent_default();
+                state.is_dragging.set(true);
+                hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            }
+            CanvasTool::Selection => {
+                ev.prevent_default();
+            }
+        }
+    };
+
+    let on_touchmove = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        let touch = touches.get(0).unwrap();
+
+        if !state.is_dragging.get_untracked() { return; }
+        ev.prevent_default();
+
+        // Spec handle drag takes priority
+        if state.spec_drag_handle.get_untracked().is_some() {
+            return;
+        }
+
+        match state.canvas_tool.get_untracked() {
+            CanvasTool::Hand => {
+                let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+                let dx = touch.client_x() as f64 - start_client_x;
+                let Some(canvas_el) = canvas_ref.get() else { return };
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let cw = canvas.width() as f64;
+                if cw == 0.0 { return; }
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked();
+                let file = idx.and_then(|i| files.get(i));
+                let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                let zoom = state.zoom_level.get_untracked();
+                let visible_time = (cw / zoom) * time_res;
+                let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+                let max_scroll = (duration - visible_time).max(0.0);
+                let dt = -(dx / cw) * visible_time;
+                state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+            }
+            CanvasTool::Selection => {}
+        }
+    };
+
+    let on_touchend = move |_ev: web_sys::TouchEvent| {
+        if state.spec_drag_handle.get_untracked().is_some() {
+            state.spec_drag_handle.set(None);
+            state.is_dragging.set(false);
+            if state.is_playing.get_untracked() {
+                playback::replay_het(&state);
+            }
+            return;
+        }
+        state.is_dragging.set(false);
+    };
+
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
         if ev.shift_key() {
@@ -828,11 +907,11 @@ pub fn Spectrogram() -> impl IntoView {
         <div class="spectrogram-container"
             style=move || {
                 if state.spec_drag_handle.get().is_some() || state.spec_hover_handle.get().is_some() {
-                    return "cursor: ns-resize;".to_string();
+                    return "cursor: ns-resize; touch-action: none;".to_string();
                 }
                 match state.canvas_tool.get() {
-                    CanvasTool::Hand => "cursor: grab;".to_string(),
-                    CanvasTool::Selection => "cursor: crosshair;".to_string(),
+                    CanvasTool::Hand => "cursor: grab; touch-action: none;".to_string(),
+                    CanvasTool::Selection => "cursor: crosshair; touch-action: none;".to_string(),
                 }
             }
         >
@@ -843,6 +922,9 @@ pub fn Spectrogram() -> impl IntoView {
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
                 on:mouseleave=on_mouseleave
+                on:touchstart=on_touchstart
+                on:touchmove=on_touchmove
+                on:touchend=on_touchend
             />
         </div>
     }

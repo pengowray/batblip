@@ -467,6 +467,58 @@ pub fn OverviewPanel() -> impl IntoView {
         drag_active.set(false);
     };
 
+    // ── Touch event handlers (mobile) ──────────────────────────────────────────
+    let on_touchstart = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        ev.prevent_default();
+        let touch = touches.get(0).unwrap();
+        let Some(canvas_el) = canvas_ref.get_untracked() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let canvas_x = touch.client_x() as f64 - rect.left();
+        let cw = rect.width();
+        if let Some(t) = x_to_time(canvas_x, cw) {
+            push_nav(&state);
+            state.scroll_offset.set(t.max(0.0));
+        }
+        drag_active.set(true);
+        drag_start_x.set(touch.client_x() as f64);
+        drag_start_scroll.set(state.scroll_offset.get_untracked());
+    };
+
+    let on_touchmove = move |ev: web_sys::TouchEvent| {
+        if !drag_active.get_untracked() { return; }
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        ev.prevent_default();
+        let touch = touches.get(0).unwrap();
+        let Some(canvas_el) = canvas_ref.get_untracked() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let cw = rect.width();
+        let total_duration = file_duration();
+        if total_duration <= 0.0 || cw <= 0.0 { return; }
+        let dx = touch.client_x() as f64 - drag_start_x.get_untracked();
+        let dt = (dx / cw) * total_duration;
+        let visible_time = {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            idx.and_then(|i| files.get(i)).map(|f| {
+                let zoom = state.zoom_level.get_untracked();
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                (canvas_w / zoom) * f.spectrogram.time_resolution
+            }).unwrap_or(0.0)
+        };
+        let max_scroll = (total_duration - visible_time).max(0.0);
+        let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
+        state.scroll_offset.set(new_scroll);
+    };
+
+    let on_touchend = move |_ev: web_sys::TouchEvent| {
+        drag_active.set(false);
+    };
+
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
         let total_duration = file_duration();
@@ -519,7 +571,10 @@ pub fn OverviewPanel() -> impl IntoView {
                 on:mouseup=on_mouseup
                 on:mouseleave=on_mouseup
                 on:wheel=on_wheel
-                style="cursor: crosshair;"
+                on:touchstart=on_touchstart
+                on:touchmove=on_touchmove
+                on:touchend=on_touchend
+                style="cursor: crosshair; touch-action: none;"
             />
 
             // Layers button (bottom-left, after nav buttons)

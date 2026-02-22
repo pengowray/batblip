@@ -97,8 +97,8 @@ pub(super) fn HarmonicsPanel() -> impl IntoView {
                                 <div class="setting-group-title">"Phase Coherence"</div>
                                 <div style="padding:2px 12px 6px;font-size:10px;color:#666;line-height:1.5">
                                     "Each FFT frame's phase is compared to the previous one. Natural harmonics have a \
-                                    stable, predictable phase relationship between frames. Heavy DSP (e.g. 10× pitch \
-                                    shifting) randomises this, leaving a fingerprint of drifting phase."
+                                    stable, predictable phase relationship between frames. Heavy DSP \
+                                    randomises this, leaving a fingerprint of drifting phase."
                                 </div>
                                 // Heatmap colour scale legend
                                 <div style="padding:0 12px 2px">
