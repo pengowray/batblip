@@ -86,6 +86,24 @@ pub fn PlayControls() -> impl IntoView {
                 }
             })}
 
+            // Status message toast (auto-dismissing)
+            {move || state.status_message.get().map(|msg| {
+                // Auto-clear after 3 seconds
+                let state2 = state;
+                wasm_bindgen_futures::spawn_local(async move {
+                    let p = js_sys::Promise::new(&mut |resolve, _| {
+                        if let Some(w) = web_sys::window() {
+                            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 3000);
+                        }
+                    });
+                    wasm_bindgen_futures::JsFuture::from(p).await.ok();
+                    state2.status_message.set(None);
+                });
+                view! {
+                    <span class="status-toast">{msg}</span>
+                }
+            })}
+
             // Play/Stop buttons (when a file is loaded)
             {move || if !has_file() {
                 view! { <span></span> }.into_any()

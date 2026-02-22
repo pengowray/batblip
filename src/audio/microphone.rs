@@ -30,6 +30,7 @@ pub async fn arm(state: &AppState) {
         Ok(md) => md,
         Err(e) => {
             log::error!("No media devices: {:?}", e);
+            state.status_message.set(Some("Microphone not available on this device".into()));
             return;
         }
     };
@@ -42,6 +43,7 @@ pub async fn arm(state: &AppState) {
         Ok(p) => p,
         Err(e) => {
             log::error!("getUserMedia failed: {:?}", e);
+            state.status_message.set(Some("Microphone not available".into()));
             return;
         }
     };
@@ -50,6 +52,7 @@ pub async fn arm(state: &AppState) {
         Ok(s) => s,
         Err(e) => {
             log::error!("Mic permission denied: {:?}", e);
+            state.status_message.set(Some("Microphone permission denied".into()));
             return;
         }
     };
@@ -67,6 +70,7 @@ pub async fn arm(state: &AppState) {
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to create AudioContext: {:?}", e);
+            state.status_message.set(Some("Failed to initialize audio".into()));
             return;
         }
     };
@@ -272,10 +276,9 @@ pub fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) 
     wasm_bindgen_futures::spawn_local(async move {
         // Yield to let UI render the preview
         let yield_promise = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window()
-                .unwrap()
-                .set_timeout_with_callback(&resolve)
-                .unwrap();
+            if let Some(w) = web_sys::window() {
+                let _ = w.set_timeout_with_callback(&resolve);
+            }
         });
         JsFuture::from(yield_promise).await.ok();
 
@@ -310,7 +313,9 @@ pub fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) 
             chunk_start += CHUNK_COLS;
 
             let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
+                if let Some(w) = web_sys::window() {
+                    let _ = w.set_timeout_with_callback(&resolve);
+                }
             });
             JsFuture::from(p).await.ok();
         }

@@ -1263,6 +1263,16 @@ body.sidebar-resizing {
     50% { border-color: rgba(220, 60, 60, 1.0); }
 }
 
+.status-toast {
+    padding: 4px 10px;
+    background: rgba(180, 60, 40, 0.9);
+    border: 1px solid rgba(220, 80, 60, 0.6);
+    border-radius: 4px;
+    color: #fcc;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
 /* ── Layer panels (shared popover style) ────────────────────────────────── */
 
 .layer-panel {
