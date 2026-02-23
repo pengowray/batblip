@@ -44,14 +44,14 @@ pub fn App() -> impl IntoView {
                 }
             }
         }
-        if ev.key() == "l" || ev.key() == "L" {
+        if (ev.key() == "l" || ev.key() == "L") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
             let st = state_kb;
             wasm_bindgen_futures::spawn_local(async move {
                 microphone::toggle_listen(&st).await;
             });
         }
-        if ev.key() == "r" || ev.key() == "R" {
+        if (ev.key() == "r" || ev.key() == "R") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
             let st = state_kb;
             wasm_bindgen_futures::spawn_local(async move {
