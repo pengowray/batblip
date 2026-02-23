@@ -126,7 +126,12 @@ async fn ensure_mic_open_web(state: &AppState) -> bool {
     };
 
     let constraints = web_sys::MediaStreamConstraints::new();
-    constraints.set_audio(&JsValue::TRUE);
+    // Disable browser audio processing that destroys non-speech signals
+    let audio_opts = js_sys::Object::new();
+    js_sys::Reflect::set(&audio_opts, &"echoCancellation".into(), &JsValue::FALSE).ok();
+    js_sys::Reflect::set(&audio_opts, &"noiseSuppression".into(), &JsValue::FALSE).ok();
+    js_sys::Reflect::set(&audio_opts, &"autoGainControl".into(), &JsValue::FALSE).ok();
+    constraints.set_audio(&audio_opts.into());
 
     let promise = match media_devices.get_user_media_with_constraints(&constraints) {
         Ok(p) => p,
@@ -163,9 +168,13 @@ async fn ensure_mic_open_web(state: &AppState) -> bool {
         }
     };
 
+    // Resume context in case it started suspended (async gap breaks user gesture chain)
+    if let Ok(promise) = ctx.resume() {
+        let _ = JsFuture::from(promise).await;
+    }
+
     let sample_rate = ctx.sample_rate() as u32;
     state.mic_sample_rate.set(sample_rate);
-
     let source = match ctx.create_media_stream_source(&stream) {
         Ok(s) => s,
         Err(e) => {
@@ -348,6 +357,10 @@ async fn ensure_mic_open_tauri(state: &AppState) -> bool {
             return false;
         }
     };
+    // Resume context in case it started suspended (async gap breaks user gesture chain)
+    if let Ok(promise) = het_ctx.resume() {
+        let _ = JsFuture::from(promise).await;
+    }
     HET_CTX.with(|c| *c.borrow_mut() = Some(het_ctx));
     HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
     RT_HET.with(|h| h.borrow_mut().reset());
