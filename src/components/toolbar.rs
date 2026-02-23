@@ -43,34 +43,29 @@ pub fn Toolbar() -> impl IntoView {
             // Spacer
             <div style="flex: 1;"></div>
 
-            // Listen button + HET slider
-            <div class="toolbar-listen-group">
-                <button
-                    class=move || if state.mic_listening.get() { "toolbar-listen-btn active" } else { "toolbar-listen-btn" }
-                    on:click=move |_| {
-                        let st = state;
-                        wasm_bindgen_futures::spawn_local(async move {
-                            microphone::toggle_listen(&st).await;
-                        });
-                    }
-                    title="Toggle live HET listening (L)"
-                >
-                    {move || if state.mic_listening.get() {
-                        format!("HET {:.0}k", state.het_frequency.get() / 1000.0)
-                    } else {
-                        "Listen".to_string()
-                    }}
-                </button>
-                {move || state.mic_listening.get().then(|| view! {
-                    <input
-                        type="range"
-                        class="toolbar-het-slider"
-                        min="15" max="100" step="1"
-                        prop:value=move || (state.het_frequency.get() / 1000.0).to_string()
-                        on:input=on_het_change
-                        title="HET frequency (kHz)"
-                    />
-                })}
+            // Listen button
+            <button
+                class=move || if state.mic_listening.get() { "toolbar-listen-btn active" } else { "toolbar-listen-btn" }
+                on:click=move |_| {
+                    let st = state;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        microphone::toggle_listen(&st).await;
+                    });
+                }
+                title="Toggle live HET listening (L)"
+            >"Listen"</button>
+
+            // HET frequency control (always visible, independent of listen state)
+            <div class="toolbar-het-group">
+                <span class="toolbar-het-label">{move || format!("HET {:.0}k", state.het_frequency.get() / 1000.0)}</span>
+                <input
+                    type="range"
+                    class="toolbar-het-slider"
+                    min="15" max="100" step="1"
+                    prop:value=move || (state.het_frequency.get() / 1000.0).to_string()
+                    on:input=on_het_change
+                    title="HET frequency (kHz)"
+                />
             </div>
 
             // Settings button (opens right sidebar on mobile)
