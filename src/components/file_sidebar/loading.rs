@@ -204,6 +204,9 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         }
     });
 
+    // Signal the spectrogram canvas to repaint with the new data
+    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
     Ok(())
 }
 
