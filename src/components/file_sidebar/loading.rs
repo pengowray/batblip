@@ -21,7 +21,7 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
     load_named_bytes(name, &bytes, None, state).await
 }
 
-async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState) -> Result<(), String> {
+pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState) -> Result<(), String> {
     let audio = load_audio(bytes)?;
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",

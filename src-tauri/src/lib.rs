@@ -185,6 +185,14 @@ fn audio_decode_full(path: String) -> Result<FullDecodeResult, String> {
     audio_decode::decode_full(&path)
 }
 
+/// Read raw file bytes — returns binary data via efficient IPC (no JSON serialization).
+#[tauri::command]
+fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 // ── Native playback commands ────────────────────────────────────────
 
 #[tauri::command]
@@ -252,6 +260,7 @@ pub fn run() {
             mic_get_status,
             audio_file_info,
             audio_decode_full,
+            read_file_bytes,
             native_play,
             native_stop,
             native_playback_status,

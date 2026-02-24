@@ -523,37 +523,51 @@ pub fn XcBrowser() -> impl IntoView {
         downloading.set(Some(id));
         error_msg.set(None);
         spawn_local(async move {
-            let args = js_obj();
-            set_u64(&args, "id", id);
+            let result: Result<(), String> = async {
+                let args = js_obj();
+                set_u64(&args, "id", id);
 
-            match invoke_with("xc_download", &args).await {
-                Ok(val) => {
-                    if let Some(cached) = parse_cached_file(&val) {
-                        // Read the file bytes and load into the app
-                        let path_args = js_obj();
-                        set_str(&path_args, "path", &cached.path);
-                        match invoke_with("audio_decode_full", &path_args).await {
-                            Ok(decode_result) => {
-                                load_from_tauri_decode(
-                                    &cached.filename,
-                                    &decode_result,
-                                    cached.metadata,
-                                    state,
-                                );
-                                cached_ids.update(|s| { s.insert(id); });
-                                state.xc_browser_open.set(false);
-                            }
-                            Err(e) => {
-                                log::error!("Failed to decode XC audio: {e}");
-                                error_msg.set(Some(format!("Failed to decode: {e}")));
-                            }
-                        }
-                    }
+                let val = invoke_with("xc_download", &args).await?;
+                let cached = parse_cached_file(&val)
+                    .ok_or_else(|| "Failed to parse download result".to_string())?;
+
+                // Read raw file bytes via efficient binary IPC
+                let path_args = js_obj();
+                set_str(&path_args, "path", &cached.path);
+                let bytes_val = invoke_with("read_file_bytes", &path_args).await?;
+
+                // Convert ArrayBuffer/Uint8Array → Vec<u8>
+                let bytes: Vec<u8> = if let Ok(ab) = bytes_val.dyn_into::<js_sys::ArrayBuffer>() {
+                    js_sys::Uint8Array::new(&ab).to_vec()
+                } else {
+                    return Err("read_file_bytes did not return ArrayBuffer".to_string());
+                };
+
+                // Use the standard loading pipeline (WASM-side decode, spectrogram, etc.)
+                state.loading_count.update(|c| *c += 1);
+                let load_result = crate::components::file_sidebar::load_named_bytes(
+                    cached.filename.clone(),
+                    &bytes,
+                    Some(cached.metadata),
+                    state,
+                ).await;
+                state.loading_count.update(|c| *c = c.saturating_sub(1));
+                load_result?;
+
+                // Switch to the newly loaded file
+                let file_count = state.files.with_untracked(|files| files.len());
+                if file_count > 0 {
+                    state.current_file_index.set(Some(file_count - 1));
                 }
-                Err(e) => {
-                    log::error!("Failed to download XC{id}: {e}");
-                    error_msg.set(Some(format!("Download failed: {e}")));
-                }
+
+                cached_ids.update(|s| { s.insert(id); });
+                state.xc_browser_open.set(false);
+                Ok(())
+            }.await;
+
+            if let Err(e) = result {
+                log::error!("Failed to load XC{id}: {e}");
+                error_msg.set(Some(format!("Failed to load: {e}")));
             }
             downloading.set(None);
         });
@@ -956,171 +970,4 @@ pub fn XcBrowser() -> impl IntoView {
             </div>
         </div>
     }
-}
-
-/// Load audio from Tauri's decode result into the app file list.
-fn load_from_tauri_decode(
-    filename: &str,
-    decode_result: &JsValue,
-    xc_metadata: Vec<(String, String)>,
-    state: AppState,
-) {
-    let samples_val = js_sys::Reflect::get(decode_result, &"samples".into()).ok();
-    let sample_rate = js_sys::Reflect::get(decode_result, &"sample_rate".into())
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(44100.0) as u32;
-    let samples: Vec<f32> = if let Some(val) = samples_val {
-        // dyn_into consumes val, so on Err we get it back
-        match val.dyn_into::<js_sys::Float32Array>() {
-            Ok(arr) => arr.to_vec(),
-            Err(val) => {
-                match val.dyn_into::<js_sys::Array>() {
-                    Ok(arr) => (0..arr.length())
-                        .filter_map(|i| arr.get(i).as_f64().map(|v| v as f32))
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    if samples.is_empty() {
-        log::error!("No samples in decode result");
-        return;
-    }
-
-    let duration_secs = samples.len() as f64 / sample_rate as f64;
-    let audio = crate::types::AudioData {
-        samples: std::sync::Arc::new(samples),
-        sample_rate,
-        channels: 1,
-        duration_secs,
-        metadata: crate::types::FileMetadata {
-            file_size: 0,
-            format: "wav",
-            bits_per_sample: 16,
-            is_float: false,
-            guano: None,
-        },
-    };
-
-    let name = filename.to_string();
-    let name_clone = name.clone();
-
-    // Use loading pipeline
-    state.loading_count.update(|c| *c += 1);
-    spawn_local(async move {
-        use crate::dsp::fft::{compute_preview, compute_spectrogram_partial};
-        use crate::types::SpectrogramData;
-        use wasm_bindgen_futures::JsFuture;
-
-        let preview = compute_preview(&audio, 256, 128);
-        let audio_for_stft = audio.clone();
-
-        let placeholder_spec = SpectrogramData {
-            columns: std::sync::Arc::new(Vec::new()),
-            freq_resolution: 0.0,
-            time_resolution: 0.0,
-            max_freq: audio.sample_rate as f64 / 2.0,
-            sample_rate: audio.sample_rate,
-        };
-
-        let file_index;
-        {
-            let mut idx = 0;
-            state.files.update(|files| {
-                idx = files.len();
-                files.push(crate::state::LoadedFile {
-                    name: name_clone.clone(),
-                    audio,
-                    spectrogram: placeholder_spec,
-                    preview: Some(preview),
-                    xc_metadata: Some(xc_metadata),
-                    is_recording: false,
-                });
-                if files.len() == 1 {
-                    state.current_file_index.set(Some(0));
-                }
-            });
-            file_index = idx;
-        }
-
-        // Yield
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
-        });
-        JsFuture::from(p).await.ok();
-
-        // Compute spectrogram in chunks
-        const FFT_SIZE: usize = 2048;
-        const HOP_SIZE: usize = 512;
-        const CHUNK_COLS: usize = 32;
-
-        let total_cols = if audio_for_stft.samples.len() >= FFT_SIZE {
-            (audio_for_stft.samples.len() - FFT_SIZE) / HOP_SIZE + 1
-        } else {
-            0
-        };
-
-        let mut all_columns: Vec<Option<crate::types::SpectrogramColumn>> =
-            (0..total_cols).map(|_| None).collect();
-
-        let chunks = (total_cols + CHUNK_COLS - 1) / CHUNK_COLS;
-        for chunk_idx in 0..chunks {
-            let chunk_start = chunk_idx * CHUNK_COLS;
-            if chunk_start >= total_cols { continue; }
-
-            let still_present = state.files.get_untracked()
-                .get(file_index)
-                .map(|f| f.name == name_clone)
-                .unwrap_or(false);
-            if !still_present { state.loading_count.update(|c| *c = c.saturating_sub(1)); return; }
-
-            let chunk = compute_spectrogram_partial(
-                &audio_for_stft, FFT_SIZE, HOP_SIZE, chunk_start, CHUNK_COLS,
-            );
-            for (i, col) in chunk.into_iter().enumerate() {
-                let idx = chunk_start + i;
-                if idx < total_cols { all_columns[idx] = Some(col); }
-            }
-
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
-            });
-            JsFuture::from(p).await.ok();
-        }
-
-        let final_columns: Vec<crate::types::SpectrogramColumn> = all_columns
-            .into_iter()
-            .map(|opt| opt.unwrap_or_else(|| crate::types::SpectrogramColumn {
-                magnitudes: Vec::new(),
-                time_offset: 0.0,
-            }))
-            .collect();
-
-        let freq_resolution = audio_for_stft.sample_rate as f64 / FFT_SIZE as f64;
-        let max_freq = audio_for_stft.sample_rate as f64 / 2.0;
-        let time_resolution = HOP_SIZE as f64 / audio_for_stft.sample_rate as f64;
-
-        let spectrogram = SpectrogramData {
-            columns: std::sync::Arc::new(final_columns),
-            freq_resolution,
-            time_resolution,
-            max_freq,
-            sample_rate: audio_for_stft.sample_rate,
-        };
-
-        state.files.update(|files| {
-            if let Some(f) = files.get_mut(file_index) {
-                if f.name == name_clone {
-                    f.spectrogram = spectrogram;
-                }
-            }
-        });
-
-        state.loading_count.update(|c| *c = c.saturating_sub(1));
-    });
 }
