@@ -75,88 +75,6 @@ pub enum FilterQuality {
 
 // ── New enums ────────────────────────────────────────────────────────────────
 
-/// Which frequency range to focus on (affects display + auto-listen mode).
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum FrequencyFocus {
-    #[default]
-    None,
-    HumanHearing,    // 20 Hz – 20 kHz
-    HumanSpeech,     // 300 Hz – 3.4 kHz
-    Bat1,            // 20k – 35 kHz
-    Bat2,            // 35k – 50 kHz
-    Infra,           // 10 – 20 Hz
-    FullUltrasound,  // 18 kHz – Nyquist
-    FullSpectrum,    // 10 Hz – Nyquist
-    Custom,          // user-adjusted range
-}
-
-impl FrequencyFocus {
-    /// Display-range in Hz (low, high). None = show all.
-    pub fn freq_range_hz(self) -> Option<(f64, f64)> {
-        match self {
-            Self::None | Self::Custom => None,
-            Self::HumanHearing   => Some((20.0, 20_000.0)),
-            Self::HumanSpeech    => Some((300.0, 3_400.0)),
-            Self::Bat1           => Some((20_000.0, 35_000.0)),
-            Self::Bat2           => Some((35_000.0, 50_000.0)),
-            Self::Infra          => Some((10.0, 20.0)),
-            Self::FullUltrasound => Some((18_000.0, f64::MAX)),
-            Self::FullSpectrum   => Some((10.0, f64::MAX))
-        }
-    }
-
-    /// Padded view window for this focus.
-    /// Returns (view_low, view_high) in Hz — ~1/3 larger than the FF range, clamped to [0, nyquist].
-    /// Returns None for FrequencyFocus::None (show everything).
-    pub fn view_range_hz(self, nyquist: f64) -> Option<(f64, f64)> {
-        let (ff_lo, ff_hi) = self.freq_range_hz()?;
-        let ff_hi = ff_hi.min(nyquist);
-        let bandwidth = ff_hi - ff_lo;
-        let padding = bandwidth / 6.0; // 1/6 each side = 1/3 total extra
-        let view_lo = (ff_lo - padding).max(0.0);
-        let view_hi = (ff_hi + padding).min(nyquist);
-        Some((view_lo, view_hi))
-    }
-
-    /// Auto listen-mode implied by this focus (used when ListenAdjustment::Auto).
-    pub fn auto_listen_mode(self) -> PlaybackMode {
-        match self {
-            Self::None | Self::Custom | Self::HumanHearing | Self::HumanSpeech => PlaybackMode::Normal,
-            Self::Bat1 | Self::Bat2 => PlaybackMode::Heterodyne,
-            Self::Infra => PlaybackMode::TimeExpansion,
-            Self::FullUltrasound | Self::FullSpectrum => PlaybackMode::PitchShift,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::None           => "None",
-            Self::HumanHearing   => "Human hearing",
-            Self::HumanSpeech    => "Human speech",
-            Self::Bat1           => "Bat 1 (20–35k)",
-            Self::Bat2           => "Bat 2 (35–50k)",
-            Self::Infra          => "Infra (10–20)",
-            Self::FullUltrasound => "Full ultrasound (18k+)",
-            Self::FullSpectrum   => "Full spectrum (10hz+)",
-            Self::Custom         => "Custom",
-        }
-    }
-
-    pub const ALL: &'static [FrequencyFocus] = &[
-        Self::None, Self::HumanHearing, Self::HumanSpeech,
-        Self::Bat1, Self::Bat2, Self::Infra,
-        Self::FullUltrasound, Self::FullSpectrum,
-    ];
-}
-
-/// Whether the listen mode is driven automatically by FrequencyFocus or set manually.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum ListenAdjustment {
-    #[default]
-    Auto,
-    Manual,
-}
-
 /// Bandpass filter mode: Auto (from FF), Off, or On (manual).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum BandpassMode {
@@ -223,8 +141,7 @@ pub enum OverviewFreqMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayerPanel {
     OverviewLayers,
-    FrequencyFocus,
-    ListenMode,
+    HfrMode,
     Tool,
     FreqRange,
 }
@@ -310,11 +227,8 @@ pub struct AppState {
     // Tool
     pub canvas_tool: RwSignal<CanvasTool>,
 
-    // Frequency Focus
-    pub frequency_focus: RwSignal<FrequencyFocus>,
-
-    // Listen adjustment
-    pub listen_adjustment: RwSignal<ListenAdjustment>,
+    // HFR (High Frequency Range) mode
+    pub hfr_enabled: RwSignal<bool>,
 
     // Bandpass
     pub bandpass_mode: RwSignal<BandpassMode>,
@@ -462,8 +376,7 @@ impl AppState {
 
             // New
             canvas_tool: RwSignal::new(CanvasTool::Hand),
-            frequency_focus: RwSignal::new(FrequencyFocus::None),
-            listen_adjustment: RwSignal::new(ListenAdjustment::Auto),
+            hfr_enabled: RwSignal::new(false),
             bandpass_mode: RwSignal::new(BandpassMode::Auto),
             bandpass_range: RwSignal::new(BandpassRange::FollowFocus),
             overview_view: RwSignal::new(OverviewView::Spectrogram),
@@ -520,5 +433,15 @@ impl AppState {
     pub fn show_error_toast(&self, msg: impl Into<String>) {
         self.status_level.set(StatusLevel::Error);
         self.status_message.set(Some(msg.into()));
+    }
+
+    pub fn compute_auto_gain(&self) -> f64 {
+        let files = self.files.get();
+        let idx = self.current_file_index.get();
+        let Some(file) = idx.and_then(|i| files.get(i)) else { return 0.0 };
+        let peak = file.audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        if peak < 1e-10 { return 0.0; }
+        let peak_db = 20.0 * (peak as f64).log10();
+        -3.0 - peak_db
     }
 }

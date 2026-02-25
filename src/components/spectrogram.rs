@@ -7,7 +7,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, MouseEvent
 use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
 use crate::dsp::harmonics;
 use crate::audio::playback;
-use crate::state::{AppState, CanvasTool, SpectrogramHandle, ListenAdjustment, PlaybackMode, Selection, RightSidebarTab, SpectrogramDisplay};
+use crate::state::{AppState, CanvasTool, SpectrogramHandle, PlaybackMode, Selection, RightSidebarTab, SpectrogramDisplay};
 
 const LABEL_AREA_WIDTH: f64 = 60.0;
 
@@ -231,6 +231,9 @@ pub fn Spectrogram() -> impl IntoView {
         let ff_hi = state.ff_freq_hi.get();
         let het_freq_auto = state.het_freq_auto.get();
         let het_cutoff_auto = state.het_cutoff_auto.get();
+        let hfr_enabled = state.hfr_enabled.get();
+        let mv_on = state.mv_enabled.get_untracked();
+        let use_viridis = !hfr_enabled && !mv_on;
         let _pre = pre_rendered.track();
         let _coh = coherence_frames.track();
 
@@ -341,7 +344,7 @@ pub fn Spectrogram() -> impl IntoView {
         // --- Normal spectrogram mode ---
         pre_rendered.with_untracked(|pr| {
             if let Some(rendered) = pr {
-                spectrogram_renderer::blit_viewport(&ctx, rendered, canvas, scroll_col, zoom, freq_crop_lo, freq_crop_hi);
+                spectrogram_renderer::blit_viewport(&ctx, rendered, canvas, scroll_col, zoom, freq_crop_lo, freq_crop_hi, use_viridis);
 
                 // Determine frequency shift mode for marker labels
                 let show_het = het_interacting
@@ -623,13 +626,11 @@ pub fn Spectrogram() -> impl IntoView {
                         SpectrogramHandle::FfUpper => {
                             let lo = state.ff_freq_lo.get_untracked();
                             let clamped = freq_at_mouse.clamp(lo + 500.0, file_max_freq);
-                            state.frequency_focus.set(crate::state::FrequencyFocus::Custom);
                             state.ff_freq_hi.set(clamped);
                         }
                         SpectrogramHandle::FfLower => {
                             let hi = state.ff_freq_hi.get_untracked();
                             let clamped = freq_at_mouse.clamp(0.0, hi - 500.0);
-                            state.frequency_focus.set(crate::state::FrequencyFocus::Custom);
                             state.ff_freq_lo.set(clamped);
                         }
                         SpectrogramHandle::FfMiddle => {
@@ -640,35 +641,22 @@ pub fn Spectrogram() -> impl IntoView {
                             let delta = freq_at_mouse - mid;
                             let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
                             let new_hi = new_lo + bw;
-                            state.frequency_focus.set(crate::state::FrequencyFocus::Custom);
                             state.ff_freq_lo.set(new_lo);
                             state.ff_freq_hi.set(new_hi);
                         }
                         SpectrogramHandle::HetCenter => {
                             state.het_freq_auto.set(false);
-                            if state.listen_adjustment.get_untracked() == ListenAdjustment::Auto {
-                                state.listen_adjustment.set(ListenAdjustment::Manual);
-                                state.playback_mode.set(PlaybackMode::Heterodyne);
-                            }
                             let clamped = freq_at_mouse.clamp(1000.0, file_max_freq);
                             state.het_frequency.set(clamped);
                         }
                         SpectrogramHandle::HetBandUpper => {
                             state.het_cutoff_auto.set(false);
-                            if state.listen_adjustment.get_untracked() == ListenAdjustment::Auto {
-                                state.listen_adjustment.set(ListenAdjustment::Manual);
-                                state.playback_mode.set(PlaybackMode::Heterodyne);
-                            }
                             let het_freq = state.het_frequency.get_untracked();
                             let new_cutoff = (freq_at_mouse - het_freq).clamp(1000.0, 30000.0);
                             state.het_cutoff.set(new_cutoff);
                         }
                         SpectrogramHandle::HetBandLower => {
                             state.het_cutoff_auto.set(false);
-                            if state.listen_adjustment.get_untracked() == ListenAdjustment::Auto {
-                                state.listen_adjustment.set(ListenAdjustment::Manual);
-                                state.playback_mode.set(PlaybackMode::Heterodyne);
-                            }
                             let het_freq = state.het_frequency.get_untracked();
                             let new_cutoff = (het_freq - freq_at_mouse).clamp(1000.0, 30000.0);
                             state.het_cutoff.set(new_cutoff);

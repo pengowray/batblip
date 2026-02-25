@@ -219,7 +219,7 @@ fn lowpass_filter_inplace(buf: &mut [f32], cutoff_hz: f64, sample_rate: u32) {
     }
 }
 
-fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
+pub fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
     let mut result = samples.to_vec();
     for _ in 0..passes {
         lowpass_filter_inplace(&mut result, cutoff, sample_rate);

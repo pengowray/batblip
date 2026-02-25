@@ -12,8 +12,8 @@ use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::overview::OverviewPanel;
 use crate::components::play_controls::PlayControls;
-use crate::components::frequency_focus_button::FrequencyFocusButton;
-use crate::components::listen_mode_button::ListenModeButton;
+use crate::components::hfr_button::HfrButton;
+use crate::components::hfr_mode_button::HfrModeButton;
 use crate::components::tool_button::ToolButton;
 use crate::components::freq_range_button::FreqRangeButton;
 use crate::components::xc_browser::XcBrowser;
@@ -58,6 +58,10 @@ pub fn App() -> impl IntoView {
             wasm_bindgen_futures::spawn_local(async move {
                 microphone::toggle_record(&st).await;
             });
+        }
+        if (ev.key() == "h" || ev.key() == "H") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
+            ev.prevent_default();
+            state_kb.hfr_enabled.update(|v| *v = !*v);
         }
         if ev.key() == "Escape" {
             if state_kb.xc_browser_open.get_untracked() {
@@ -198,8 +202,8 @@ fn MainArea() -> impl IntoView {
                                 <PlayControls />
                                 <MainViewButton />
                                 <FreqRangeButton />
-                                <FrequencyFocusButton />
-                                <ListenModeButton />
+                                <HfrButton />
+                                <HfrModeButton />
                                 <ToolButton />
                             </div>
                         </div>

@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, FrequencyFocus, SpectrogramDisplay};
+use crate::state::{AppState, SpectrogramDisplay};
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
 #[component]
@@ -57,10 +57,6 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
         };
         state.max_display_freq.set(freq);
         state.min_display_freq.set(None); // reset to 0 Hz on manual override
-        // Mark frequency focus as custom when manually overriding
-        if freq.is_some() {
-            state.frequency_focus.set(FrequencyFocus::Custom);
-        }
     };
 
     view! {

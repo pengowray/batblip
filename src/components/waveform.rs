@@ -3,7 +3,7 @@ use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
-use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
+use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, cascaded_lowpass};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, PlaybackMode};
 
@@ -44,6 +44,24 @@ pub fn Waveform() -> impl IntoView {
         })
     });
 
+    // HFR highpass-filtered samples for waveform overlay
+    let hfr_filtered = Memo::new(move |_| {
+        let hfr = state.hfr_enabled.get();
+        if !hfr { return None; }
+        let ff_lo = state.ff_freq_lo.get();
+        if ff_lo <= 0.0 { return None; }
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+
+        idx.and_then(|i| files.get(i).cloned()).map(|file| {
+            let sr = file.audio.sample_rate;
+            let lp = cascaded_lowpass(&file.audio.samples, ff_lo, sr, 4);
+            file.audio.samples.iter().zip(lp.iter())
+                .map(|(s, l)| s - l)
+                .collect::<Vec<f32>>()
+        })
+    });
+
     Effect::new(move || {
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
@@ -53,6 +71,7 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let mode = state.playback_mode.get();
+        let hfr = state.hfr_enabled.get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -93,6 +112,33 @@ pub fn Waveform() -> impl IntoView {
                         display_h as f64,
                         sel_time,
                         max_freq_khz,
+                    );
+                }
+            } else if hfr {
+                if let Some(filtered) = hfr_filtered.get().as_ref() {
+                    waveform_renderer::draw_waveform_hfr(
+                        &ctx,
+                        &file.audio.samples,
+                        filtered,
+                        file.audio.sample_rate,
+                        scroll,
+                        zoom,
+                        file.spectrogram.time_resolution,
+                        display_w as f64,
+                        display_h as f64,
+                        sel_time,
+                    );
+                } else {
+                    waveform_renderer::draw_waveform(
+                        &ctx,
+                        &file.audio.samples,
+                        file.audio.sample_rate,
+                        scroll,
+                        zoom,
+                        file.spectrogram.time_resolution,
+                        display_w as f64,
+                        display_h as f64,
+                        sel_time,
                     );
                 }
             } else {

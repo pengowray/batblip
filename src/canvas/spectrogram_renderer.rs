@@ -1,4 +1,4 @@
-use crate::canvas::colors::{freq_marker_color, freq_marker_label, magnitude_to_greyscale, movement_rgb};
+use crate::canvas::colors::{freq_marker_color, freq_marker_label, greyscale_to_viridis, magnitude_to_greyscale, movement_rgb};
 use crate::state::{SpectrogramHandle, Selection};
 use crate::types::SpectrogramData;
 use wasm_bindgen::JsCast;
@@ -322,6 +322,7 @@ pub fn blit_viewport(
     zoom: f64,
     freq_crop_lo: f64,
     freq_crop_hi: f64,
+    use_viridis: bool,
 ) {
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
@@ -366,8 +367,26 @@ pub fn blit_viewport(
         (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
     };
 
+    // Apply viridis colormap if requested (remap greyscale pixels to viridis RGB)
+    let viridis_pixels;
+    let pixel_data: &[u8] = if use_viridis {
+        viridis_pixels = {
+            let mut buf = pre_rendered.pixels.clone();
+            for chunk in buf.chunks_exact_mut(4) {
+                let [r, g, b] = greyscale_to_viridis(chunk[0]);
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+            }
+            buf
+        };
+        &viridis_pixels
+    } else {
+        &pre_rendered.pixels
+    };
+
     // Create ImageData from pixel buffer and draw it
-    let clamped = Clamped(&pre_rendered.pixels[..]);
+    let clamped = Clamped(pixel_data);
     let image_data = ImageData::new_with_u8_clamped_array_and_sh(
         clamped,
         pre_rendered.width,

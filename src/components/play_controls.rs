@@ -67,6 +67,33 @@ pub fn PlayControls() -> impl IntoView {
                 }.into_any()
             }}
 
+            // Gain toggle (auto / manual)
+            {move || has_file().then(|| {
+                let auto = state.auto_gain.get();
+                let db = if auto {
+                    state.compute_auto_gain()
+                } else {
+                    state.gain_db.get()
+                };
+                let label = if auto {
+                    "Auto".to_string()
+                } else if db > 0.0 {
+                    format!("+{:.0}dB", db)
+                } else {
+                    format!("{:.0}dB", db)
+                };
+                view! {
+                    <button
+                        class=move || if state.auto_gain.get() { "layer-btn active" } else { "layer-btn" }
+                        on:click=move |_| state.auto_gain.update(|v| *v = !*v)
+                        title="Toggle auto gain"
+                    >
+                        <span class="layer-btn-category">"Gain"</span>
+                        <span class="layer-btn-value">{label}</span>
+                    </button>
+                }
+            })}
+
             // Bookmark popup
             {move || state.show_bookmark_popup.get().then(|| {
                 let bms = state.bookmarks.get();

@@ -311,7 +311,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let freq_mode = state.overview_freq_mode.get();
         let min_display_freq = state.min_display_freq.get();
         let max_display_freq = state.max_display_freq.get();
-        let ff = state.frequency_focus.get();
+        let ff_lo_hz = state.ff_freq_lo.get();
+        let ff_hi_hz = state.ff_freq_hi.get();
         let bookmarks = state.bookmarks.get();
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
@@ -350,11 +351,13 @@ pub fn OverviewPanel() -> impl IntoView {
             .unwrap_or(0.0);
 
         // FF range as fractions of Nyquist (for the inner highlight)
-        let ff_range = ff.freq_range_hz().map(|(lo, hi)| {
-            let lo_frac = (lo / max_freq).clamp(0.0, 1.0);
-            let hi_frac = (hi.min(max_freq) / max_freq).clamp(0.0, 1.0);
-            (lo_frac, hi_frac)
-        });
+        let ff_range = if ff_hi_hz > ff_lo_hz {
+            let lo_frac = (ff_lo_hz / max_freq).clamp(0.0, 1.0);
+            let hi_frac = (ff_hi_hz.min(max_freq) / max_freq).clamp(0.0, 1.0);
+            Some((lo_frac, hi_frac))
+        } else {
+            None
+        };
 
         match overview_view {
             OverviewView::Spectrogram => {
