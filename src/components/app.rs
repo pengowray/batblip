@@ -17,11 +17,48 @@ use crate::components::hfr_mode_button::HfrModeButton;
 use crate::components::tool_button::ToolButton;
 use crate::components::freq_range_button::FreqRangeButton;
 use crate::components::xc_browser::XcBrowser;
+use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
 
 #[component]
 pub fn App() -> impl IntoView {
     let state = AppState::new();
     provide_context(state);
+
+    // Auto-load demo sound from URL hash (e.g. #XC928094)
+    if let Some(window) = web_sys::window() {
+        if let Ok(hash) = window.location().hash() {
+            let trimmed = hash.trim_start_matches('#');
+            if trimmed.len() >= 3 && trimmed[..2].eq_ignore_ascii_case("XC") && trimmed[2..].chars().all(|c| c.is_ascii_digit()) {
+                let xc_id = trimmed.to_uppercase();
+                state.loading_count.update(|c| *c += 1);
+                wasm_bindgen_futures::spawn_local(async move {
+                    match fetch_demo_index().await {
+                        Ok(entries) => {
+                            let found = entries.iter().find(|e| {
+                                e.filename.to_uppercase().contains(&xc_id)
+                            });
+                            if let Some(entry) = found {
+                                if let Err(e) = load_single_demo(entry, state).await {
+                                    log::error!("Failed to load {}: {}", xc_id, e);
+                                    state.show_error_toast(format!("Failed to load {}", xc_id));
+                                }
+                            } else {
+                                state.show_info_toast(format!(
+                                    "{} is not available in the demo audio. Only a small selection of recordings are included.",
+                                    xc_id
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to fetch demo index: {e}");
+                            state.show_error_toast("Could not load demo sounds index");
+                        }
+                    }
+                    state.loading_count.update(|c| *c = c.saturating_sub(1));
+                });
+            }
+        }
+    }
 
     // Live playback parameter switching: when any playback-relevant signal
     // changes while audio is playing, restart the stream from the current

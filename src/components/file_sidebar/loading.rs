@@ -293,12 +293,12 @@ fn parse_xc_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct DemoEntry {
+pub(crate) struct DemoEntry {
     pub filename: String,
     pub metadata_file: Option<String>,
 }
 
-pub(super) async fn fetch_demo_index() -> Result<Vec<DemoEntry>, String> {
+pub(crate) async fn fetch_demo_index() -> Result<Vec<DemoEntry>, String> {
     let index_url = format!("{}/index.json", DEMO_SOUNDS_BASE);
     let index_text = fetch_text(&index_url).await?;
     let index: serde_json::Value =
@@ -320,7 +320,7 @@ pub(super) async fn fetch_demo_index() -> Result<Vec<DemoEntry>, String> {
     Ok(entries)
 }
 
-pub(super) async fn load_single_demo(entry: &DemoEntry, state: AppState) -> Result<(), String> {
+pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState) -> Result<(), String> {
     // Fetch XC metadata sidecar if available
     let xc_metadata = if let Some(meta_file) = &entry.metadata_file {
         let encoded = js_sys::encode_uri_component(meta_file);

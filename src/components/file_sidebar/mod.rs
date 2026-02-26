@@ -16,7 +16,7 @@ pub(crate) use settings_panel::{SpectrogramSettingsPanel, SelectionPanel};
 pub(crate) use analysis::AnalysisPanel as SidebarAnalysisPanel;
 pub(crate) use metadata_panel::MetadataPanel;
 pub(crate) use harmonics::HarmonicsPanel;
-pub(crate) use loading::load_named_bytes;
+pub(crate) use loading::{load_named_bytes, fetch_demo_index, load_single_demo};
 
 fn copy_to_clipboard(text: &str) {
     if let Some(window) = web_sys::window() {
