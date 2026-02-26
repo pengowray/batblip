@@ -318,7 +318,7 @@ pub fn Spectrogram() -> impl IntoView {
                 mouse_freq,
                 mouse_in_label_area: mouse_freq.is_some() && mouse_cx < LABEL_AREA_WIDTH,
                 label_hover_opacity: label_opacity,
-                has_selection: selection.is_some() || dragging,
+                has_selection: selection.is_some() || (dragging && axis_drag_start.is_none()),
                 file_max_freq,
                 axis_drag_lo: adl,
                 axis_drag_hi: adh,
@@ -393,7 +393,7 @@ pub fn Spectrogram() -> impl IntoView {
                     mouse_freq,
                     mouse_in_label_area: mouse_freq.is_some() && mouse_cx < LABEL_AREA_WIDTH,
                     label_hover_opacity: label_opacity,
-                    has_selection: selection.is_some() || dragging,
+                    has_selection: selection.is_some() || (dragging && axis_drag_start.is_none()),
                     file_max_freq,
                     axis_drag_lo: adl2,
                     axis_drag_hi: adh2,
@@ -609,8 +609,10 @@ pub fn Spectrogram() -> impl IntoView {
         // Check for axis drag (left axis frequency range selection)
         if let Some((px_x, _, _, freq)) = mouse_to_xtf(&ev) {
             if px_x < LABEL_AREA_WIDTH {
-                state.axis_drag_start_freq.set(Some(freq));
-                state.axis_drag_current_freq.set(Some(freq));
+                let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+                let snapped = (freq / snap).round() * snap;
+                state.axis_drag_start_freq.set(Some(snapped));
+                state.axis_drag_current_freq.set(Some(snapped));
                 state.is_dragging.set(true);
                 ev.prevent_default();
                 return;
@@ -713,8 +715,17 @@ pub fn Spectrogram() -> impl IntoView {
                 }
 
                 // Axis drag takes second priority (after spec handle drag)
-                if state.axis_drag_start_freq.get_untracked().is_some() {
-                    state.axis_drag_current_freq.set(Some(f));
+                if let Some(start_freq) = state.axis_drag_start_freq.get_untracked() {
+                    let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+                    let snapped = (f / snap).round() * snap;
+                    state.axis_drag_current_freq.set(Some(snapped));
+                    // Live update FF range
+                    let lo = start_freq.min(snapped);
+                    let hi = start_freq.max(snapped);
+                    if hi - lo > 500.0 {
+                        state.ff_freq_lo.set(lo);
+                        state.ff_freq_hi.set(hi);
+                    }
                     return;
                 }
 
@@ -799,20 +810,12 @@ pub fn Spectrogram() -> impl IntoView {
             return;
         }
 
-        // End axis drag
-        if let Some(start_freq) = state.axis_drag_start_freq.get_untracked() {
-            if let Some((_, _, _, end_freq)) = mouse_to_xtf(&ev) {
-                let lo = start_freq.min(end_freq);
-                let hi = start_freq.max(end_freq);
-                // Only set FF range if the drag covers a meaningful range (> 1 kHz)
-                if hi - lo > 1000.0 {
-                    state.ff_freq_lo.set(lo);
-                    state.ff_freq_hi.set(hi);
-                    // Enable HFR if not already
-                    if !state.hfr_enabled.get_untracked() {
-                        state.hfr_enabled.set(true);
-                    }
-                }
+        // End axis drag (FF range already updated live during drag)
+        if state.axis_drag_start_freq.get_untracked().is_some() {
+            let lo = state.ff_freq_lo.get_untracked();
+            let hi = state.ff_freq_hi.get_untracked();
+            if hi - lo > 500.0 && !state.hfr_enabled.get_untracked() {
+                state.hfr_enabled.set(true);
             }
             state.axis_drag_start_freq.set(None);
             state.axis_drag_current_freq.set(None);

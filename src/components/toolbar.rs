@@ -9,14 +9,6 @@ pub fn Toolbar() -> impl IntoView {
 
     let is_mobile = state.is_mobile.get_untracked();
 
-    let on_het_change = move |ev: web_sys::Event| {
-        use wasm_bindgen::JsCast;
-        let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-        if let Ok(val) = input.value().parse::<f64>() {
-            state.het_frequency.set(val * 1000.0);
-        }
-    };
-
     view! {
         <div class="toolbar">
             {if is_mobile {
@@ -52,21 +44,8 @@ pub fn Toolbar() -> impl IntoView {
                         microphone::toggle_listen(&st).await;
                     });
                 }
-                title="Toggle live HET listening (L)"
+                title="Toggle live listening (L)"
             >"Listen"</button>
-
-            // HET frequency control (always visible, independent of listen state)
-            <div class="toolbar-het-group">
-                <span class="toolbar-het-label">{move || format!("HET {:.0}k", state.het_frequency.get() / 1000.0)}</span>
-                <input
-                    type="range"
-                    class="toolbar-het-slider"
-                    min="15" max="100" step="1"
-                    prop:value=move || (state.het_frequency.get() / 1000.0).to_string()
-                    on:input=on_het_change
-                    title="HET frequency (kHz)"
-                />
-            </div>
 
             // Settings button (opens right sidebar on mobile)
             {if is_mobile {
