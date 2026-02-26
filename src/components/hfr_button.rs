@@ -20,6 +20,7 @@ pub fn HfrButton() -> impl IntoView {
             let saved_lo = state.hfr_saved_ff_lo.get_untracked();
             let saved_hi = state.hfr_saved_ff_hi.get_untracked();
             let saved_mode = state.hfr_saved_playback_mode.get_untracked();
+            let saved_bp = state.hfr_saved_bandpass_mode.get_untracked();
 
             state.ff_freq_lo.set(saved_lo.unwrap_or(18_000.0));
             state.ff_freq_hi.set(saved_hi.unwrap_or(nyquist));
@@ -33,6 +34,9 @@ pub fn HfrButton() -> impl IntoView {
                 }
             }
 
+            // Restore bandpass mode (defaults to Auto)
+            state.bandpass_mode.set(saved_bp.unwrap_or(BandpassMode::Auto));
+
             state.min_display_freq.set(None);
             state.max_display_freq.set(None);
         } else {
@@ -40,17 +44,20 @@ pub fn HfrButton() -> impl IntoView {
             let current_lo = state.ff_freq_lo.get_untracked();
             let current_hi = state.ff_freq_hi.get_untracked();
             let current_mode = state.playback_mode.get_untracked();
+            let current_bp = state.bandpass_mode.get_untracked();
 
             if current_hi > current_lo {
                 state.hfr_saved_ff_lo.set(Some(current_lo));
                 state.hfr_saved_ff_hi.set(Some(current_hi));
                 state.hfr_saved_playback_mode.set(Some(current_mode));
             }
+            state.hfr_saved_bandpass_mode.set(Some(current_bp));
 
-            // HFR OFF: reset to 1:1
+            // HFR OFF: reset to 1:1, disable bandpass
             state.ff_freq_lo.set(0.0);
             state.ff_freq_hi.set(0.0);
             state.playback_mode.set(PlaybackMode::Normal);
+            state.bandpass_mode.set(BandpassMode::Off);
             state.min_display_freq.set(None);
             state.max_display_freq.set(None);
         }

@@ -298,6 +298,7 @@ pub struct AppState {
     pub hfr_saved_ff_lo: RwSignal<Option<f64>>,
     pub hfr_saved_ff_hi: RwSignal<Option<f64>>,
     pub hfr_saved_playback_mode: RwSignal<Option<PlaybackMode>>,
+    pub hfr_saved_bandpass_mode: RwSignal<Option<BandpassMode>>,
 
     // Axis drag (left axis frequency range selection)
     pub axis_drag_start_freq: RwSignal<Option<f64>>,
@@ -424,6 +425,7 @@ impl AppState {
             hfr_saved_ff_lo: RwSignal::new(None),
             hfr_saved_ff_hi: RwSignal::new(None),
             hfr_saved_playback_mode: RwSignal::new(None),
+            hfr_saved_bandpass_mode: RwSignal::new(None),
             axis_drag_start_freq: RwSignal::new(None),
             axis_drag_current_freq: RwSignal::new(None),
             cursor_time: RwSignal::new(None),

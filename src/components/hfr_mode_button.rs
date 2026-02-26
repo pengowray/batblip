@@ -84,6 +84,9 @@ pub fn HfrModeButton() -> impl IntoView {
                             <div class="layer-panel" style="bottom: 34px; left: 0; min-width: 210px;">
                                 // ── HFR Mode ─────────────────────────────────
                                 <div class="layer-panel-title">"HFR Mode"</div>
+                                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::Normal)
+                                    on:click=set_mode(state, PlaybackMode::Normal)
+                                >"1:1 — Normal"</button>
                                 <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::Heterodyne)
                                     on:click=set_mode(state, PlaybackMode::Heterodyne)
                                 >"HET — Heterodyne"</button>
@@ -96,6 +99,15 @@ pub fn HfrModeButton() -> impl IntoView {
                                 <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::ZeroCrossing)
                                     on:click=set_mode(state, PlaybackMode::ZeroCrossing)
                                 >"ZC — Zero Crossing"</button>
+
+                                // ── Inaudible notice for 1:1 with ultrasonic focus ──
+                                {(mode == PlaybackMode::Normal && state.ff_freq_lo.get() >= 20_000.0).then(|| {
+                                    view! {
+                                        <div style="padding: 4px 8px; font-size: 10px; color: #e0a030; line-height: 1.3;">
+                                            "Focus is above human hearing. 1:1 mode won\u{2019}t make it audible"
+                                        </div>
+                                    }
+                                })}
 
                                 // ── Adjustment ─────────────────────────────────
                                 {(mode != PlaybackMode::Normal).then(|| {
