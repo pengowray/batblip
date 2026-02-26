@@ -92,7 +92,13 @@ pub(crate) fn start_stream(
 
     let final_rate = match params.mode {
         PlaybackMode::TimeExpansion => {
-            ((sample_rate as f64 / params.te_factor) as u32).max(8000)
+            let abs_f = params.te_factor.abs().max(1.0);
+            let rate = if params.te_factor > 0.0 {
+                sample_rate as f64 / abs_f
+            } else {
+                sample_rate as f64 * abs_f
+            };
+            (rate as u32).clamp(8000, 384_000)
         }
         _ => sample_rate,
     };
@@ -169,8 +175,8 @@ async fn chunk_loop(
         // warmup_len is correct. For PitchShift, the output length differs
         // proportionally, so we scale.
         let trim = match params.mode {
-            PlaybackMode::PitchShift => {
-                // pitch_shift changes length by ps_factor
+            PlaybackMode::PitchShift if params.ps_factor > 1.0 => {
+                // Shift-down: warmup maps to fewer output samples
                 ((warmup_len as f64) / params.ps_factor) as usize
             }
             PlaybackMode::ZeroCrossing => {

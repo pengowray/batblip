@@ -478,6 +478,8 @@ pub enum FreqShiftMode {
     Heterodyne(f64),
     /// Time expansion or pitch shift: all freqs divide by factor.
     Divide(f64),
+    /// Shift up: all freqs multiply by factor (infrasound → audible).
+    Multiply(f64),
 }
 
 /// Frequency marker hover/interaction state passed to drawing functions.
@@ -592,6 +594,19 @@ pub fn draw_freq_markers(
             FreqShiftMode::Divide(factor) if factor > 1.0 => {
                 if ms.label_hover_opacity > 0.01 {
                     let shifted = freq / factor;
+                    let shifted_khz = shifted / 1000.0;
+                    if shifted_khz >= 1.0 {
+                        format!("{base_label} kHz \u{2192} {:.0} kHz", shifted_khz)
+                    } else {
+                        format!("{base_label} kHz \u{2192} {:.0} Hz", shifted)
+                    }
+                } else {
+                    base_label.clone()
+                }
+            }
+            FreqShiftMode::Multiply(factor) if factor > 1.0 => {
+                if ms.label_hover_opacity > 0.01 {
+                    let shifted = freq * factor;
                     let shifted_khz = shifted / 1000.0;
                     if shifted_khz >= 1.0 {
                         format!("{base_label} kHz \u{2192} {:.0} kHz", shifted_khz)

@@ -84,17 +84,31 @@ pub fn HfrButton() -> impl IntoView {
             state.het_cutoff.set((ff_bandwidth / 2.0).min(15_000.0));
         }
 
-        let factor = match mode {
+        let ratio = match mode {
             AutoFactorMode::Target3k => ff_center / 3000.0,
             AutoFactorMode::MinAudible => ff_hi / 20_000.0,
-            AutoFactorMode::Fixed10x => 10.0,
+            AutoFactorMode::Fixed10x => {
+                if ff_center < 3000.0 { 0.1 } else { 10.0 }
+            }
         };
 
+        // ratio >= 1.0 → shift down (positive factor)
+        // ratio < 1.0  → shift up (negative factor = multiply)
         if state.te_factor_auto.get_untracked() {
-            state.te_factor.set(factor.round().clamp(2.0, 40.0));
+            let te = if ratio >= 1.0 {
+                ratio.round().clamp(2.0, 40.0)
+            } else {
+                -(1.0 / ratio).round().clamp(2.0, 40.0)
+            };
+            state.te_factor.set(te);
         }
         if state.ps_factor_auto.get_untracked() {
-            state.ps_factor.set(factor.round().clamp(2.0, 20.0));
+            let ps = if ratio >= 1.0 {
+                ratio.round().clamp(2.0, 20.0)
+            } else {
+                -(1.0 / ratio).round().clamp(2.0, 20.0)
+            };
+            state.ps_factor.set(ps);
         }
     });
 

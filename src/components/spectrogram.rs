@@ -377,8 +377,10 @@ pub fn Spectrogram() -> impl IntoView {
                     FreqShiftMode::Heterodyne(het_freq)
                 } else {
                     match playback_mode {
-                        PlaybackMode::TimeExpansion => FreqShiftMode::Divide(te_factor),
-                        PlaybackMode::PitchShift => FreqShiftMode::Divide(ps_factor),
+                        PlaybackMode::TimeExpansion if te_factor > 1.0 => FreqShiftMode::Divide(te_factor),
+                        PlaybackMode::TimeExpansion if te_factor < -1.0 => FreqShiftMode::Multiply(te_factor.abs()),
+                        PlaybackMode::PitchShift if ps_factor > 1.0 => FreqShiftMode::Divide(ps_factor),
+                        PlaybackMode::PitchShift if ps_factor < -1.0 => FreqShiftMode::Multiply(ps_factor.abs()),
                         PlaybackMode::ZeroCrossing => FreqShiftMode::Divide(state.zc_factor.get()),
                         _ => FreqShiftMode::None,
                     }

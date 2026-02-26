@@ -108,7 +108,10 @@ pub fn play_from_time(state: &AppState, start_secs: f64) {
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let te_factor = state.te_factor.get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {
-        PlaybackMode::TimeExpansion => 1.0 / te_factor,
+        PlaybackMode::TimeExpansion => {
+            let abs_f = te_factor.abs().max(1.0);
+            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
+        }
         _ => 1.0,
     };
 
@@ -144,7 +147,10 @@ pub fn play(state: &AppState) {
 
     let te_factor = state.te_factor.get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {
-        PlaybackMode::TimeExpansion => 1.0 / te_factor,
+        PlaybackMode::TimeExpansion => {
+            let abs_f = te_factor.abs().max(1.0);
+            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
+        }
         _ => 1.0,
     };
 

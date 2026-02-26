@@ -154,11 +154,16 @@ pub fn HfrModeButton() -> impl IntoView {
                                             PlaybackMode::TimeExpansion => view! {
                                                 <div class="layer-panel-slider-row">
                                                     <label>"Factor"</label>
-                                                    <input type="range" min="2" max="40" step="1"
-                                                        prop:value=move || (state.te_factor.get() as u32).to_string()
+                                                    <input type="range" min="-40" max="40" step="1"
+                                                        prop:value=move || (state.te_factor.get() as i32).to_string()
                                                         on:input=on_te_change
                                                     />
-                                                    <span>{move || format!("{}x", state.te_factor.get() as u32)}</span>
+                                                    <span>{move || {
+                                                        let f = state.te_factor.get() as i32;
+                                                        if f > 1 { format!("{}x", f) }
+                                                        else if f < -1 { format!("\u{00f7}{}x", f.abs()) }
+                                                        else { "1:1".to_string() }
+                                                    }}</span>
                                                     <button class=move || if state.te_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
                                                         on:click=move |_| state.te_factor_auto.update(|v| *v = !*v)
                                                         title="Toggle auto TE factor"
@@ -168,11 +173,16 @@ pub fn HfrModeButton() -> impl IntoView {
                                             PlaybackMode::PitchShift => view! {
                                                 <div class="layer-panel-slider-row">
                                                     <label>"Factor"</label>
-                                                    <input type="range" min="2" max="20" step="1"
-                                                        prop:value=move || (state.ps_factor.get() as u32).to_string()
+                                                    <input type="range" min="-20" max="20" step="1"
+                                                        prop:value=move || (state.ps_factor.get() as i32).to_string()
                                                         on:input=on_ps_change
                                                     />
-                                                    <span>{move || format!("÷{}", state.ps_factor.get() as u32)}</span>
+                                                    <span>{move || {
+                                                        let f = state.ps_factor.get() as i32;
+                                                        if f > 1 { format!("\u{00f7}{}", f) }
+                                                        else if f < -1 { format!("\u{00d7}{}", f.abs()) }
+                                                        else { "1:1".to_string() }
+                                                    }}</span>
                                                     <button class=move || if state.ps_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
                                                         on:click=move |_| state.ps_factor_auto.update(|v| *v = !*v)
                                                         title="Toggle auto PS factor"
@@ -195,9 +205,7 @@ pub fn HfrModeButton() -> impl IntoView {
                                         // Auto factor mode switch
                                         {move || {
                                             let any_auto = state.te_factor_auto.get()
-                                                || state.ps_factor_auto.get()
-                                                || state.het_freq_auto.get()
-                                                || state.het_cutoff_auto.get();
+                                                || state.ps_factor_auto.get();
                                             any_auto.then(|| view! {
                                                 <div class="layer-panel-title" style="margin-top: 4px;">"Auto mode"</div>
                                                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
