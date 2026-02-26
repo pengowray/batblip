@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Batchi desktop app",
+  "description": "Default permissions for batblip desktop app",
   "windows": ["main"],
   "permissions": [
     "core:default"

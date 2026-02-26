@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
 /// The app identifier used by Tauri (must match tauri.conf.json).
-const APP_IDENTIFIER: &str = "com.batchi.app";
+const APP_IDENTIFIER: &str = "com.batblip.app";
 const KEY_FILENAME: &str = "xc_api_key.txt";
 
 /// Resolve the directory where Tauri stores app config.
 ///
-/// On Windows: `%APPDATA%\com.batchi.app\`
-/// On macOS:   `~/Library/Application Support/com.batchi.app/`
-/// On Linux:   `$XDG_CONFIG_HOME/com.batchi.app/` or `~/.config/com.batchi.app/`
+/// On Windows: `%APPDATA%\com.batblip.app\`
+/// On macOS:   `~/Library/Application Support/com.batblip.app/`
+/// On Linux:   `$XDG_CONFIG_HOME/com.batblip.app/` or `~/.config/com.batblip.app/`
 fn app_config_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {

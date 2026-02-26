@@ -236,8 +236,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "batchi"
-version = "0.1.8"
+name = "batblip"
+version = "0.1.9"
 dependencies = [
  "claxon",
  "console_error_panic_hook",
@@ -257,8 +257,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "batchi-desktop"
-version = "0.1.8"
+name = "batblip-desktop"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "claxon",
