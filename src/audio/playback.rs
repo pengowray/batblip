@@ -6,9 +6,19 @@ use std::cell::RefCell;
 
 thread_local! {
     static PLAYHEAD_HANDLE: RefCell<Option<i32>> = RefCell::new(None);
+    static REPLAY_TIMER: RefCell<Option<i32>> = RefCell::new(None);
+}
+
+fn cancel_replay_timer() {
+    REPLAY_TIMER.with(|t| {
+        if let Some(handle) = t.borrow_mut().take() {
+            let _ = web_sys::window().unwrap().clear_timeout_with_handle(handle);
+        }
+    });
 }
 
 pub fn stop(state: &AppState) {
+    cancel_replay_timer();
     cancel_playhead();
     streaming_playback::stop_stream();
     // Restore scroll to pre-play position when stopping
@@ -16,8 +26,11 @@ pub fn stop(state: &AppState) {
     state.is_playing.set(false);
 }
 
-/// Resume HET playback from the current playhead position with the new frequency.
-pub fn replay_het(state: &AppState) {
+/// Continue playback from the current playhead position with fresh parameters.
+/// Used for live parameter switching — mode, gain, filter, etc.
+pub fn replay_live(state: &AppState) {
+    if !state.is_playing.get_untracked() { return; }
+
     let current_time = state.playhead_time.get_untracked();
     cancel_playhead();
     streaming_playback::stop_stream();
@@ -48,16 +61,40 @@ pub fn replay_het(state: &AppState) {
         params,
     );
 
-    // Continue playhead from current position
-    start_playhead(state.clone(), current_time, remaining_duration, 1.0);
+    // Compute correct playback speed for the current mode
+    let te_factor = state.te_factor.get_untracked();
+    let playback_speed = match state.playback_mode.get_untracked() {
+        PlaybackMode::TimeExpansion => {
+            let abs_f = te_factor.abs().max(1.0);
+            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
+        }
+        _ => 1.0,
+    };
+
+    start_playhead(state.clone(), current_time, remaining_duration, playback_speed);
 }
 
-/// Restart playback from the beginning of the current selection.
-/// Used when filter/EQ settings change during ZC playback.
-pub fn replay(state: &AppState) {
-    if state.is_playing.get_untracked() {
-        play(state);
-    }
+/// Debounced version of `replay_live()`. Coalesces rapid signal changes
+/// (e.g., HFR toggle setting multiple signals, or slider dragging) into
+/// a single restart ~80ms after the last change.
+pub fn schedule_replay_live(state: &AppState) {
+    use wasm_bindgen::prelude::*;
+    let state = *state;
+    cancel_replay_timer();
+    let cb = wasm_bindgen::closure::Closure::once(move || {
+        replay_live(&state);
+    });
+    let handle = web_sys::window()
+        .unwrap()
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            cb.as_ref().unchecked_ref(),
+            80,
+        )
+        .unwrap_or(0);
+    cb.forget();
+    REPLAY_TIMER.with(|t| {
+        *t.borrow_mut() = Some(handle);
+    });
 }
 
 /// Play from the very start of the current file (ignores selection).

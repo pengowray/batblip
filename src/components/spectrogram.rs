@@ -6,7 +6,6 @@ use std::rc::Rc;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, MouseEvent};
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
 use crate::dsp::harmonics;
-use crate::audio::playback;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, PlaybackMode, Selection, RightSidebarTab, SpectrogramDisplay};
 
 const LABEL_AREA_WIDTH: f64 = 60.0;
@@ -805,10 +804,6 @@ pub fn Spectrogram() -> impl IntoView {
         if state.spec_drag_handle.get_untracked().is_some() {
             state.spec_drag_handle.set(None);
             state.is_dragging.set(false);
-            // Live audio update if playing
-            if state.is_playing.get_untracked() {
-                playback::replay_het(&state);
-            }
             return;
         }
 
@@ -918,9 +913,6 @@ pub fn Spectrogram() -> impl IntoView {
         if state.spec_drag_handle.get_untracked().is_some() {
             state.spec_drag_handle.set(None);
             state.is_dragging.set(false);
-            if state.is_playing.get_untracked() {
-                playback::replay_het(&state);
-            }
             return;
         }
         state.is_dragging.set(false);

@@ -23,6 +23,43 @@ pub fn App() -> impl IntoView {
     let state = AppState::new();
     provide_context(state);
 
+    // Live playback parameter switching: when any playback-relevant signal
+    // changes while audio is playing, restart the stream from the current
+    // playhead position with fresh parameters.
+    {
+        let first_run = std::cell::Cell::new(true);
+        Effect::new(move |_| {
+            // Track all playback-relevant signals (subscribes to changes)
+            let _ = state.playback_mode.get();
+            let _ = state.te_factor.get();
+            let _ = state.ps_factor.get();
+            let _ = state.zc_factor.get();
+            let _ = state.het_frequency.get();
+            let _ = state.het_cutoff.get();
+            let _ = state.gain_db.get();
+            let _ = state.auto_gain.get();
+            let _ = state.filter_enabled.get();
+            let _ = state.filter_freq_low.get();
+            let _ = state.filter_freq_high.get();
+            let _ = state.filter_db_below.get();
+            let _ = state.filter_db_selected.get();
+            let _ = state.filter_db_harmonics.get();
+            let _ = state.filter_db_above.get();
+            let _ = state.filter_band_mode.get();
+            let _ = state.filter_quality.get();
+            let _ = state.bandpass_mode.get();
+
+            if first_run.get() {
+                first_run.set(false);
+                return;
+            }
+
+            if state.is_playing.get_untracked() {
+                playback::schedule_replay_live(&state);
+            }
+        });
+    }
+
     // Global keyboard shortcut: Space = play/stop
     let state_kb = state.clone();
     let handler = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
