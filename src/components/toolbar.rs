@@ -96,24 +96,17 @@ pub fn Toolbar() -> impl IntoView {
                             <span class="about-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span>
                         </div>
                         <p class="about-desc">"Bat call viewer and acoustic analysis tool."</p>
-                        <div class="about-modes">
-                            <div class="about-mode"><span class="about-mode-tag">"HET"</span>" Heterodyne — mix with a local oscillator to shift ultrasonic calls into audible range"</div>
-                            <div class="about-mode"><span class="about-mode-tag">"TE"</span>" Time Expansion — slow playback to lower pitch proportionally"</div>
-                            <div class="about-mode"><span class="about-mode-tag">"PS"</span>" Pitch Shift — lower pitch while preserving original duration"</div>
-                            <div class="about-mode"><span class="about-mode-tag">"ZC"</span>" Zero Crossing — frequency division via zero-crossing detection"</div>
-                        </div>
-                        <div style="margin-top: 12px; font-size: 11px; color: #666; line-height: 1.5;">
-                            "Thanks to "
-                            <a href="https://twilighttravels.org/batgizmo-app/"
-                               target="_blank"
-                               style="color: #8cf; text-decoration: none;"
-                            >"John Mears"</a>
-                            " ("
-                            <a href="https://github.com/jmears63/batgizmo-app-public"
-                               target="_blank"
-                               style="color: #8cf; text-decoration: none;"
-                            >"batgizmo-app"</a>
-                            ", MIT)"
+                        <div style="margin-top: 12px; font-size: 11px; color: #999; line-height: 1.8;">
+                            "Thanks to the libraries that make this possible:"
+                            <div style="margin-top: 6px; columns: 2; column-gap: 16px;">
+                                <div><a href="https://leptos.dev" target="_blank" style="color: #8cf; text-decoration: none;">"Leptos"</a>""</div>
+                                <div><a href="https://crates.io/crates/realfft" target="_blank" style="color: #8cf; text-decoration: none;">"RealFFT"</a></div>
+                                <div><a href="https://crates.io/crates/hound" target="_blank" style="color: #8cf; text-decoration: none;">"Hound"</a></div>
+                                <div><a href="https://crates.io/crates/claxon" target="_blank" style="color: #8cf; text-decoration: none;">"Claxon"</a></div>
+                                <div><a href="https://crates.io/crates/lewton" target="_blank" style="color: #8cf; text-decoration: none;">"Lewton"</a></div>
+                                <div><a href="https://crates.io/crates/symphonia" target="_blank" style="color: #8cf; text-decoration: none;">"Symphonia"</a></div>
+                                <div><a href="https://github.com/jmears63/batgizmo-app-public" target="_blank" style="color: #8cf; text-decoration: none;">"batgizmo-app"</a></div>
+                            </div>
                         </div>
                         <button class="about-close" on:click=move |_| show_about.set(false)>"Close"</button>
                     </div>
