@@ -462,6 +462,7 @@ impl AppState {
         let peak = file.audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 1e-10 { return 0.0; }
         let peak_db = 20.0 * (peak as f64).log10();
-        -3.0 - peak_db
+        // Cap at +30 dB to avoid extreme amplification of very quiet recordings
+        (-3.0 - peak_db).min(30.0)
     }
 }

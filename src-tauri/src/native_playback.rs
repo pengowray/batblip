@@ -146,8 +146,21 @@ pub fn start(
         let start_time_secs = start_sample as f64 / source_rate as f64;
         let mut pos = start_sample;
 
-        // For auto-gain: compute from first chunk
-        let mut cached_gain: Option<f64> = None;
+        // For auto-gain: pre-scan full selection so quiet intros don't
+        // cause excessive gain.
+        let cached_gain: Option<f64> = if params_clone.auto_gain {
+            let peak = all_samples[start_sample..end_sample]
+                .iter()
+                .fold(0.0f32, |mx, s| mx.max(s.abs()));
+            if peak < 1e-10 {
+                Some(0.0)
+            } else {
+                let peak_db = 20.0 * (peak as f64).log10();
+                Some((-3.0 - peak_db).min(30.0))
+            }
+        } else {
+            None
+        };
 
         while pos < end_sample && !producer_stop_flag.load(Ordering::Relaxed) {
             let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
@@ -163,18 +176,7 @@ pub fn start(
 
             // Apply gain
             let mut final_samples = processed;
-            let gain = if params_clone.auto_gain {
-                match cached_gain {
-                    Some(g) => g,
-                    None => {
-                        let g = auto_gain_db(&final_samples);
-                        cached_gain = Some(g);
-                        g
-                    }
-                }
-            } else {
-                params_clone.gain_db
-            };
+            let gain = cached_gain.unwrap_or(params_clone.gain_db);
             apply_gain(&mut final_samples, gain);
 
             // Push to ring buffer, waiting if it's full
@@ -297,13 +299,4 @@ fn apply_gain(samples: &mut [f32], gain_db: f64) {
     for s in samples.iter_mut() {
         *s *= gain_linear;
     }
-}
-
-fn auto_gain_db(samples: &[f32]) -> f64 {
-    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    if peak < 1e-10 {
-        return 0.0;
-    }
-    let peak_db = 20.0 * (peak as f64).log10();
-    -3.0 - peak_db
 }

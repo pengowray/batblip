@@ -285,15 +285,6 @@ pub(crate) fn apply_gain(samples: &mut [f32], gain_db: f64) {
     }
 }
 
-pub(crate) fn auto_gain_db(samples: &[f32]) -> f64 {
-    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    if peak < 1e-10 {
-        return 0.0;
-    }
-    let peak_db = 20.0 * (peak as f64).log10();
-    -3.0 - peak_db
-}
-
 /// Animate the playhead using requestAnimationFrame
 fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
     let window = web_sys::window().unwrap();

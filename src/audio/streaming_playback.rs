@@ -15,7 +15,7 @@ use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
-use crate::audio::playback::{apply_bandpass, apply_gain, auto_gain_db};
+use crate::audio::playback::{apply_bandpass, apply_gain};
 
 /// Number of source samples per chunk. ~0.5s at 192kHz, ~2s at 44.1kHz.
 const CHUNK_SAMPLES: usize = 96_000;
@@ -143,8 +143,23 @@ async fn chunk_loop(
     // Small initial delay so the first chunk has time to be created
     let mut scheduled_time = ctx.current_time() + 0.02;
 
-    // For auto-gain: compute gain from first chunk and reuse for all
-    let mut cached_gain: Option<f64> = None;
+    // For auto-gain: pre-scan the full selection so quiet intros/fade-ins
+    // don't cause excessive gain.  This is a cheap single pass over the
+    // raw source samples — DSP hasn't been applied yet, but the raw peak
+    // is a good proxy and avoids the "first-chunk-is-quiet" problem.
+    let cached_gain: Option<f64> = if params.auto_gain {
+        let peak = source[start_sample..end_sample]
+            .iter()
+            .fold(0.0f32, |mx, s| mx.max(s.abs()));
+        if peak < 1e-10 {
+            Some(0.0)
+        } else {
+            let peak_db = 20.0 * (peak as f64).log10();
+            Some((-3.0 - peak_db).min(30.0))
+        }
+    } else {
+        None
+    };
 
     while pos < end_sample {
         // Check if this stream has been cancelled
@@ -193,18 +208,7 @@ async fn chunk_loop(
 
         // Apply gain
         let mut final_samples = trimmed.to_vec();
-        let gain = if params.auto_gain {
-            match cached_gain {
-                Some(g) => g,
-                None => {
-                    let g = auto_gain_db(&final_samples);
-                    cached_gain = Some(g);
-                    g
-                }
-            }
-        } else {
-            params.gain_db
-        };
+        let gain = cached_gain.unwrap_or(params.gain_db);
         apply_gain(&mut final_samples, gain);
 
         // Schedule this chunk in Web Audio
