@@ -3,7 +3,7 @@ members = [".", "src-tauri", "xc-lib", "xc-cli"]
 
 [package]
 name = "batblip"
-version = "0.1.27"
+version = "0.1.30"
 edition = "2021"
 
 [lib]

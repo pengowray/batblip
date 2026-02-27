@@ -418,6 +418,17 @@ pub fn OverviewPanel() -> impl IntoView {
         Some((canvas_x / canvas_w) * dur)
     };
 
+    // Compute half the visible time window for centering clicks
+    let half_visible_time = move || -> f64 {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        idx.and_then(|i| files.get(i)).map(|f| {
+            let zoom = state.zoom_level.get_untracked();
+            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            (canvas_w / zoom) * f.spectrogram.time_resolution / 2.0
+        }).unwrap_or(0.0)
+    };
+
     let on_mousedown = move |ev: MouseEvent| {
         ev.prevent_default();
         let Some(canvas_el) = canvas_ref.get_untracked() else { return };
@@ -427,7 +438,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let cw = rect.width();
         if let Some(t) = x_to_time(canvas_x, cw) {
             push_nav(&state);
-            state.scroll_offset.set(t.max(0.0));
+            let centered = (t - half_visible_time()).max(0.0);
+            state.scroll_offset.set(centered);
         }
         drag_active.set(true);
         drag_start_x.set(ev.client_x() as f64);
@@ -475,7 +487,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let cw = rect.width();
         if let Some(t) = x_to_time(canvas_x, cw) {
             push_nav(&state);
-            state.scroll_offset.set(t.max(0.0));
+            let centered = (t - half_visible_time()).max(0.0);
+            state.scroll_offset.set(centered);
         }
         drag_active.set(true);
         drag_start_x.set(touch.client_x() as f64);

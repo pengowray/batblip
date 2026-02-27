@@ -931,18 +931,74 @@ pub fn Spectrogram() -> impl IntoView {
         }
     };
 
+    // Helper to get (px_x, px_y, time, freq) from touch event
+    let touch_to_xtf = move |touch: &web_sys::Touch| -> Option<(f64, f64, f64, f64)> {
+        let canvas_el = canvas_ref.get()?;
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let px_x = touch.client_x() as f64 - rect.left();
+        let px_y = touch.client_y() as f64 - rect.top();
+        let cw = canvas.width() as f64;
+        let ch = canvas.height() as f64;
+
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked()?;
+        let file = files.get(idx)?;
+        let time_res = file.spectrogram.time_resolution;
+        let file_max_freq = file.spectrogram.max_freq;
+        let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+        let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
+        let scroll = state.scroll_offset.get_untracked();
+        let zoom = state.zoom_level.get_untracked();
+
+        let (t, f) = spectrogram_renderer::pixel_to_time_freq(
+            px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
+        );
+        Some((px_x, px_y, t, f))
+    };
+
     // ── Touch event handlers (mobile) ──────────────────────────────────────────
     let on_touchstart = move |ev: web_sys::TouchEvent| {
         let touches = ev.touches();
         if touches.length() != 1 { return; }
         let touch = touches.get(0).unwrap();
 
-        // Check for spec handle drag first
-        if let Some(handle) = state.spec_hover_handle.get_untracked() {
-            state.spec_drag_handle.set(Some(handle));
-            state.is_dragging.set(true);
-            ev.prevent_default();
-            return;
+        // Check for spec handle drag first — hit-test at touch position
+        if let Some((_, px_y, _, _)) = touch_to_xtf(&touch) {
+            let canvas_el = canvas_ref.get();
+            if let Some(canvas_el) = canvas_el {
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let ch = canvas.height() as f64;
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked();
+                let file = idx.and_then(|i| files.get(i));
+                let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+                let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+                let handle = hit_test_spec_handles(
+                    &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
+                );
+                if let Some(handle) = handle {
+                    state.spec_drag_handle.set(Some(handle));
+                    state.is_dragging.set(true);
+                    ev.prevent_default();
+                    return;
+                }
+            }
+        }
+
+        // Check for axis drag (left axis frequency range selection)
+        if let Some((px_x, _, _, freq)) = touch_to_xtf(&touch) {
+            if px_x < LABEL_AREA_WIDTH {
+                let snap = 5_000.0;
+                let snapped = (freq / snap).round() * snap;
+                axis_drag_raw_start.set(freq);
+                state.axis_drag_start_freq.set(Some(snapped));
+                state.axis_drag_current_freq.set(Some(snapped));
+                state.is_dragging.set(true);
+                ev.prevent_default();
+                return;
+            }
         }
 
         match state.canvas_tool.get_untracked() {
@@ -971,7 +1027,80 @@ pub fn Spectrogram() -> impl IntoView {
         ev.prevent_default();
 
         // Spec handle drag takes priority
-        if state.spec_drag_handle.get_untracked().is_some() {
+        if let Some(handle) = state.spec_drag_handle.get_untracked() {
+            if let Some((_, px_y, _, _)) = touch_to_xtf(&touch) {
+                let Some(canvas_el) = canvas_ref.get() else { return };
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let ch = canvas.height() as f64;
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked();
+                let file = idx.and_then(|i| files.get(i));
+                let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+                let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+                let freq_at_touch = spectrogram_renderer::y_to_freq(px_y, min_freq_val, max_freq_val, ch);
+
+                match handle {
+                    SpectrogramHandle::FfUpper => {
+                        let lo = state.ff_freq_lo.get_untracked();
+                        state.ff_freq_hi.set(freq_at_touch.clamp(lo + 500.0, file_max_freq));
+                    }
+                    SpectrogramHandle::FfLower => {
+                        let hi = state.ff_freq_hi.get_untracked();
+                        state.ff_freq_lo.set(freq_at_touch.clamp(0.0, hi - 500.0));
+                    }
+                    SpectrogramHandle::FfMiddle => {
+                        let lo = state.ff_freq_lo.get_untracked();
+                        let hi = state.ff_freq_hi.get_untracked();
+                        let bw = hi - lo;
+                        let mid = (lo + hi) / 2.0;
+                        let delta = freq_at_touch - mid;
+                        let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
+                        let new_hi = new_lo + bw;
+                        state.ff_freq_lo.set(new_lo);
+                        state.ff_freq_hi.set(new_hi);
+                    }
+                    SpectrogramHandle::HetCenter => {
+                        state.het_freq_auto.set(false);
+                        state.het_frequency.set(freq_at_touch.clamp(1000.0, file_max_freq));
+                    }
+                    SpectrogramHandle::HetBandUpper => {
+                        state.het_cutoff_auto.set(false);
+                        let het_freq = state.het_frequency.get_untracked();
+                        state.het_cutoff.set((freq_at_touch - het_freq).clamp(1000.0, 30000.0));
+                    }
+                    SpectrogramHandle::HetBandLower => {
+                        state.het_cutoff_auto.set(false);
+                        let het_freq = state.het_frequency.get_untracked();
+                        state.het_cutoff.set((het_freq - freq_at_touch).clamp(1000.0, 30000.0));
+                    }
+                }
+            }
+            return;
+        }
+
+        // Axis drag takes second priority
+        if state.axis_drag_start_freq.get_untracked().is_some() {
+            if let Some((_, _, _, f)) = touch_to_xtf(&touch) {
+                let raw_start = axis_drag_raw_start.get_untracked();
+                let snap = 5_000.0;
+                let (snapped_start, snapped_end) = if f > raw_start {
+                    ((raw_start / snap).floor() * snap, (f / snap).ceil() * snap)
+                } else if f < raw_start {
+                    ((raw_start / snap).ceil() * snap, (f / snap).floor() * snap)
+                } else {
+                    let s = (raw_start / snap).round() * snap;
+                    (s, s)
+                };
+                state.axis_drag_start_freq.set(Some(snapped_start));
+                state.axis_drag_current_freq.set(Some(snapped_end));
+                let lo = snapped_start.min(snapped_end);
+                let hi = snapped_start.max(snapped_end);
+                if hi - lo > 500.0 {
+                    state.ff_freq_lo.set(lo);
+                    state.ff_freq_hi.set(hi);
+                }
+            }
             return;
         }
 
@@ -1001,6 +1130,20 @@ pub fn Spectrogram() -> impl IntoView {
     let on_touchend = move |_ev: web_sys::TouchEvent| {
         if state.spec_drag_handle.get_untracked().is_some() {
             state.spec_drag_handle.set(None);
+            state.is_dragging.set(false);
+            return;
+        }
+        // Finalize axis drag — auto-enable HFR if a meaningful range was selected
+        if state.axis_drag_start_freq.get_untracked().is_some() {
+            let lo = state.ff_freq_lo.get_untracked();
+            let hi = state.ff_freq_hi.get_untracked();
+            if hi - lo > 500.0 && !state.hfr_enabled.get_untracked() {
+                state.hfr_saved_ff_lo.set(Some(lo));
+                state.hfr_saved_ff_hi.set(Some(hi));
+                state.hfr_enabled.set(true);
+            }
+            state.axis_drag_start_freq.set(None);
+            state.axis_drag_current_freq.set(None);
             state.is_dragging.set(false);
             return;
         }
