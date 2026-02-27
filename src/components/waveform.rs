@@ -66,8 +66,6 @@ pub fn Waveform() -> impl IntoView {
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
         let selection = state.selection.get();
-        let playhead = state.playhead_time.get();
-        let is_playing = state.is_playing.get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let mode = state.playback_mode.get();
@@ -164,21 +162,6 @@ pub fn Waveform() -> impl IntoView {
                 );
             }
 
-            // Draw playhead
-            if is_playing {
-                let time_res = file.spectrogram.time_resolution;
-                let visible_time = (display_w as f64 / zoom) * time_res;
-                let px_per_sec = display_w as f64 / visible_time;
-                let x = (playhead - scroll) * px_per_sec;
-                if x >= 0.0 && x <= display_w as f64 {
-                    ctx.set_stroke_style_str("rgba(255, 80, 80, 0.9)");
-                    ctx.set_line_width(2.0);
-                    ctx.begin_path();
-                    ctx.move_to(x, 0.0);
-                    ctx.line_to(x, display_h as f64);
-                    ctx.stroke();
-                }
-            }
         } else {
             ctx.set_fill_style_str("#0a0a0a");
             ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
@@ -265,6 +248,26 @@ pub fn Waveform() -> impl IntoView {
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
                 on:mouseleave=on_mouseleave
+            />
+            // DOM playhead overlay — decoupled from heavy canvas redraws
+            <div
+                class="playhead-line"
+                style:transform=move || {
+                    let playhead = state.playhead_time.get();
+                    let scroll = state.scroll_offset.get();
+                    let zoom = state.zoom_level.get();
+                    let cw = state.spectrogram_canvas_width.get();
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    let time_res = idx.and_then(|i| files.get(i))
+                        .map(|f| f.spectrogram.time_resolution)
+                        .unwrap_or(1.0);
+                    let visible_time = (cw / zoom) * time_res;
+                    let px_per_sec = if visible_time > 0.0 { cw / visible_time } else { 0.0 };
+                    let x = (playhead - scroll) * px_per_sec;
+                    format!("translateX({:.1}px)", x)
+                }
+                style:display=move || if state.is_playing.get() { "block" } else { "none" }
             />
         </div>
     }

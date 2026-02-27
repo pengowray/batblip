@@ -208,7 +208,6 @@ pub fn Spectrogram() -> impl IntoView {
         let bookmarks = state.bookmarks.get();
         let canvas_tool = state.canvas_tool.get();
         let selection = state.selection.get();
-        let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
         let het_interacting = state.het_interacting.get();
         let dragging = state.is_dragging.get();
@@ -339,19 +338,6 @@ pub fn Spectrogram() -> impl IntoView {
                 &marker_state,
                 het_cutoff,
             );
-            if is_playing {
-                let visible_time = (display_w as f64 / zoom) * time_res;
-                let px_per_sec = display_w as f64 / visible_time;
-                let x = (playhead - scroll) * px_per_sec;
-                if x >= 0.0 && x <= display_w as f64 {
-                    ctx.set_stroke_style_str("rgba(255, 80, 80, 0.9)");
-                    ctx.set_line_width(2.0);
-                    ctx.begin_path();
-                    ctx.move_to(x, 0.0);
-                    ctx.line_to(x, display_h as f64);
-                    ctx.stroke();
-                }
-            }
             return;
         }
 
@@ -506,18 +492,8 @@ pub fn Spectrogram() -> impl IntoView {
                 let visible_time = (display_w as f64 / zoom) * time_res;
                 let px_per_sec = display_w as f64 / visible_time;
 
-                // Draw playhead (or static position marker when not playing)
-                if is_playing {
-                    let x = (playhead - scroll) * px_per_sec;
-                    if x >= 0.0 && x <= display_w as f64 {
-                        ctx.set_stroke_style_str("rgba(255, 80, 80, 0.9)");
-                        ctx.set_line_width(2.0);
-                        ctx.begin_path();
-                        ctx.move_to(x, 0.0);
-                        ctx.line_to(x, display_h as f64);
-                        ctx.stroke();
-                    }
-                } else if canvas_tool == CanvasTool::Hand {
+                // Draw static position marker when not playing
+                if !is_playing && canvas_tool == CanvasTool::Hand {
                     // Static "play from here" position at 10% from left
                     let here_x = display_w as f64 * 0.10;
                     let here_time = scroll + visible_time * 0.10;
@@ -1028,6 +1004,26 @@ pub fn Spectrogram() -> impl IntoView {
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
+            />
+            // DOM playhead overlay — decoupled from heavy canvas redraws
+            <div
+                class="playhead-line"
+                style:transform=move || {
+                    let playhead = state.playhead_time.get();
+                    let scroll = state.scroll_offset.get();
+                    let zoom = state.zoom_level.get();
+                    let cw = state.spectrogram_canvas_width.get();
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    let time_res = idx.and_then(|i| files.get(i))
+                        .map(|f| f.spectrogram.time_resolution)
+                        .unwrap_or(1.0);
+                    let visible_time = (cw / zoom) * time_res;
+                    let px_per_sec = if visible_time > 0.0 { cw / visible_time } else { 0.0 };
+                    let x = (playhead - scroll) * px_per_sec;
+                    format!("translateX({:.1}px)", x)
+                }
+                style:display=move || if state.is_playing.get() { "block" } else { "none" }
             />
         </div>
     }

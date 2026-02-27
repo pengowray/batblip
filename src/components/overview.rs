@@ -75,8 +75,6 @@ fn draw_overview_spectrogram(
     main_freq_crop_lo: f64,   // 0..1: low fraction of Nyquist shown in main view
     main_freq_crop_hi: f64,   // 0..1: high fraction of Nyquist shown in main view
     bookmarks: &[(f64,)],
-    playhead_time: f64,
-    is_playing: bool,
     overview_freq_crop: f64,  // 0..1: fraction shown in the overview itself
     ff_range: Option<(f64, f64)>, // FF range as (lo_frac, hi_frac) of Nyquist
 ) {
@@ -170,16 +168,6 @@ fn draw_overview_spectrogram(
         }
     }
 
-    // Playhead dot (when playing)
-    if is_playing {
-        let ph_x = playhead_time * px_per_sec;
-        if ph_x >= 0.0 && ph_x <= cw {
-            ctx.set_fill_style_str("rgba(255, 80, 80, 0.9)");
-            ctx.begin_path();
-            let _ = ctx.arc(ph_x, ch - 5.0, 3.0, 0.0, std::f64::consts::TAU);
-            let _ = ctx.fill();
-        }
-    }
 }
 
 fn draw_overview_waveform(
@@ -316,8 +304,6 @@ pub fn OverviewPanel() -> impl IntoView {
         let ff_lo_hz = state.ff_freq_lo.get();
         let ff_hi_hz = state.ff_freq_hi.get();
         let bookmarks = state.bookmarks.get();
-        let playhead = state.playhead_time.get();
-        let is_playing = state.is_playing.get();
         let main_canvas_w = state.spectrogram_canvas_width.get();
         let auto_gain = state.auto_gain.get();
         let gain_db = if auto_gain { state.compute_auto_gain() } else { state.gain_db.get() };
@@ -383,8 +369,6 @@ pub fn OverviewPanel() -> impl IntoView {
                         main_freq_crop_lo,
                         main_freq_crop_hi,
                         &bm_tuples,
-                        playhead,
-                        is_playing,
                         overview_freq_crop,
                         ff_range,
                     );
@@ -583,6 +567,24 @@ pub fn OverviewPanel() -> impl IntoView {
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
                 style="cursor: crosshair; touch-action: none;"
+            />
+
+            // DOM playhead dot overlay — decoupled from heavy canvas redraws
+            <div
+                class="playhead-dot"
+                style:left=move || {
+                    let playhead = state.playhead_time.get();
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    let duration = idx.and_then(|i| files.get(i))
+                        .map(|f| f.audio.duration_secs)
+                        .unwrap_or(0.0);
+                    let pct = if duration > 0.0 {
+                        (playhead / duration * 100.0).clamp(0.0, 100.0)
+                    } else { 0.0 };
+                    format!("{:.2}%", pct)
+                }
+                style:display=move || if state.is_playing.get() { "block" } else { "none" }
             />
 
             // Layers button (bottom-left, after nav buttons)
