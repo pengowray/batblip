@@ -963,22 +963,25 @@ body.sidebar-resizing {
     flex-shrink: 0;
     background: none;
     border: none;
-    color: #555;
+    color: #666;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1;
-    padding: 1px 4px;
-    border-radius: 2px;
-    visibility: hidden;
+    padding: 2px 6px;
+    border-radius: 3px;
 }
 
 .file-item:hover .file-item-close {
-    visibility: visible;
+    color: #999;
+}
+
+.file-item.active .file-item-close {
+    color: #88a;
 }
 
 .file-item-close:hover {
-    background: #444;
-    color: #ccc;
+    background: #c33;
+    color: #fff;
 }
 
 .file-item-info {
