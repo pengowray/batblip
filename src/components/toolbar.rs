@@ -47,26 +47,6 @@ pub fn Toolbar() -> impl IntoView {
                 title="Toggle live listening (L)"
             >"Listen"</button>
 
-            // Settings button (opens right sidebar on mobile)
-            {if is_mobile {
-                Some(view! {
-                    <button
-                        class="toolbar-menu-btn"
-                        on:click=move |ev: web_sys::MouseEvent| {
-                            ev.stop_propagation();
-                            state.right_sidebar_collapsed.update(|c| *c = !*c);
-                            // Close left sidebar when opening right
-                            if !state.right_sidebar_collapsed.get_untracked() {
-                                state.sidebar_collapsed.set(true);
-                            }
-                        }
-                        title="Settings"
-                    >{"\u{2699}"}</button>
-                })
-            } else {
-                None
-            }}
-
             // Record button
             <button
                 class=move || if state.mic_recording.get() { "toolbar-record-btn active" } else { "toolbar-record-btn" }
@@ -87,6 +67,26 @@ pub fn Toolbar() -> impl IntoView {
                     "Record".to_string()
                 }}
             </button>
+
+            // Right sidebar button (mobile only, after Record)
+            {if is_mobile {
+                Some(view! {
+                    <button
+                        class="toolbar-menu-btn"
+                        on:click=move |ev: web_sys::MouseEvent| {
+                            ev.stop_propagation();
+                            state.right_sidebar_collapsed.update(|c| *c = !*c);
+                            // Close left sidebar when opening right
+                            if !state.right_sidebar_collapsed.get_untracked() {
+                                state.sidebar_collapsed.set(true);
+                            }
+                        }
+                        title="Info panel"
+                    >"\u{2630}"</button>
+                })
+            } else {
+                None
+            }}
 
             {move || show_about.get().then(|| view! {
                 <div class="about-overlay" on:click=move |_| show_about.set(false)>
