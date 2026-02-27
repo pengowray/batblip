@@ -564,9 +564,14 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
     let audio_for_stft = audio.clone();
     let name_check = filename.clone();
 
+    let total_cols = if audio.samples.len() >= 2048 {
+        (audio.samples.len() - 2048) / 512 + 1
+    } else {
+        0
+    };
     let placeholder_spec = SpectrogramData {
         columns: Vec::new().into(),
-        total_columns: 0,
+        total_columns: total_cols,
         freq_resolution: sample_rate as f64 / 2048.0,
         time_resolution: 512.0 / sample_rate as f64,
         max_freq: sample_rate as f64 / 2.0,
@@ -806,9 +811,14 @@ pub fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) 
     let name_for_save = name.clone();
     let is_tauri = state.is_tauri;
 
+    let total_cols = if audio.samples.len() >= 2048 {
+        (audio.samples.len() - 2048) / 512 + 1
+    } else {
+        0
+    };
     let placeholder_spec = SpectrogramData {
         columns: Vec::new().into(),
-        total_columns: 0,
+        total_columns: total_cols,
         freq_resolution: sample_rate as f64 / 2048.0,
         time_resolution: 512.0 / sample_rate as f64,
         max_freq: sample_rate as f64 / 2.0,
@@ -911,17 +921,24 @@ fn spawn_spectrogram_computation(
             // Insert into spectral store for progressive tile generation
             spectral_store::insert_columns(file_index, chunk_start, &chunk);
 
-            // Check if any tile is now complete and schedule it
+            // Check if any tile is now complete and render it synchronously
+            // (must be sync — async schedule_tile_from_store races with drain_columns below)
             let first_tile = chunk_start / TILE_COLS;
             let last_tile = ((chunk_start + chunk.len()).saturating_sub(1)) / TILE_COLS;
+            let mut any_tile_rendered = false;
             for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
                 if tile_scheduled[tile_idx] { continue; }
                 let tile_start = tile_idx * TILE_COLS;
                 let tile_end = (tile_start + TILE_COLS).min(total_cols);
                 if spectral_store::tile_complete(file_index, tile_start, tile_end) {
-                    tile_cache::schedule_tile_from_store(state.clone(), file_index, tile_idx);
+                    if tile_cache::render_tile_from_store_sync(file_index, tile_idx) {
+                        any_tile_rendered = true;
+                    }
                     tile_scheduled[tile_idx] = true;
                 }
+            }
+            if any_tile_rendered {
+                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
             }
 
             chunk_start += CHUNK_COLS;
@@ -971,7 +988,9 @@ fn spawn_spectrogram_computation(
             }
         });
 
-        // Re-schedule all tiles with accurate final normalization
+        // Clear stale tiles (rendered with provisional max_magnitude) and
+        // re-schedule with accurate final normalization.
+        tile_cache::clear_file(file_index);
         let file_for_tiles = state.files.get_untracked().get(file_index).cloned();
         if let Some(file) = file_for_tiles {
             tile_cache::schedule_all_tiles(state.clone(), file, file_index);
