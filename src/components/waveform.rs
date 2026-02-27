@@ -168,6 +168,36 @@ pub fn Waveform() -> impl IntoView {
         }
     });
 
+    // Auto-scroll to follow playhead during playback
+    Effect::new(move || {
+        let playhead = state.playhead_time.get();
+        let is_playing = state.is_playing.get();
+        let follow = state.follow_cursor.get();
+
+        if !is_playing || !follow { return; }
+
+        let Some(canvas_el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let display_w = canvas.width() as f64;
+        if display_w == 0.0 { return; }
+
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let time_res = idx
+            .and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.time_resolution)
+            .unwrap_or(1.0);
+        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.scroll_offset.get_untracked();
+
+        let visible_time = (display_w / zoom) * time_res;
+        let playhead_rel = playhead - scroll;
+
+        if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
+            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0));
+        }
+    });
+
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
         if ev.ctrl_key() {
