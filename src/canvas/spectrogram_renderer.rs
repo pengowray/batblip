@@ -514,6 +514,7 @@ pub fn blit_preview_as_background(
     total_duration: f64,   // total file duration in seconds
     freq_crop_lo: f64,     // 0..1 fraction of Nyquist
     freq_crop_hi: f64,     // 0..1 fraction of Nyquist
+    colormap: ColormapMode,
 ) {
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
@@ -554,7 +555,19 @@ pub fn blit_preview_as_background(
         (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
     };
 
-    let clamped = Clamped(&preview.pixels[..]);
+    // Apply colormap to preview pixels (preview is stored as greyscale)
+    let mut pixels = preview.pixels.as_ref().clone();
+    match colormap {
+        ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut pixels, cm),
+        ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
+            apply_hfr_colormap_to_tile(
+                &mut pixels, preview.width, preview.height,
+                cm, ff_lo_frac, ff_hi_frac,
+            );
+        }
+    }
+
+    let clamped = Clamped(&pixels[..]);
     let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
         clamped, preview.width, preview.height,
     ) else { return };
@@ -667,11 +680,21 @@ pub fn blit_tiles_viewport(
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
 
-    ctx.set_fill_style_str("#000");
-    ctx.fill_rect(0.0, 0.0, cw, ch);
+    // Draw colormapped preview as base layer so tile gaps show preview, not black.
+    // Tiles (opaque) are drawn on top and fully cover the preview where they exist.
+    if let Some(pv) = preview {
+        blit_preview_as_background(
+            ctx, pv, canvas,
+            scroll_offset, visible_time, total_duration,
+            freq_crop_lo, freq_crop_hi, colormap,
+        );
+    } else {
+        ctx.set_fill_style_str("#000");
+        ctx.fill_rect(0.0, 0.0, cw, ch);
+    }
 
     if total_cols == 0 || zoom <= 0.0 {
-        return false;
+        return preview.is_some();
     }
 
     // Visible column range
@@ -832,19 +855,8 @@ pub fn blit_tiles_viewport(
         }
     }
 
-    // If some tiles were missing, draw preview as background for the gaps
-    if !any_drawn {
-        if let Some(pv) = preview {
-            blit_preview_as_background(
-                ctx, pv, canvas,
-                scroll_offset, visible_time, total_duration,
-                freq_crop_lo, freq_crop_hi,
-            );
-            return true;
-        }
-    }
-
-    any_drawn
+    // Preview was drawn as base layer, so even if no tiles exist, something is visible
+    any_drawn || preview.is_some()
 }
 
 /// Describes how frequency markers should show shifted output frequencies.

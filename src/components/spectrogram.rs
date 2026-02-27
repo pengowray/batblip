@@ -449,6 +449,7 @@ pub fn Spectrogram() -> impl IntoView {
                 &ctx, pv, canvas,
                 scroll, visible_time, duration,
                 freq_crop_lo, freq_crop_hi,
+                colormap,
             );
             true
         } else {

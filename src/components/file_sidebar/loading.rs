@@ -292,10 +292,12 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
             tile_cache::schedule_all_tiles(state, file, file_index);
         }
     } else {
-        // Large files: don't clear the tile cache — tiles were rendered synchronously
-        // during loading with the best-known max at the time.  The on-demand path
-        // handles scrolling to uncached regions after loading completes.
-        // Only schedule tiles near the current viewport that may be missing.
+        // Large files: clear tile cache and re-render with final normalization.
+        // During loading, the running max_magnitude grew as louder columns were found,
+        // so early tiles used a lower max than late tiles — creating visible brightness
+        // discontinuities.  Clearing forces re-rendering with the correct final max.
+        // The colormapped preview base layer fills the gaps until new tiles arrive.
+        tile_cache::clear_file(file_index);
         tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
     }
 
