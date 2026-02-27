@@ -183,10 +183,10 @@ pub fn Waveform() -> impl IntoView {
 
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
-        let time_res = idx
+        let (time_res, duration) = idx
             .and_then(|i| files.get(i))
-            .map(|f| f.spectrogram.time_resolution)
-            .unwrap_or(1.0);
+            .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
+            .unwrap_or((1.0, 0.0));
         let zoom = state.zoom_level.get_untracked();
         let scroll = state.scroll_offset.get_untracked();
 
@@ -194,7 +194,9 @@ pub fn Waveform() -> impl IntoView {
         let playhead_rel = playhead - scroll;
 
         if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
-            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0));
+            // Clamp so the viewport doesn't extend past the file end
+            let max_scroll = (duration - visible_time).max(0.0);
+            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
         }
     });
 

@@ -287,6 +287,12 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     // if the final max differs significantly, re-render for consistent brightness.
     // For large files, tiles are computed from the spectral store on-demand.
     if !is_large {
+        // Clear stale tiles rendered during progressive loading — they used
+        // the spectral store's running max_magnitude at the time of rendering,
+        // which grows as louder columns are discovered.  Without clearing,
+        // schedule_all_tiles() skips already-cached tiles and they keep their
+        // inconsistent normalization (visible as a stepped brightness gradient).
+        tile_cache::clear_file(file_index);
         let file_for_tiles = state.files.get_untracked().get(file_index).cloned();
         if let Some(file) = file_for_tiles {
             tile_cache::schedule_all_tiles(state, file, file_index);

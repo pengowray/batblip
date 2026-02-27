@@ -532,13 +532,12 @@ pub fn blit_preview_as_background(
     let src_x = (scroll_offset / total_duration * pw).clamp(0.0, pw);
     let src_w = (visible_time / total_duration * pw).clamp(1.0, pw - src_x);
 
-    // For short files where the entire file fits in the viewport, scale the
-    // destination width proportionally (same logic as blit_viewport).
-    let dst_w = if visible_time > total_duration {
-        cw * (total_duration / visible_time)
-    } else {
-        cw
-    };
+    // Scale destination width so the preview only covers the portion of the
+    // canvas that has actual file data.  This handles both short files that fit
+    // entirely in the viewport AND viewports that extend past the file end
+    // (e.g. follow-cursor near the end).
+    let overlap_time = (total_duration - scroll_offset.max(0.0)).clamp(0.0, visible_time);
+    let dst_w = cw * (overlap_time / visible_time).min(1.0);
 
     // Vertical crop: row 0 = highest freq, last row = 0 Hz
     let fc_lo = freq_crop_lo.max(0.0);
