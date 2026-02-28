@@ -24,6 +24,9 @@ pub struct NoiseProfile {
     /// Learned spectral noise floor for spectral subtraction (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noise_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
+    /// Harmonic suppression strength (0.0–1.0). Defaults to 0 for backward compat.
+    #[serde(default)]
+    pub harmonic_suppression: f64,
 }
 
 // ── Biquad notch filter ─────────────────────────────────────────────────────

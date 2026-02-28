@@ -43,6 +43,8 @@ fn apply_noise_profile(state: AppState, profile: NoiseProfile) {
         state.noise_reduce_enabled.set(true);
     }
 
+    state.notch_harmonic_suppression.set(profile.harmonic_suppression);
+
     let msg = match (count > 0, has_floor) {
         (true, true) => format!("Loaded {} band{} + noise floor", count, if count == 1 { "" } else { "s" }),
         (true, false) => format!("Loaded {} band{}", count, if count == 1 { "" } else { "s" }),
@@ -92,6 +94,7 @@ fn build_current_profile(state: AppState) -> Option<(NoiseProfile, String)> {
         source_sample_rate: sample_rate,
         created,
         noise_floor,
+        harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
     };
 
     Some((profile, profile_name))
@@ -544,50 +547,6 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                 }}
             </div>
 
-            // === Harmonic Suppression ===
-            {move || {
-                let has_bands = !state.notch_bands.get().is_empty();
-                let has_floor = state.noise_reduce_floor.get().is_some();
-                if has_bands || has_floor {
-                    view! {
-                        <div class="setting-group">
-                            <div class="setting-row">
-                                <span class="setting-label">"Harmonic suppression"</span>
-                                <input
-                                    type="range"
-                                    class="setting-slider"
-                                    min="0"
-                                    max="100"
-                                    step="5"
-                                    prop:value=move || (state.notch_harmonic_suppression.get() * 100.0) as i32
-                                    on:input=on_harmonic_change
-                                    title=move || {
-                                        let v = state.notch_harmonic_suppression.get();
-                                        if v == 0.0 {
-                                            "Off".to_string()
-                                        } else {
-                                            format!("{:.0}% ({:.0} dB)", v * 100.0, -48.0 * v)
-                                        }
-                                    }
-                                />
-                            </div>
-                            <div class="setting-row" style="font-size: 10px; opacity: 0.6;">
-                                {move || {
-                                    let v = state.notch_harmonic_suppression.get();
-                                    if v == 0.0 {
-                                        "Attenuate 2\u{00D7} & 3\u{00D7} harmonics of noise".to_string()
-                                    } else {
-                                        format!("{:.0}% ({:.0} dB at 2\u{00D7} & 3\u{00D7})", v * 100.0, -48.0 * v)
-                                    }
-                                }}
-                            </div>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <span></span> }.into_any()
-                }
-            }}
-
             // === Noise Reduction (spectral subtraction) ===
             <div class="setting-group">
                 <div class="setting-row">
@@ -602,6 +561,9 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                         />
                         " Noise Reduction"
                     </label>
+                </div>
+                <div class="setting-row" style="font-size: 10px; opacity: 0.5; margin-top: -2px;">
+                    "Spectral subtraction"
                 </div>
                 <div class="setting-row" style="gap: 4px;">
                     <button
@@ -659,6 +621,50 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                     }
                 }}
             </div>
+
+            // === Harmonic Suppression ===
+            {move || {
+                let has_bands = !state.notch_bands.get().is_empty();
+                let has_floor = state.noise_reduce_floor.get().is_some();
+                if has_bands || has_floor {
+                    view! {
+                        <div class="setting-group">
+                            <div class="setting-row">
+                                <span class="setting-label">"Harmonic suppression"</span>
+                                <input
+                                    type="range"
+                                    class="setting-slider"
+                                    min="0"
+                                    max="100"
+                                    step="5"
+                                    prop:value=move || (state.notch_harmonic_suppression.get() * 100.0) as i32
+                                    on:input=on_harmonic_change
+                                    title=move || {
+                                        let v = state.notch_harmonic_suppression.get();
+                                        if v == 0.0 {
+                                            "Off".to_string()
+                                        } else {
+                                            format!("{:.0}% ({:.0} dB)", v * 100.0, -48.0 * v)
+                                        }
+                                    }
+                                />
+                            </div>
+                            <div class="setting-row" style="font-size: 10px; opacity: 0.6;">
+                                {move || {
+                                    let v = state.notch_harmonic_suppression.get();
+                                    if v == 0.0 {
+                                        "Attenuate 2\u{00D7} & 3\u{00D7} harmonics of noise".to_string()
+                                    } else {
+                                        format!("{:.0}% ({:.0} dB at 2\u{00D7} & 3\u{00D7})", v * 100.0, -48.0 * v)
+                                    }
+                                }}
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
 
             // === Profile management ===
             <div class="setting-group">
