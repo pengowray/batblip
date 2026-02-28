@@ -782,7 +782,7 @@ pub fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) 
     let duration_secs = samples.len() as f64 / sample_rate as f64;
     let now = js_sys::Date::new_0();
     let name = format!(
-        "rec_{:04}-{:02}-{:02}_{:02}{:02}{:02}.wav",
+        "batcap_{:04}-{:02}-{:02}_{:02}{:02}{:02}.wav",
         now.get_full_year(),
         now.get_month() + 1,
         now.get_date(),

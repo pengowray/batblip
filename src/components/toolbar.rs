@@ -29,8 +29,8 @@ pub fn Toolbar() -> impl IntoView {
                 class="toolbar-brand"
                 style=move || if !is_mobile && state.sidebar_collapsed.get() { "margin-left: 24px; cursor: pointer" } else { "cursor: pointer" }
                 on:click=move |_| show_about.set(true)
-                title="About batblip"
-            ><b>"bat"</b><i>"blip"</i></span>
+                title="About"
+            ><b>"Bat"</b><i>"monic"</i></span>
 
             // Spacer
             <div style="flex: 1;"></div>
@@ -92,7 +92,7 @@ pub fn Toolbar() -> impl IntoView {
                 <div class="about-overlay" on:click=move |_| show_about.set(false)>
                     <div class="about-dialog" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                         <div class="about-header">
-                            <span class="about-title"><b>"bat"</b><i>"blip"</i>" by Pengo Wray"</span>
+                            <span class="about-title"><b>"bat"</b><i>"bop"</i>" by Pengo Wray"</span>
                             <span class="about-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span>
                         </div>
                         <p class="about-desc">"Bat call viewer and acoustic analysis tool."</p>

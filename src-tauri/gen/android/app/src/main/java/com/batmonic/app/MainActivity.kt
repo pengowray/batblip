@@ -1,4 +1,4 @@
-package com.batblip.app
+package com.batmonic.app
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
