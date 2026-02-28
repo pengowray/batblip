@@ -99,16 +99,18 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             let target = ev.target().unwrap();
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let mode = match select.value().as_str() {
-                                "pitch_class" => ChromaColormap::PitchClass,
+                                "warm" => ChromaColormap::Warm,
+                                "solid" => ChromaColormap::Solid,
                                 "octave" => ChromaColormap::Octave,
                                 "flow" => ChromaColormap::Flow,
-                                _ => ChromaColormap::Warm,
+                                _ => ChromaColormap::PitchClass,
                             };
                             state.chroma_colormap.set(mode);
                         }
                     >
-                        <option value="warm" selected=move || state.chroma_colormap.get() == ChromaColormap::Warm>"Warm"</option>
                         <option value="pitch_class" selected=move || state.chroma_colormap.get() == ChromaColormap::PitchClass>"Pitch Class"</option>
+                        <option value="solid" selected=move || state.chroma_colormap.get() == ChromaColormap::Solid>"Solid"</option>
+                        <option value="warm" selected=move || state.chroma_colormap.get() == ChromaColormap::Warm>"Warm"</option>
                         <option value="octave" selected=move || state.chroma_colormap.get() == ChromaColormap::Octave>"Octave"</option>
                         <option value="flow" selected=move || state.chroma_colormap.get() == ChromaColormap::Flow>"Flow"</option>
                     </select>

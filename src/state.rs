@@ -221,9 +221,10 @@ pub enum ColormapPreference {
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ChromaColormap {
-    #[default]
     Warm,
+    #[default]
     PitchClass,
+    Solid,
     Octave,
     Flow,
 }
@@ -233,6 +234,7 @@ impl ChromaColormap {
         match self {
             Self::Warm => "Warm",
             Self::PitchClass => "Pitch Class",
+            Self::Solid => "Solid",
             Self::Octave => "Octave",
             Self::Flow => "Flow",
         }
@@ -241,6 +243,7 @@ impl ChromaColormap {
     pub const ALL: &'static [ChromaColormap] = &[
         Self::Warm,
         Self::PitchClass,
+        Self::Solid,
         Self::Octave,
         Self::Flow,
     ];

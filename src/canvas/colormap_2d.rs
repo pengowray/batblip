@@ -151,6 +151,40 @@ pub fn build_chromagram_pitch_class_colormaps() -> [Colormap2D; 12] {
     })
 }
 
+/// Build 12 solid chromagram colormaps, one per pitch class.
+///
+/// Like `build_chromagram_pitch_class_colormaps` but all octaves within a pitch
+/// class are rendered identically — brightness depends only on the overall pitch
+/// class intensity (R channel), ignoring per-octave detail (G channel).
+pub fn build_chromagram_solid_colormaps() -> [Colormap2D; 12] {
+    const HUES: [f32; 12] = [
+        50.0, 75.0, 100.0, 130.0, 160.0, 190.0,
+        215.0, 260.0, 285.0, 310.0, 335.0, 40.0,
+    ];
+    const IS_NATURAL: [bool; 12] = [
+        true, false, true, false, true, true,
+        false, true, false, true, false, true,
+    ];
+
+    std::array::from_fn(|pc| {
+        let hue = HUES[pc];
+        let base_sat = if IS_NATURAL[pc] { 0.85 } else { 0.5 };
+
+        let mut lut = vec![[0u8; 3]; 256 * 256];
+        for sec in 0..256u16 {
+            // sec (G channel / note intensity) is ignored for solid mode
+            for pri in 0..256u16 {
+                let class = pri as f32 / 255.0;
+                let brightness = class;
+                let saturation = if brightness > 0.01 { base_sat } else { 0.0 };
+                let [r, g, b] = hsl_to_rgb(hue, saturation, brightness * 0.5);
+                lut[sec as usize * 256 + pri as usize] = [r, g, b];
+            }
+        }
+        Colormap2D { lut }
+    })
+}
+
 /// Build 10 chromagram colormaps, one per octave, using a rainbow from warm to cool.
 ///
 /// Octave 0 (lowest) = warm orange (30°), octave 9 (highest) = violet (270°).

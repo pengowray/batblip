@@ -1069,7 +1069,7 @@ pub fn blit_chromagram_tiles_viewport(
     use crate::state::ChromaColormap;
     use crate::canvas::colormap_2d::{
         build_chromagram_colormap, build_chromagram_pitch_class_colormaps,
-        build_chromagram_octave_colormaps, Colormap2D,
+        build_chromagram_solid_colormaps, build_chromagram_octave_colormaps, Colormap2D,
     };
 
     enum ChromaMode {
@@ -1082,6 +1082,7 @@ pub fn blit_chromagram_tiles_viewport(
     let mode = match chroma_colormap {
         ChromaColormap::Warm => ChromaMode::Single(build_chromagram_colormap()),
         ChromaColormap::PitchClass => ChromaMode::PerPitchClass(build_chromagram_pitch_class_colormaps()),
+        ChromaColormap::Solid => ChromaMode::PerPitchClass(build_chromagram_solid_colormaps()),
         ChromaColormap::Octave => ChromaMode::PerOctave(build_chromagram_octave_colormaps()),
         ChromaColormap::Flow => ChromaMode::FlowInline,
     };
