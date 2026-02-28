@@ -14,6 +14,7 @@ pub fn ZcDotChart() -> impl IntoView {
     let state = expect_context::<AppState>();
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
+    let pinch_state: RwSignal<Option<crate::components::pinch::PinchState>> = RwSignal::new(None);
 
     // Cache ZC bins — recompute when the file or EQ settings change.
     let zc_bins = Memo::new(move |_| {
@@ -291,7 +292,33 @@ pub fn ZcDotChart() -> impl IntoView {
     // Touch event handlers (mobile)
     let on_touchstart = move |ev: web_sys::TouchEvent| {
         let touches = ev.touches();
-        if touches.length() != 1 { return; }
+        let n = touches.length();
+
+        if n == 2 {
+            ev.prevent_default();
+            use crate::components::pinch::{two_finger_geometry, PinchState};
+            if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked();
+                let file = idx.and_then(|i| files.get(i));
+                let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+                pinch_state.set(Some(PinchState {
+                    initial_dist: dist,
+                    initial_zoom: state.zoom_level.get_untracked(),
+                    initial_scroll: state.scroll_offset.get_untracked(),
+                    initial_mid_client_x: mid_x,
+                    time_res,
+                    duration,
+                }));
+            }
+            state.is_dragging.set(false);
+            return;
+        }
+
+        if n != 1 { return; }
+        pinch_state.set(None);
+
         let touch = touches.get(0).unwrap();
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         if state.is_playing.get_untracked() {
@@ -306,7 +333,27 @@ pub fn ZcDotChart() -> impl IntoView {
 
     let on_touchmove = move |ev: web_sys::TouchEvent| {
         let touches = ev.touches();
-        if touches.length() != 1 { return; }
+        let n = touches.length();
+
+        if n == 2 {
+            if let Some(ps) = pinch_state.get_untracked() {
+                ev.prevent_default();
+                use crate::components::pinch::{two_finger_geometry, apply_pinch};
+                if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+                    let Some(canvas_el) = canvas_ref.get() else { return };
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    let rect = canvas.get_bounding_client_rect();
+                    let cw = canvas.width() as f64;
+                    let (new_zoom, new_scroll) = apply_pinch(&ps, dist, mid_x, rect.left(), cw);
+                    state.suspend_follow();
+                    state.zoom_level.set(new_zoom);
+                    state.scroll_offset.set(new_scroll);
+                }
+            }
+            return;
+        }
+
+        if n != 1 { return; }
         let touch = touches.get(0).unwrap();
         if !state.is_dragging.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
@@ -329,7 +376,22 @@ pub fn ZcDotChart() -> impl IntoView {
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {
-        state.is_dragging.set(false);
+        let remaining = _ev.touches().length();
+        if remaining < 2 {
+            pinch_state.set(None);
+        }
+        if remaining == 1 {
+            if let Some(touch) = _ev.touches().get(0) {
+                hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+                if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+                    state.is_dragging.set(true);
+                }
+            }
+            return;
+        }
+        if remaining == 0 {
+            state.is_dragging.set(false);
+        }
     };
 
     view! {
