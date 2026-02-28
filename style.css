@@ -1738,6 +1738,15 @@ body.sidebar-resizing {
     border-bottom: 2px solid #4a8;
 }
 
+.sidebar-header-label.clickable {
+    cursor: pointer;
+}
+
+.sidebar-header-label.clickable:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+}
+
 /* ── Right sidebar overrides ───────────────────────────────────────── */
 .right-sidebar {
     border-right: none;

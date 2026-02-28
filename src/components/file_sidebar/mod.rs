@@ -94,7 +94,19 @@ pub fn FileSidebar() -> impl IntoView {
                 } else {
                     None
                 }}
-                <div class="sidebar-header-label">
+                <div
+                    class=move || if state.settings_page_open.get() {
+                        "sidebar-header-label clickable"
+                    } else {
+                        "sidebar-header-label"
+                    }
+                    on:click=move |_| {
+                        if state.settings_page_open.get() {
+                            state.settings_page_open.set(false);
+                        }
+                    }
+                    title=move || if state.settings_page_open.get() { "Back to files" } else { "" }
+                >
                     {move || if state.settings_page_open.get() { "Settings" } else { "Files" }}
                 </div>
                 <button
