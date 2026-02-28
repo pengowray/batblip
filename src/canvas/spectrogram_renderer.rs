@@ -302,6 +302,69 @@ fn compute_flow_shift(prev: &[f32], curr: &[f32], bin: usize, h: usize) -> f32 {
     best_d as f32 / max_disp as f32
 }
 
+/// Pre-render a tile of columns with movement shift detection and 2D colormap applied.
+///
+/// `prev_column_mags`: magnitudes of the last column from the previous tile,
+/// needed for shift computation at the boundary. `None` for the first tile.
+///
+/// Returns a `PreRendered` with already-colored RGBA pixels (no separate colormap step).
+pub fn pre_render_movement_columns(
+    columns: &[crate::types::SpectrogramColumn],
+    prev_column_mags: Option<&[f32]>,
+    max_mag: f32,
+    algo: MovementAlgo,
+    intensity_gate: f32,
+    movement_gate: f32,
+    opacity: f32,
+) -> PreRendered {
+    use crate::canvas::colormap_2d::build_movement_colormap;
+
+    if columns.is_empty() || max_mag <= 0.0 {
+        return PreRendered { width: 0, height: 0, pixels: Vec::new() };
+    }
+
+    let colormap = build_movement_colormap(intensity_gate, movement_gate, opacity);
+
+    let width = columns.len() as u32;
+    let height = columns[0].magnitudes.len() as u32;
+    let h = height as usize;
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+    for (col_idx, col) in columns.iter().enumerate() {
+        let prev_mags = if col_idx > 0 {
+            Some(columns[col_idx - 1].magnitudes.as_slice())
+        } else {
+            prev_column_mags
+        };
+
+        for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
+            let grey = magnitude_to_greyscale(mag, max_mag);
+
+            let shift = match prev_mags {
+                None => 0.0,
+                Some(prev) => match algo {
+                    MovementAlgo::Centroid => compute_centroid_shift(prev, &col.magnitudes, bin_idx, h),
+                    MovementAlgo::Gradient => compute_gradient_shift(prev, &col.magnitudes, bin_idx, h),
+                    MovementAlgo::Flow => compute_flow_shift(prev, &col.magnitudes, bin_idx, h),
+                },
+            };
+
+            // Map shift from [-1, 1] to [0, 255] for colormap secondary axis
+            let shift_byte = ((shift * 128.0 + 128.0).clamp(0.0, 255.0)) as u8;
+            let [r, g, b] = colormap.apply(grey, shift_byte);
+
+            let y = height as usize - 1 - bin_idx;
+            let pixel_idx = (y * width as usize + col_idx) * 4;
+            pixels[pixel_idx] = r;
+            pixels[pixel_idx + 1] = g;
+            pixels[pixel_idx + 2] = b;
+            pixels[pixel_idx + 3] = 255;
+        }
+    }
+
+    PreRendered { width, height, pixels }
+}
+
 /// Convert a frequency to a canvas Y coordinate.
 /// min_freq is shown at the bottom (y = canvas_height), max_freq at the top (y = 0).
 #[inline]
@@ -856,6 +919,209 @@ pub fn blit_tiles_viewport(
 
     // Preview was drawn as base layer, so even if no tiles exist, something is visible
     any_drawn || preview.is_some()
+}
+
+/// Blit movement tiles from the movement tile cache (MV_CACHE).
+///
+/// Movement tiles store already-colored RGBA pixels (2D colormap pre-applied),
+/// so no colormap step is needed during blit.
+pub fn blit_movement_tiles_viewport(
+    ctx: &CanvasRenderingContext2d,
+    canvas: &HtmlCanvasElement,
+    file_idx: usize,
+    total_cols: usize,
+    scroll_col: f64,
+    zoom: f64,
+    freq_crop_lo: f64,
+    freq_crop_hi: f64,
+    preview: Option<&PreviewImage>,
+    scroll_offset: f64,
+    visible_time: f64,
+    total_duration: f64,
+) -> bool {
+    let cw = canvas.width() as f64;
+    let ch = canvas.height() as f64;
+
+    // Draw a dark background (no colormap-aware preview for movement mode)
+    if let Some(pv) = preview {
+        // Draw preview in greyscale as a faint backdrop
+        blit_preview_as_background(
+            ctx, pv, canvas,
+            scroll_offset, visible_time, total_duration,
+            freq_crop_lo, freq_crop_hi, ColormapMode::Uniform(Colormap::Greyscale),
+        );
+    } else {
+        ctx.set_fill_style_str("#000");
+        ctx.fill_rect(0.0, 0.0, cw, ch);
+    }
+
+    if total_cols == 0 || zoom <= 0.0 {
+        return preview.is_some();
+    }
+
+    let visible_cols = cw / zoom;
+    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let src_end = (src_start + visible_cols).min(total_cols as f64);
+
+    let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
+    let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
+    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+
+    let fc_lo = freq_crop_lo.max(0.0);
+    let fc_hi = freq_crop_hi.max(0.01);
+
+    let mut any_drawn = false;
+
+    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
+        let tile_col_start = tile_idx * TILE_COLS;
+
+        let drawn = tile_cache::borrow_mv_tile(file_idx, tile_idx, |tile| {
+            let tw = tile.rendered.width as f64;
+            let th = tile.rendered.height as f64;
+            if tw == 0.0 || th == 0.0 { return; }
+
+            // Movement tiles are already colored — use pixels directly (no colormap)
+            let clamped = Clamped(&tile.rendered.pixels[..]);
+            let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
+                clamped, tile.rendered.width, tile.rendered.height,
+            ) else { return };
+
+            let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
+            if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
+                tmp.set_width(tile.rendered.width);
+                tmp.set_height(tile.rendered.height);
+            }
+            let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
+
+            let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
+            let tile_src_end = (src_end - tile_col_start as f64).min(tw);
+            let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
+            if tile_src_w <= 0.0 { return; }
+
+            let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
+                let sy = th * (1.0 - fc_hi);
+                let sh = th * (fc_hi - fc_lo).max(0.001);
+                (sy, sh, 0.0, ch)
+            } else {
+                let fc_range = (fc_hi - fc_lo).max(0.001);
+                let data_frac = (1.0 - fc_lo) / fc_range;
+                let sh = th * (1.0 - fc_lo);
+                (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
+            };
+
+            let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
+            let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
+            let dst_x = dst_x_raw.floor();
+            let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
+
+            let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                &tmp,
+                tile_src_x, src_y, tile_src_w, src_h,
+                dst_x, dst_y, dst_w, dst_h,
+            );
+        });
+
+        if drawn.is_some() {
+            any_drawn = true;
+        }
+    }
+
+    any_drawn || preview.is_some()
+}
+
+/// Blit chromagram tiles from the chromagram tile cache.
+///
+/// Chromagram tiles store packed (class_intensity, note_intensity) in R/G channels.
+/// A 2D colormap is applied during blit to convert to final RGB.
+pub fn blit_chromagram_tiles_viewport(
+    ctx: &CanvasRenderingContext2d,
+    canvas: &HtmlCanvasElement,
+    file_idx: usize,
+    total_cols: usize,
+    scroll_col: f64,
+    zoom: f64,
+) -> bool {
+    use crate::canvas::colormap_2d::build_chromagram_colormap;
+
+    let cw = canvas.width() as f64;
+    let ch = canvas.height() as f64;
+
+    ctx.set_fill_style_str("#000");
+    ctx.fill_rect(0.0, 0.0, cw, ch);
+
+    if total_cols == 0 || zoom <= 0.0 {
+        return false;
+    }
+
+    let colormap = build_chromagram_colormap();
+
+    let visible_cols = cw / zoom;
+    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let src_end = (src_start + visible_cols).min(total_cols as f64);
+
+    let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
+    let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
+    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+
+    let mut any_drawn = false;
+
+    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
+        let tile_col_start = tile_idx * TILE_COLS;
+
+        let drawn = tile_cache::borrow_chroma_tile(file_idx, tile_idx, |tile| {
+            let tw = tile.rendered.width as f64;
+            let th = tile.rendered.height as f64;
+            if tw == 0.0 || th == 0.0 { return; }
+
+            // Apply 2D chromagram colormap: R=class intensity, G=note intensity
+            let mut pixels = tile.rendered.pixels.clone();
+            for i in (0..pixels.len()).step_by(4) {
+                let class_byte = pixels[i];     // R
+                let note_byte = pixels[i + 1];  // G
+                let [r, g, b] = colormap.apply(class_byte, note_byte);
+                pixels[i] = r;
+                pixels[i + 1] = g;
+                pixels[i + 2] = b;
+            }
+
+            let clamped = Clamped(&pixels[..]);
+            let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
+                clamped, tile.rendered.width, tile.rendered.height,
+            ) else { return };
+
+            let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
+            if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
+                tmp.set_width(tile.rendered.width);
+                tmp.set_height(tile.rendered.height);
+            }
+            let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
+
+            let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
+            let tile_src_end = (src_end - tile_col_start as f64).min(tw);
+            let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
+            if tile_src_w <= 0.0 { return; }
+
+            // No frequency cropping for chromagram — show full height
+            let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
+            let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
+            let dst_x = dst_x_raw.floor();
+            let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
+
+            // Enable smoothing for upscaling (chromagram has few rows)
+            ctx.set_image_smoothing_enabled(false);
+            let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                &tmp,
+                tile_src_x, 0.0, tile_src_w, th,
+                dst_x, 0.0, dst_w, ch,
+            );
+        });
+
+        if drawn.is_some() {
+            any_drawn = true;
+        }
+    }
+
+    any_drawn
 }
 
 /// Describes how frequency markers should show shifted output frequencies.

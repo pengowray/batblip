@@ -18,6 +18,7 @@ use crate::components::tool_button::ToolButton;
 use crate::components::freq_range_button::FreqRangeButton;
 use crate::components::xc_browser::XcBrowser;
 use crate::components::zc_chart::ZcDotChart;
+use crate::components::chromagram_view::ChromagramView;
 use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
 
 #[component]
@@ -257,9 +258,7 @@ fn MainArea() -> impl IntoView {
                                     </div>
                                 }.into_any(),
                                 MainView::ZcChart => view! { <ZcDotChart /> }.into_any(),
-                                MainView::Chromagram => view! {
-                                    <div class="empty-state">"Chromagram \u{2014} coming soon"</div>
-                                }.into_any(),
+                                MainView::Chromagram => view! { <ChromagramView /> }.into_any(),
                             }}
 
                             // Floating overlay layer

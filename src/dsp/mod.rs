@@ -9,3 +9,4 @@ pub mod spectral_sub;
 pub mod zc_divide;
 pub mod wsnr;
 pub mod zero_crossing;
+pub mod chromagram;

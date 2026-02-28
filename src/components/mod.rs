@@ -13,3 +13,4 @@ pub mod tool_button;
 pub mod freq_range_button;
 pub mod xc_browser;
 pub mod zc_chart;
+pub mod chromagram_view;

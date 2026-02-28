@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use crate::canvas::spectrogram_renderer::{self, PreRendered};
+use crate::canvas::spectrogram_renderer::{self, PreRendered, MovementAlgo};
 use crate::state::{AppState, LoadedFile};
 
 /// Number of spectrogram columns per tile.
@@ -106,6 +106,16 @@ thread_local! {
     static LOD0_CACHE: RefCell<HashMap<(usize, usize), Tile>> =
         RefCell::new(HashMap::new());
     static LOD0_IN_FLIGHT: RefCell<std::collections::HashSet<(usize, usize)>> =
+        RefCell::new(std::collections::HashSet::new());
+
+    /// Separate cache for movement-mode tiles (pre-colored RGBA with 2D colormap applied).
+    static MV_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static MV_IN_FLIGHT: RefCell<std::collections::HashSet<(usize, usize)>> =
+        RefCell::new(std::collections::HashSet::new());
+
+    /// Separate cache for chromagram tiles.
+    static CHROMA_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static CHROMA_IN_FLIGHT: RefCell<std::collections::HashSet<(usize, usize)>> =
         RefCell::new(std::collections::HashSet::new());
 }
 
@@ -501,6 +511,241 @@ pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
         let cache = c.borrow();
         (0..n_tiles).filter(|&i| cache.tiles.contains_key(&(file_idx, i))).count()
     })
+}
+
+// ── Movement tile cache ──────────────────────────────────────────────────────
+
+pub fn get_mv_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
+    MV_CACHE.with(|c| c.borrow().get(file_idx, tile_idx).map(|_| ()))
+}
+
+pub fn borrow_mv_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
+    MV_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let key = (file_idx, tile_idx);
+        if cache.tiles.contains_key(&key) {
+            cache.touch(key);
+            drop(cache);
+            MV_CACHE.with(|c| {
+                c.borrow().tiles.get(&key).map(|t| f(t))
+            })
+        } else {
+            None
+        }
+    })
+}
+
+/// Clear all movement tiles (called when algorithm or settings change).
+pub fn clear_mv_cache() {
+    MV_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        cache.tiles.clear();
+        cache.lru.clear();
+        cache.total_bytes = 0;
+    });
+    MV_IN_FLIGHT.with(|s| s.borrow_mut().clear());
+}
+
+/// Clear movement tiles for a specific file.
+pub fn clear_mv_file(file_idx: usize) {
+    MV_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
+    MV_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
+}
+
+/// Schedule a movement tile for background generation.
+///
+/// Reads STFT columns from the spectral store (or from `file.spectrogram.columns`),
+/// fetches the last column of the previous tile for boundary shift computation,
+/// computes per-pixel shifts, and applies the 2D colormap.
+///
+/// The resulting tile stores pre-colored RGBA — no colormap step during blit.
+pub fn schedule_movement_tile(
+    state: AppState,
+    file_idx: usize,
+    tile_idx: usize,
+    algo: MovementAlgo,
+) {
+    use crate::canvas::spectral_store;
+
+    let key = (file_idx, tile_idx);
+    if MV_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if MV_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+    MV_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
+
+    spawn_local(async move {
+        yield_to_browser().await;
+
+        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        if !is_current {
+            for _ in 0..3 { yield_to_browser().await; }
+        }
+
+        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
+        if !still_loaded {
+            MV_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        // Read movement settings
+        let ig = state.mv_intensity_gate.get_untracked();
+        let mg = state.mv_movement_gate.get_untracked();
+        let op = state.mv_opacity.get_untracked();
+
+        let col_start = tile_idx * TILE_COLS;
+
+        // Try to get columns from the spectral store first, fall back to in-memory columns
+        let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, max_mag| {
+            // Get the last column of the previous tile for boundary shift computation
+            let prev_col = if tile_idx > 0 {
+                let prev_end = col_start; // = previous tile's last column + 1
+                let prev_start = prev_end.saturating_sub(1);
+                spectral_store::with_columns(file_idx, prev_start, prev_end, |prev_cols, _| {
+                    prev_cols.last().map(|c| c.magnitudes.clone())
+                }).flatten()
+            } else {
+                None
+            };
+            spectrogram_renderer::pre_render_movement_columns(
+                cols, prev_col.as_deref(), max_mag, algo, ig, mg, op,
+            )
+        });
+
+        let rendered = if let Some(r) = result {
+            r
+        } else {
+            // Fall back to in-memory columns
+            let fallback = state.files.with_untracked(|files| {
+                files.get(file_idx).and_then(|f| {
+                    if f.spectrogram.columns.is_empty() { return None; }
+                    let max_mag = spectrogram_renderer::global_max_magnitude(&f.spectrogram);
+                    let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
+                    if col_start >= end { return None; }
+                    let cols = &f.spectrogram.columns[col_start..end];
+                    let prev_col = if col_start > 0 {
+                        Some(f.spectrogram.columns[col_start - 1].magnitudes.as_slice())
+                    } else {
+                        None
+                    };
+                    Some(spectrogram_renderer::pre_render_movement_columns(
+                        cols, prev_col, max_mag, algo, ig, mg, op,
+                    ))
+                })
+            });
+            match fallback {
+                Some(r) => r,
+                None => {
+                    MV_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                    return;
+                }
+            }
+        };
+
+        MV_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        MV_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+}
+
+// ── Chromagram tile cache ────────────────────────────────────────────────────
+
+pub fn get_chroma_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
+    CHROMA_CACHE.with(|c| c.borrow().get(file_idx, tile_idx).map(|_| ()))
+}
+
+pub fn borrow_chroma_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
+    CHROMA_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let key = (file_idx, tile_idx);
+        if cache.tiles.contains_key(&key) {
+            cache.touch(key);
+            drop(cache);
+            CHROMA_CACHE.with(|c| {
+                c.borrow().tiles.get(&key).map(|t| f(t))
+            })
+        } else {
+            None
+        }
+    })
+}
+
+pub fn clear_chroma_cache() {
+    CHROMA_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        cache.tiles.clear();
+        cache.lru.clear();
+        cache.total_bytes = 0;
+    });
+    CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().clear());
+}
+
+/// Schedule a chromagram tile for background generation.
+pub fn schedule_chroma_tile(
+    state: AppState,
+    file_idx: usize,
+    tile_idx: usize,
+) {
+    use crate::canvas::spectral_store;
+    use crate::dsp::chromagram;
+
+    let key = (file_idx, tile_idx);
+    if CHROMA_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CHROMA_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+    CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
+
+    spawn_local(async move {
+        yield_to_browser().await;
+
+        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        if !is_current {
+            for _ in 0..3 { yield_to_browser().await; }
+        }
+
+        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
+        if !still_loaded {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        let col_start = tile_idx * TILE_COLS;
+
+        // Get freq_resolution from the file
+        let freq_res = state.files.with_untracked(|files| {
+            files.get(file_idx).map(|f| f.spectrogram.freq_resolution)
+        }).unwrap_or(1.0);
+
+        // Try spectral store first
+        let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _max_mag| {
+            chromagram::pre_render_chromagram_columns(cols, freq_res)
+        });
+
+        let rendered = if let Some(r) = result {
+            r
+        } else {
+            // Fall back to in-memory columns
+            let fallback = state.files.with_untracked(|files| {
+                files.get(file_idx).and_then(|f| {
+                    if f.spectrogram.columns.is_empty() { return None; }
+                    let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
+                    if col_start >= end { return None; }
+                    Some(chromagram::pre_render_chromagram_columns(
+                        &f.spectrogram.columns[col_start..end],
+                        freq_res,
+                    ))
+                })
+            });
+            match fallback {
+                Some(r) => r,
+                None => {
+                    CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                    return;
+                }
+            }
+        };
+
+        CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

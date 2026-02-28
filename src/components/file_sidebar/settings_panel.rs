@@ -1,17 +1,11 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, SpectrogramDisplay};
+use crate::state::{AppState, MainView, SpectrogramDisplay};
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
 #[component]
 pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
-
-    let on_toggle_change = move |ev: web_sys::Event| {
-        let target = ev.target().unwrap();
-        let input: web_sys::HtmlInputElement = target.unchecked_into();
-        state.mv_enabled.set(input.checked());
-    };
 
     let on_display_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
@@ -84,21 +78,12 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                 </div>
             </div>
 
-            // Movement overlay section
-            <div class="setting-group">
-                <div class="setting-group-title">"Movement overlay"</div>
-                <div class="setting-row">
-                    <span class="setting-label">"Enabled"</span>
-                    <input
-                        type="checkbox"
-                        class="setting-checkbox"
-                        prop:checked=move || state.mv_enabled.get()
-                        on:change=on_toggle_change
-                    />
-                </div>
-                {move || {
-                    if state.mv_enabled.get() {
-                        view! {
+            // Movement settings (shown when Movement view is active)
+            {move || {
+                if state.main_view.get() == MainView::Movement {
+                    view! {
+                        <div class="setting-group">
+                            <div class="setting-group-title">"Movement"</div>
                             <div class="setting-row">
                                 <span class="setting-label">"Algorithm"</span>
                                 <select
@@ -160,12 +145,12 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     <span class="setting-value">{move || format!("{}%", (state.mv_opacity.get() * 100.0) as u32)}</span>
                                 </div>
                             </div>
-                        }.into_any()
-                    } else {
-                        view! { <span></span> }.into_any()
-                    }
-                }}
-            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
         </div>
     }
 }

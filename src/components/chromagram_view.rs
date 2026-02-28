@@ -1,0 +1,291 @@
+use leptos::prelude::*;
+use leptos::ev::MouseEvent;
+use wasm_bindgen::JsCast;
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+use crate::canvas::spectrogram_renderer;
+use crate::canvas::tile_cache::{self, TILE_COLS};
+use crate::dsp::chromagram::{NUM_PITCH_CLASSES, NUM_OCTAVES, PITCH_CLASS_NAMES};
+use crate::state::{AppState, CanvasTool};
+
+#[component]
+pub fn ChromagramView() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+    let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
+
+    // Clear chromagram cache when file changes
+    Effect::new(move || {
+        let _files = state.files.get();
+        let _idx = state.current_file_index.get();
+        tile_cache::clear_chroma_cache();
+    });
+
+    // Main render effect
+    Effect::new(move || {
+        let _tile_ready = state.tile_ready_signal.get();
+        let scroll = state.scroll_offset.get();
+        let zoom = state.zoom_level.get();
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+
+        let Some(canvas_el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+
+        let rect = canvas.get_bounding_client_rect();
+        let display_w = rect.width() as u32;
+        let display_h = rect.height() as u32;
+        if display_w == 0 || display_h == 0 { return; }
+        if canvas.width() != display_w || canvas.height() != display_h {
+            canvas.set_width(display_w);
+            canvas.set_height(display_h);
+        }
+
+        let ctx = canvas
+            .get_context("2d").unwrap().unwrap()
+            .dyn_into::<CanvasRenderingContext2d>().unwrap();
+
+        let Some(file) = idx.and_then(|i| files.get(i)) else {
+            ctx.set_fill_style_str("#000");
+            ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
+            return;
+        };
+
+        let time_res = file.spectrogram.time_resolution;
+        let total_cols = if file.spectrogram.total_columns > 0 {
+            file.spectrogram.total_columns
+        } else {
+            file.spectrogram.columns.len()
+        };
+        let file_idx = idx.unwrap_or(0);
+        let scroll_col = scroll / time_res;
+
+        // Blit chromagram tiles
+        spectrogram_renderer::blit_chromagram_tiles_viewport(
+            &ctx, canvas, file_idx, total_cols,
+            scroll_col, zoom,
+        );
+
+        // Schedule missing chromagram tiles
+        if total_cols > 0 {
+            let visible_cols_f = display_w as f64 / zoom;
+            let src_start = scroll_col.max(0.0);
+            let src_end = (src_start + visible_cols_f).min(total_cols as f64);
+            let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
+            let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
+            let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+
+            for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
+                if tile_cache::get_chroma_tile(file_idx, t).is_none() {
+                    tile_cache::schedule_chroma_tile(state.clone(), file_idx, t);
+                }
+            }
+        }
+
+        // Draw pitch class labels on left edge
+        let ch = display_h as f64;
+        let row_height = ch / (NUM_PITCH_CLASSES * NUM_OCTAVES) as f64;
+        ctx.set_font("10px monospace");
+        ctx.set_text_baseline("middle");
+        for pc in 0..NUM_PITCH_CLASSES {
+            let band_bottom = ch - (pc * NUM_OCTAVES) as f64 * row_height;
+            let band_top = band_bottom - NUM_OCTAVES as f64 * row_height;
+            let band_center = (band_top + band_bottom) / 2.0;
+
+            // Semi-transparent background for label
+            ctx.set_fill_style_str("rgba(0, 0, 0, 0.6)");
+            ctx.fill_rect(0.0, band_top, 24.0, band_bottom - band_top);
+
+            // Label text
+            ctx.set_fill_style_str("#aaa");
+            let _ = ctx.fill_text(PITCH_CLASS_NAMES[pc], 2.0, band_center);
+
+            // Separator line between pitch classes
+            if pc > 0 {
+                ctx.set_stroke_style_str("rgba(80, 80, 80, 0.4)");
+                ctx.set_line_width(0.5);
+                ctx.begin_path();
+                ctx.move_to(0.0, band_bottom);
+                ctx.line_to(display_w as f64, band_bottom);
+                ctx.stroke();
+            }
+        }
+    });
+
+    // Auto-scroll to follow playhead
+    Effect::new(move || {
+        let playhead = state.playhead_time.get();
+        let is_playing = state.is_playing.get();
+        let follow = state.follow_cursor.get();
+        if !is_playing || !follow { return; }
+
+        let Some(canvas_el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let display_w = canvas.width() as f64;
+        if display_w == 0.0 { return; }
+
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let (time_res, duration) = idx
+            .and_then(|i| files.get(i))
+            .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
+            .unwrap_or((1.0, 0.0));
+        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.scroll_offset.get_untracked();
+
+        let visible_time = (display_w / zoom) * time_res;
+        let playhead_rel = playhead - scroll;
+        if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
+            let max_scroll = (duration - visible_time).max(0.0);
+            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
+        }
+    });
+
+    let on_wheel = move |ev: web_sys::WheelEvent| {
+        ev.prevent_default();
+        if ev.ctrl_key() {
+            let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
+            state.zoom_level.update(|z| *z = (*z * delta).max(0.1).min(100.0));
+        } else {
+            let delta = ev.delta_y() * 0.001;
+            let max_scroll = {
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked().unwrap_or(0);
+                if let Some(file) = files.get(idx) {
+                    let zoom = state.zoom_level.get_untracked();
+                    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                    let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
+                    (file.audio.duration_secs - visible_time).max(0.0)
+                } else {
+                    f64::MAX
+                }
+            };
+            state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
+        }
+    };
+
+    let on_mousedown = move |ev: MouseEvent| {
+        if ev.button() != 0 { return; }
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.is_playing.get_untracked() {
+            let t = state.playhead_time.get_untracked();
+            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            return;
+        }
+        state.is_dragging.set(true);
+        hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+    };
+
+    let on_mousemove = move |ev: MouseEvent| {
+        if !state.is_dragging.get_untracked() { return; }
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+        let dx = ev.client_x() as f64 - start_client_x;
+        let cw = state.spectrogram_canvas_width.get_untracked();
+        if cw == 0.0 { return; }
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file = idx.and_then(|i| files.get(i));
+        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let zoom = state.zoom_level.get_untracked();
+        let visible_time = (cw / zoom) * time_res;
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+        let max_scroll = (duration - visible_time).max(0.0);
+        let dt = -(dx / cw) * visible_time;
+        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+    };
+
+    let on_mouseup = move |_ev: MouseEvent| {
+        state.is_dragging.set(false);
+    };
+
+    let on_mouseleave = move |_ev: MouseEvent| {
+        state.is_dragging.set(false);
+    };
+
+    let on_touchstart = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        let touch = touches.get(0).unwrap();
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.is_playing.get_untracked() {
+            let t = state.playhead_time.get_untracked();
+            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            return;
+        }
+        ev.prevent_default();
+        state.is_dragging.set(true);
+        hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+    };
+
+    let on_touchmove = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 1 { return; }
+        let touch = touches.get(0).unwrap();
+        if !state.is_dragging.get_untracked() { return; }
+        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        ev.prevent_default();
+        let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+        let dx = touch.client_x() as f64 - start_client_x;
+        let cw = state.spectrogram_canvas_width.get_untracked();
+        if cw == 0.0 { return; }
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file = idx.and_then(|i| files.get(i));
+        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let zoom = state.zoom_level.get_untracked();
+        let visible_time = (cw / zoom) * time_res;
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+        let max_scroll = (duration - visible_time).max(0.0);
+        let dt = -(dx / cw) * visible_time;
+        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+    };
+
+    let on_touchend = move |_ev: web_sys::TouchEvent| {
+        state.is_dragging.set(false);
+    };
+
+    view! {
+        <div class="spectrogram-container"
+            style=move || match state.canvas_tool.get() {
+                CanvasTool::Hand => if state.is_dragging.get() {
+                    "cursor: grabbing; touch-action: none;"
+                } else {
+                    "cursor: grab; touch-action: none;"
+                },
+                CanvasTool::Selection => "cursor: crosshair; touch-action: none;",
+            }
+        >
+            <canvas
+                node_ref=canvas_ref
+                on:wheel=on_wheel
+                on:mousedown=on_mousedown
+                on:mousemove=on_mousemove
+                on:mouseup=on_mouseup
+                on:mouseleave=on_mouseleave
+                on:touchstart=on_touchstart
+                on:touchmove=on_touchmove
+                on:touchend=on_touchend
+            />
+            // DOM playhead overlay
+            <div
+                class="playhead-line"
+                style:transform=move || {
+                    let playhead = state.playhead_time.get();
+                    let scroll = state.scroll_offset.get();
+                    let zoom = state.zoom_level.get();
+                    let cw = state.spectrogram_canvas_width.get();
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    let time_res = idx.and_then(|i| files.get(i))
+                        .map(|f| f.spectrogram.time_resolution)
+                        .unwrap_or(1.0);
+                    let visible_time = (cw / zoom) * time_res;
+                    let px_per_sec = if visible_time > 0.0 { cw / visible_time } else { 0.0 };
+                    let x = (playhead - scroll) * px_per_sec;
+                    format!("translateX({:.1}px)", x)
+                }
+                style:display=move || if state.is_playing.get() { "block" } else { "none" }
+            />
+        </div>
+    }
+}

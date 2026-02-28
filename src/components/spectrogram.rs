@@ -4,7 +4,7 @@ use wasm_bindgen::closure::Closure;
 use std::cell::Cell;
 use std::rc::Rc;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, MouseEvent};
-use crate::canvas::spectrogram_renderer::{self, Colormap, ColormapMode, FreqMarkerState, FreqShiftMode, MovementAlgo, MovementData, PreRendered};
+use crate::canvas::spectrogram_renderer::{self, Colormap, ColormapMode, FreqMarkerState, FreqShiftMode, MovementAlgo, PreRendered};
 use crate::dsp::harmonics;
 use crate::state::{AppState, CanvasTool, ColormapPreference, SpectrogramHandle, PlaybackMode, Selection, RightSidebarTab, SpectrogramDisplay};
 
@@ -85,7 +85,7 @@ pub fn Spectrogram() -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
 
     let pre_rendered: RwSignal<Option<PreRendered>> = RwSignal::new(None);
-    let movement_cache: RwSignal<Option<MovementData>> = RwSignal::new(None);
+    let _movement_cache_removed = (); // movement tiles are now in tile_cache::MV_CACHE
 
     // Phase coherence heatmap data — computed only when Harmonics tab is active.
     let coherence_frames: RwSignal<Option<Vec<Vec<f32>>>> = RwSignal::new(None);
@@ -131,60 +131,34 @@ pub fn Spectrogram() -> impl IntoView {
         cb.forget();
     });
 
-    // Effect 1 (expensive): recompute when file or algorithm changes
+    // Effect 1: pre-render small files (when columns are in memory and not in movement mode)
     Effect::new(move || {
         let files = state.files.get();
         let idx = state.current_file_index.get();
-        let display = state.spectrogram_display.get();
         let enabled = state.mv_enabled.get();
         if let Some(i) = idx {
             if let Some(file) = files.get(i) {
-                if file.spectrogram.columns.is_empty() {
-                    // Columns not loaded in memory.  Either:
-                    //  - Still loading (total_columns > 0 but tiles rendering progressively), or
-                    //  - Large file mode (columns kept in spectral store, not in SpectrogramData).
-                    // Either way, don't store a monolithic PreRendered.  Effect 3 will use
-                    // tile-based rendering or blit_preview_as_background() as fallback.
-                    if enabled && file.spectrogram.total_columns > 0 {
-                        // Large file — movement mode not available
-                        state.show_info_toast("Movement mode not available for large files");
-                        state.mv_enabled.set(false);
-                    }
-                    movement_cache.set(None);
+                if file.spectrogram.columns.is_empty() || enabled {
+                    // Tile-based rendering (normal or movement) — no monolithic pre-render
                     pre_rendered.set(None);
-                } else if !enabled {
-                    movement_cache.set(None);
-                    pre_rendered.set(Some(spectrogram_renderer::pre_render(&file.spectrogram)));
                 } else {
-                    let algo = match display {
-                        SpectrogramDisplay::MovementCentroid => MovementAlgo::Centroid,
-                        SpectrogramDisplay::MovementGradient => MovementAlgo::Gradient,
-                        SpectrogramDisplay::MovementFlow => MovementAlgo::Flow,
-                    };
-                    let md = spectrogram_renderer::compute_movement_data(&file.spectrogram, algo);
-                    let ig = state.mv_intensity_gate.get_untracked();
-                    let mg = state.mv_movement_gate.get_untracked();
-                    let op = state.mv_opacity.get_untracked();
-                    pre_rendered.set(Some(spectrogram_renderer::composite_movement(&md, ig, mg, op)));
-                    movement_cache.set(Some(md));
+                    pre_rendered.set(Some(spectrogram_renderer::pre_render(&file.spectrogram)));
                 }
             }
         } else {
-            movement_cache.set(None);
             pre_rendered.set(None);
         }
     });
 
-    // Effect 2 (cheap): re-composite when gate/opacity sliders change
+    // Effect 2: clear movement tile cache when algorithm or settings change
     Effect::new(move || {
-        let ig = state.mv_intensity_gate.get();
-        let mg = state.mv_movement_gate.get();
-        let op = state.mv_opacity.get();
-        movement_cache.with_untracked(|mc| {
-            if let Some(md) = mc {
-                pre_rendered.set(Some(spectrogram_renderer::composite_movement(md, ig, mg, op)));
-            }
-        });
+        let _display = state.spectrogram_display.get();
+        let _ig = state.mv_intensity_gate.get();
+        let _mg = state.mv_movement_gate.get();
+        let _op = state.mv_opacity.get();
+        let _enabled = state.mv_enabled.get();
+        // Clear movement tiles so they recompute with new settings
+        crate::canvas::tile_cache::clear_mv_cache();
     });
 
     // Effect 2b: compute phase coherence frames when the Harmonics tab becomes active or the file changes.
@@ -384,9 +358,44 @@ pub fn Spectrogram() -> impl IntoView {
         let duration = file.map(|f| f.audio.duration_secs).unwrap_or(0.0);
 
         // Step 1: Render base spectrogram.
-        // Priority: tiles (normal mode) > pre_rendered (movement mode) > preview > black
-        let base_drawn = if !mv_on && total_cols > 0 {
-            // Try tile-based rendering
+        // Priority: movement tiles | normal tiles > pre_rendered > preview > black
+        let base_drawn = if mv_on && total_cols > 0 {
+            // Movement mode: use movement tile cache (pre-colored RGBA)
+            let drawn = spectrogram_renderer::blit_movement_tiles_viewport(
+                &ctx, canvas, file_idx_val, total_cols,
+                scroll_col, zoom, freq_crop_lo, freq_crop_hi,
+                file.and_then(|f| f.preview.as_ref()),
+                scroll, visible_time, duration,
+            );
+
+            // Schedule missing movement tiles
+            {
+                use crate::canvas::tile_cache::{self, TILE_COLS};
+
+                let visible_cols_f = display_w as f64 / zoom;
+                let src_start = scroll_col.max(0.0);
+                let src_end = (src_start + visible_cols_f).min(total_cols as f64);
+                let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
+                let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
+                let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+
+                let display = state.spectrogram_display.get_untracked();
+                let algo = match display {
+                    SpectrogramDisplay::MovementCentroid => MovementAlgo::Centroid,
+                    SpectrogramDisplay::MovementGradient => MovementAlgo::Gradient,
+                    SpectrogramDisplay::MovementFlow => MovementAlgo::Flow,
+                };
+
+                for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
+                    if tile_cache::get_mv_tile(file_idx_val, t).is_none() {
+                        tile_cache::schedule_movement_tile(state.clone(), file_idx_val, t, algo);
+                    }
+                }
+            }
+
+            drawn
+        } else if !mv_on && total_cols > 0 {
+            // Normal tile-based rendering
             let drawn = spectrogram_renderer::blit_tiles_viewport(
                 &ctx, canvas, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi, colormap,
@@ -394,9 +403,7 @@ pub fn Spectrogram() -> impl IntoView {
                 scroll, visible_time, duration,
             );
 
-            // Schedule any missing visible tiles for on-demand generation.
-            // This handles large-file mode where columns may be evicted from
-            // the spectral store and need STFT recomputation from audio.
+            // Schedule any missing visible tiles for on-demand generation
             {
                 use crate::canvas::tile_cache::{self, TILE_COLS};
                 use crate::canvas::spectral_store;
@@ -408,18 +415,13 @@ pub fn Spectrogram() -> impl IntoView {
                 let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
                 let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
 
-                // Don't schedule on-demand tiles while loading is in progress —
-                // the loading loop already schedules tiles as chunks complete.
-                // Only schedule LOD 0 (fast blurry preview) for instant feedback.
                 let is_loading = state.loading_count.get_untracked() > 0;
 
                 for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
                     if tile_cache::get_tile(file_idx_val, t).is_none() {
-                        // Schedule LOD 0 (quick blurry preview) immediately
                         tile_cache::schedule_lod0_tile(state.clone(), file_idx_val, t);
 
                         if !is_loading {
-                            // Schedule full-quality LOD 1 tile
                             let tile_start = t * TILE_COLS;
                             let tile_end = (tile_start + TILE_COLS).min(total_cols);
                             if spectral_store::has_store(file_idx_val)
@@ -436,7 +438,7 @@ pub fn Spectrogram() -> impl IntoView {
 
             drawn
         } else if pre_rendered.with_untracked(|pr| pr.is_some()) {
-            // Movement mode or no tile data — use monolithic pre_rendered
+            // Small file with columns in memory — use monolithic pre_rendered
             pre_rendered.with_untracked(|pr| {
                 if let Some(rendered) = pr {
                     spectrogram_renderer::blit_viewport(
@@ -447,7 +449,6 @@ pub fn Spectrogram() -> impl IntoView {
             });
             true
         } else if let Some(pv) = file.and_then(|f| f.preview.as_ref()) {
-            // Preview fallback during loading
             spectrogram_renderer::blit_preview_as_background(
                 &ctx, pv, canvas,
                 scroll, visible_time, duration,
