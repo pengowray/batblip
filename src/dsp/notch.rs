@@ -63,6 +63,28 @@ impl BiquadState {
         }
     }
 
+    /// Create a peaking EQ filter with specified gain at center frequency.
+    /// Negative gain_db cuts (attenuates). Used for harmonic suppression.
+    /// Coefficients from the Audio EQ Cookbook (Robert Bristow-Johnson).
+    fn peaking_eq(center_hz: f64, q: f64, gain_db: f64, sample_rate: u32) -> Self {
+        let a = 10.0_f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * center_hz / sample_rate as f64;
+        let alpha = w0.sin() / (2.0 * q);
+        let cos_w0 = w0.cos();
+        let a0 = 1.0 + alpha / a;
+        BiquadState {
+            b0: (1.0 + alpha * a) / a0,
+            b1: (-2.0 * cos_w0) / a0,
+            b2: (1.0 - alpha * a) / a0,
+            a1: (-2.0 * cos_w0) / a0,
+            a2: (1.0 - alpha / a) / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let x = x as f64;
@@ -77,17 +99,35 @@ impl BiquadState {
 }
 
 /// Apply cascaded notch filters for all enabled bands.
+/// When `harmonic_suppression` > 0, also attenuate 2x and 3x harmonics via peaking EQ.
 pub fn apply_notch_filters(
     samples: &[f32],
     sample_rate: u32,
     bands: &[NoiseBand],
+    harmonic_suppression: f64,
 ) -> Vec<f32> {
+    let nyquist = sample_rate as f64 / 2.0;
+
     let mut filters: Vec<BiquadState> = bands
         .iter()
         .filter(|b| b.enabled && b.center_hz > 0.0 && b.q > 0.0
-            && b.center_hz < sample_rate as f64 / 2.0)
+            && b.center_hz < nyquist)
         .map(|b| BiquadState::notch(b.center_hz, b.q, sample_rate))
         .collect();
+
+    // Add harmonic suppression filters (2x and 3x center frequency)
+    if harmonic_suppression > 0.0 {
+        let gain_db = -48.0 * harmonic_suppression;
+        for band in bands.iter().filter(|b| b.enabled && b.center_hz > 0.0 && b.q > 0.0) {
+            let q = (band.q * 0.7).max(3.0);
+            for multiplier in [2.0, 3.0] {
+                let harmonic_hz = band.center_hz * multiplier;
+                if harmonic_hz > 0.0 && harmonic_hz < nyquist {
+                    filters.push(BiquadState::peaking_eq(harmonic_hz, q, gain_db, sample_rate));
+                }
+            }
+        }
+    }
 
     if filters.is_empty() {
         return samples.to_vec();

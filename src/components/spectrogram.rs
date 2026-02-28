@@ -202,6 +202,7 @@ pub fn Spectrogram() -> impl IntoView {
         let notch_bands = state.notch_bands.get();
         let notch_enabled = state.notch_enabled.get();
         let notch_hovering = state.notch_hovering_band.get();
+        let harmonic_suppression = state.notch_harmonic_suppression.get();
         let main_view = state.main_view.get();
         let _pre = pre_rendered.track();
 
@@ -467,6 +468,7 @@ pub fn Spectrogram() -> impl IntoView {
                     display_h as f64, display_w as f64,
                     &notch_bands, notch_enabled,
                     notch_hovering,
+                    harmonic_suppression,
                 );
             }
 

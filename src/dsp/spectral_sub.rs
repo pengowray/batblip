@@ -141,12 +141,14 @@ async fn yield_to_browser() {
 /// - `noise_floor`: the learned noise floor spectrum
 /// - `strength`: 0.0 = no reduction, 1.0 = full subtraction, >1.0 = over-subtraction
 /// - `floor_factor`: minimum residual as a fraction of original magnitude (prevents musical noise)
+/// - `harmonic_suppression`: 0.0–1.0, propagates noise floor to 2x and 3x harmonic bins
 pub fn apply_spectral_subtraction(
     samples: &[f32],
     sample_rate: u32,
     noise_floor: &NoiseFloor,
     strength: f64,
     floor_factor: f64,
+    harmonic_suppression: f64,
 ) -> Vec<f32> {
     if samples.is_empty() || strength <= 0.0 {
         return samples.to_vec();
@@ -163,6 +165,26 @@ pub fn apply_spectral_subtraction(
 
     let window = hann_window(fft_size);
     let num_bins = fft_size / 2 + 1;
+
+    // Build enhanced noise floor with harmonic propagation
+    let effective_floor = if harmonic_suppression > 0.0 {
+        let mut enhanced = noise_floor.bin_magnitudes.clone();
+        for b in 0..num_bins {
+            let mag = noise_floor.bin_magnitudes[b];
+            if mag < 1e-20 {
+                continue;
+            }
+            for multiplier in [2usize, 3usize] {
+                let harmonic_bin = b * multiplier;
+                if harmonic_bin < num_bins {
+                    enhanced[harmonic_bin] += harmonic_suppression * mag;
+                }
+            }
+        }
+        enhanced
+    } else {
+        noise_floor.bin_magnitudes.clone()
+    };
 
     let (fft_fwd, fft_inv) = SS_FFT_PLANNER.with(|p| {
         let mut p = p.borrow_mut();
@@ -193,7 +215,7 @@ pub fn apply_spectral_subtraction(
         for (bin, c) in spectrum.iter_mut().enumerate() {
             let mag = c.norm() as f64;
             let noise_mag = if bin < num_bins {
-                noise_floor.bin_magnitudes[bin] * strength
+                effective_floor[bin] * strength
             } else {
                 0.0
             };

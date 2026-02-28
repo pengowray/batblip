@@ -303,6 +303,14 @@ pub(crate) fn NotchPanel() -> impl IntoView {
         }
     };
 
+    // Harmonic suppression slider handler
+    let on_harmonic_change = move |ev: web_sys::Event| {
+        let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+        if let Ok(val) = target.value().parse::<f64>() {
+            state.notch_harmonic_suppression.set(val / 100.0); // slider 0–100 → 0.0–1.0
+        }
+    };
+
     // Profile name handler
     let on_name_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -535,6 +543,50 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                     }
                 }}
             </div>
+
+            // === Harmonic Suppression ===
+            {move || {
+                let has_bands = !state.notch_bands.get().is_empty();
+                let has_floor = state.noise_reduce_floor.get().is_some();
+                if has_bands || has_floor {
+                    view! {
+                        <div class="setting-group">
+                            <div class="setting-row">
+                                <span class="setting-label">"Harmonic suppression"</span>
+                                <input
+                                    type="range"
+                                    class="setting-slider"
+                                    min="0"
+                                    max="100"
+                                    step="5"
+                                    prop:value=move || (state.notch_harmonic_suppression.get() * 100.0) as i32
+                                    on:input=on_harmonic_change
+                                    title=move || {
+                                        let v = state.notch_harmonic_suppression.get();
+                                        if v == 0.0 {
+                                            "Off".to_string()
+                                        } else {
+                                            format!("{:.0}% ({:.0} dB)", v * 100.0, -48.0 * v)
+                                        }
+                                    }
+                                />
+                            </div>
+                            <div class="setting-row" style="font-size: 10px; opacity: 0.6;">
+                                {move || {
+                                    let v = state.notch_harmonic_suppression.get();
+                                    if v == 0.0 {
+                                        "Attenuate 2\u{00D7} & 3\u{00D7} harmonics of noise".to_string()
+                                    } else {
+                                        format!("{:.0}% ({:.0} dB at 2\u{00D7} & 3\u{00D7})", v * 100.0, -48.0 * v)
+                                    }
+                                }}
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
 
             // === Noise Reduction (spectral subtraction) ===
             <div class="setting-group">

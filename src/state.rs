@@ -419,6 +419,8 @@ pub struct AppState {
     pub notch_detecting: RwSignal<bool>,
     pub notch_profile_name: RwSignal<String>,
     pub notch_hovering_band: RwSignal<Option<usize>>,
+    /// Harmonic suppression strength (0.0–1.0). Attenuates 2x and 3x harmonics of noise.
+    pub notch_harmonic_suppression: RwSignal<f64>,
 
     // Spectral subtraction noise reduction
     pub noise_reduce_enabled: RwSignal<bool>,
@@ -559,6 +561,7 @@ impl AppState {
             notch_detecting: RwSignal::new(false),
             notch_profile_name: RwSignal::new(String::new()),
             notch_hovering_band: RwSignal::new(None),
+            notch_harmonic_suppression: RwSignal::new(0.0),
 
             noise_reduce_enabled: RwSignal::new(false),
             noise_reduce_strength: RwSignal::new(1.0),

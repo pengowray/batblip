@@ -237,6 +237,7 @@ fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: 
         has_selection: selection.is_some(),
         notch_enabled: state.notch_enabled.get_untracked(),
         notch_bands: state.notch_bands.get_untracked(),
+        notch_harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
         noise_reduce_enabled: state.noise_reduce_enabled.get_untracked(),
         noise_reduce_strength: state.noise_reduce_strength.get_untracked(),
         noise_reduce_floor: state.noise_reduce_floor.get_untracked(),
