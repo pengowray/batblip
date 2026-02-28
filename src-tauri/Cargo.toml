@@ -1,10 +1,10 @@
 [package]
-name = "batblip-desktop"
-version = "0.1.40"
+name = "batmonic-desktop"
+version = "0.2.1"
 edition = "2021"
 
 [lib]
-name = "batblip_desktop"
+name = "batmonic_desktop"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
