@@ -87,12 +87,15 @@ pub fn App() -> impl IntoView {
             let _ = state.filter_band_mode.get();
             let _ = state.filter_quality.get();
             let _ = state.bandpass_mode.get();
-            let _ = state.notch_enabled.get();
+            let notch_on = state.notch_enabled.get();
             let _ = state.notch_bands.get();
-            let _ = state.notch_harmonic_suppression.get();
-            let _ = state.noise_reduce_enabled.get();
+            let noise_on = state.noise_reduce_enabled.get();
             let _ = state.noise_reduce_strength.get();
             let _ = state.noise_reduce_floor.get();
+            // Only trigger replay for harmonic suppression when a noise system is active
+            if notch_on || noise_on {
+                let _ = state.notch_harmonic_suppression.get();
+            }
 
             if first_run.get() {
                 first_run.set(false);
