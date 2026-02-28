@@ -134,6 +134,47 @@ pub enum OverviewView {
     Waveform,
 }
 
+/// What the main panel displays.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum MainView {
+    #[default]
+    Spectrogram,
+    Waveform,
+    ZcChart,
+    Movement,
+    Chromagram,
+}
+
+impl MainView {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Spectrogram => "Spectrogram",
+            Self::Waveform => "Waveform",
+            Self::ZcChart => "ZC Chart",
+            Self::Movement => "Movement",
+            Self::Chromagram => "Chromagram",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Spectrogram => "Spec",
+            Self::Waveform => "Wave",
+            Self::ZcChart => "ZC",
+            Self::Movement => "Mvmt",
+            Self::Chromagram => "Chroma",
+        }
+    }
+
+    pub const ALL: &'static [MainView] = &[
+        Self::Spectrogram,
+        Self::Waveform,
+        Self::ZcChart,
+        Self::Movement,
+        Self::Chromagram,
+    ];
+}
+
 /// Which frequency range the overview displays.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum OverviewFreqMode {
@@ -150,6 +191,7 @@ pub enum LayerPanel {
     HfrMode,
     Tool,
     FreqRange,
+    MainView,
 }
 
 /// A navigation history entry (for overview back/forward buttons).
@@ -274,8 +316,8 @@ pub struct AppState {
     // Actual pixel width of the main spectrogram canvas (written by Spectrogram, read by Overview)
     pub spectrogram_canvas_width: RwSignal<f64>,
 
-    // Main panel view mode (Spectrogram or Waveform)
-    pub main_view: RwSignal<OverviewView>,
+    // Main panel view mode
+    pub main_view: RwSignal<MainView>,
 
     // Spectrogram drag handles (FF + HET)
     pub spec_drag_handle: RwSignal<Option<SpectrogramHandle>>,
@@ -439,7 +481,7 @@ impl AppState {
             tile_ready_signal: RwSignal::new(0),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
-            main_view: RwSignal::new(OverviewView::Spectrogram),
+            main_view: RwSignal::new(MainView::Spectrogram),
             spec_drag_handle: RwSignal::new(None),
             spec_hover_handle: RwSignal::new(None),
             ff_freq_lo: RwSignal::new(0.0),
