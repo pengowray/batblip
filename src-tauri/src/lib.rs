@@ -105,7 +105,7 @@ fn mic_stop_recording(
 
     // Generate filename
     let now = chrono::Local::now();
-    let filename = now.forrec_mat("%Y-%m-%d_%H%M%S.wav").to_string();
+    let filename = now.format("batcap_%Y-%m-%d_%H%M%S.wav").to_string();
 
     // Encode WAV at native bit depth
     let wav_data = recording::encode_native_wav(&buf)?;
