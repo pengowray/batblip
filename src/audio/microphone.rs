@@ -5,9 +5,10 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
 use crate::state::{AppState, LoadedFile, MicMode};
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
-use crate::dsp::fft::{compute_preview, compute_spectrogram_partial};
+use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
 use crate::dsp::heterodyne::RealtimeHet;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 // ── Thread-local state: Web Audio mode ──────────────────────────────────
 
@@ -33,6 +34,24 @@ thread_local! {
     static TAURI_EVENT_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
     /// Unlisten function returned by Tauri event subscription
     static TAURI_UNLISTEN: RefCell<Option<js_sys::Function>> = RefCell::new(None);
+}
+
+// ── Thread-local state: Live recording buffer (Tauri) ────────────────
+
+thread_local! {
+    /// Accumulated recording samples on the frontend for Tauri modes (cpal/USB).
+    /// In browser mode, MIC_BUFFER serves this purpose instead.
+    static TAURI_REC_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::new());
+}
+
+/// Borrow the live recording buffer and call `f` with a reference to the samples.
+/// Works for both web (MIC_BUFFER) and Tauri (TAURI_REC_BUFFER) modes.
+pub fn with_live_samples<R>(is_tauri: bool, f: impl FnOnce(&[f32]) -> R) -> R {
+    if is_tauri {
+        TAURI_REC_BUFFER.with(|buf| f(&buf.borrow()))
+    } else {
+        MIC_BUFFER.with(|buf| f(&buf.borrow()))
+    }
 }
 
 // ── Thread-local state: Raw USB mode ─────────────────────────────────
@@ -437,9 +456,10 @@ async fn ensure_mic_open_tauri(state: &AppState) -> bool {
             .map(|i| array.get(i as u32).as_f64().unwrap_or(0.0) as f32)
             .collect();
 
-        // Update sample count for recording UI
+        // Update sample count and accumulate samples for live visualization
         if state_cb.mic_recording.get_untracked() {
             state_cb.mic_samples_recorded.update(|n| *n += len);
+            TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().extend_from_slice(&input_data));
         }
 
         // HET listening: process and play through speakers
@@ -499,6 +519,7 @@ async fn close_mic_tauri(state: &AppState) {
 
     RT_HET.with(|h| h.borrow_mut().reset());
     TAURI_MIC_OPEN.with(|o| *o.borrow_mut() = false);
+    TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
 
     state.mic_sample_rate.set(0);
     state.mic_samples_recorded.set(0);
@@ -553,10 +574,14 @@ async fn toggle_record_tauri(state: &AppState) {
     } else {
         // Start recording
         if ensure_mic_open_tauri(state).await {
+            TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
             match tauri_invoke_no_args("mic_start_recording").await {
                 Ok(_) => {
                     state.mic_samples_recorded.set(0);
                     state.mic_recording.set(true);
+                    let sr = state.mic_sample_rate.get_untracked();
+                    let file_idx = start_live_recording(state, sr);
+                    spawn_live_processing_loop(*state, file_idx, sr);
                     log::info!("Native recording started");
                 }
                 Err(e) => {
@@ -586,7 +611,10 @@ async fn stop_all_tauri(state: &AppState) {
 }
 
 /// Build a LoadedFile from the Tauri RecordingResult and add to state.
+/// If a live file exists (from live visualization), updates it in-place.
 fn finalize_recording_tauri(result: JsValue, state: AppState) {
+    use crate::canvas::{spectral_store, tile_cache};
+
     let filename = js_sys::Reflect::get(&result, &JsValue::from_str("filename"))
         .ok()
         .and_then(|v| v.as_string())
@@ -643,27 +671,51 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         },
     };
 
-    // Phase 1: fast preview
     let preview = compute_preview(&audio, 256, 128);
     let audio_for_stft = audio.clone();
-    let name_check = filename.clone();
 
-    let total_cols = if audio.samples.len() >= 2048 {
-        (audio.samples.len() - 2048) / 512 + 1
-    } else {
-        0
-    };
-    let placeholder_spec = SpectrogramData {
-        columns: Vec::new().into(),
-        total_columns: total_cols,
-        freq_resolution: sample_rate as f64 / 2048.0,
-        time_resolution: 512.0 / sample_rate as f64,
-        max_freq: sample_rate as f64 / 2.0,
-        sample_rate,
-    };
+    // Check if a live file exists from live visualization
+    let live_idx = state.mic_live_file_idx.get_untracked();
+    state.mic_live_file_idx.set(None);
 
     let file_index;
-    {
+    let name_check;
+
+    if let Some(idx) = live_idx {
+        // Update the existing live file in-place
+        file_index = idx;
+        name_check = state.files.with_untracked(|files| {
+            files.get(idx).map(|f| f.name.clone()).unwrap_or_default()
+        });
+
+        // Clear progressive tiles and spectral store
+        tile_cache::clear_file(file_index);
+        spectral_store::clear_file(file_index);
+
+        state.files.update(|files| {
+            if let Some(f) = files.get_mut(file_index) {
+                f.audio = audio;
+                f.preview = Some(preview);
+                f.is_recording = false; // Already saved by backend
+            }
+        });
+    } else {
+        // No live file — create a new one (fallback)
+        name_check = filename.clone();
+        let total_cols = if audio_for_stft.samples.len() >= 2048 {
+            (audio_for_stft.samples.len() - 2048) / 512 + 1
+        } else {
+            0
+        };
+        let placeholder_spec = SpectrogramData {
+            columns: Vec::new().into(),
+            total_columns: total_cols,
+            freq_resolution: sample_rate as f64 / 2048.0,
+            time_resolution: 512.0 / sample_rate as f64,
+            max_freq: sample_rate as f64 / 2.0,
+            sample_rate,
+        };
+
         let mut idx = 0;
         state.files.update(|files| {
             idx = files.len();
@@ -678,10 +730,10 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
             });
         });
         file_index = idx;
+        state.current_file_index.set(Some(file_index));
     }
-    state.current_file_index.set(Some(file_index));
 
-    // Phase 2: async chunked spectrogram computation
+    // Async chunked spectrogram computation with final normalization
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }
 
@@ -867,6 +919,7 @@ async fn ensure_mic_open_usb(state: &AppState) -> bool {
 
         if state_cb.mic_recording.get_untracked() {
             state_cb.mic_samples_recorded.update(|n| *n += len);
+            TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().extend_from_slice(&input_data));
         }
 
         if state_cb.mic_listening.get_untracked() {
@@ -972,10 +1025,14 @@ async fn toggle_record_usb(state: &AppState) {
     } else {
         // Start recording
         if ensure_mic_open_usb(state).await {
+            TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
             match tauri_invoke_no_args("usb_start_recording").await {
                 Ok(_) => {
                     state.mic_samples_recorded.set(0);
                     state.mic_recording.set(true);
+                    let sr = state.mic_sample_rate.get_untracked();
+                    let file_idx = start_live_recording(state, sr);
+                    spawn_live_processing_loop(*state, file_idx, sr);
                     log::info!("USB recording started");
                 }
                 Err(e) => {
@@ -1033,7 +1090,7 @@ pub async fn toggle_record(state: &AppState) {
             // Browser mode or non-Tauri fallback
             if state.mic_recording.get_untracked() {
                 if let Some((samples, sr)) = stop_recording_web(state) {
-                    finalize_recording(samples, sr, *state);
+                    finalize_live_recording(samples, sr, *state);
                 }
                 maybe_close_mic_web(state);
             } else {
@@ -1041,6 +1098,9 @@ pub async fn toggle_record(state: &AppState) {
                     MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
                     state.mic_samples_recorded.set(0);
                     state.mic_recording.set(true);
+                    let sr = state.mic_sample_rate.get_untracked();
+                    let file_idx = start_live_recording(state, sr);
+                    spawn_live_processing_loop(*state, file_idx, sr);
                     log::info!("Recording started");
                 }
             }
@@ -1069,7 +1129,7 @@ pub fn stop_all(state: &AppState) {
         _ => {
             if state.mic_recording.get_untracked() {
                 if let Some((samples, sr)) = stop_recording_web(state) {
-                    finalize_recording(samples, sr, *state);
+                    finalize_live_recording(samples, sr, *state);
                 }
             }
             state.mic_listening.set(false);
@@ -1197,8 +1257,299 @@ async fn try_tauri_save(wav_data: &[u8], filename: &str) -> bool {
     }
 }
 
+// ── Live recording visualization ─────────────────────────────────────────
+
+/// Create a live LoadedFile at recording start for real-time visualization.
+/// Returns the file index where the live file was inserted.
+fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
+    let now = js_sys::Date::new_0();
+    let name = format!(
+        "batcap_{:04}-{:02}-{:02}_{:02}{:02}{:02}.wav",
+        now.get_full_year(),
+        now.get_month() + 1,
+        now.get_date(),
+        now.get_hours(),
+        now.get_minutes(),
+        now.get_seconds(),
+    );
+
+    let audio = AudioData {
+        samples: Arc::new(Vec::new()),
+        sample_rate,
+        channels: 1,
+        duration_secs: 0.0,
+        metadata: FileMetadata {
+            file_size: 0,
+            format: "REC",
+            bits_per_sample: state.mic_bits_per_sample.get_untracked(),
+            is_float: false,
+            guano: None,
+        },
+    };
+
+    let placeholder_spec = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: 0,
+        freq_resolution: sample_rate as f64 / 2048.0,
+        time_resolution: 512.0 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
+    let mut file_index = 0;
+    state.files.update(|files| {
+        file_index = files.len();
+        files.push(LoadedFile {
+            name,
+            audio,
+            spectrogram: placeholder_spec,
+            preview: None,
+            overview_image: None,
+            xc_metadata: None,
+            is_recording: true,
+        });
+    });
+
+    state.current_file_index.set(Some(file_index));
+    state.mic_live_file_idx.set(Some(file_index));
+
+    file_index
+}
+
+/// Spawns an async processing loop that incrementally computes STFT columns
+/// and renders tiles from the live recording buffer while recording is active.
+fn spawn_live_processing_loop(state: AppState, file_index: usize, sample_rate: u32) {
+    use crate::canvas::{spectral_store, tile_cache::{self, TILE_COLS}};
+
+    const FFT_SIZE: usize = 2048;
+    const HOP_SIZE: usize = 512;
+    const PROCESS_INTERVAL_MS: i32 = 200;
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut last_processed_col: usize = 0;
+        let mut last_snapshot_len: usize = 0;
+        let is_tauri = state.is_tauri;
+
+        // Initialize spectral store (will grow as recording progresses)
+        spectral_store::ensure_capacity(file_index, 0);
+
+        loop {
+            // Wait ~200ms
+            let p = js_sys::Promise::new(&mut |resolve, _| {
+                if let Some(w) = web_sys::window() {
+                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                        &resolve, PROCESS_INTERVAL_MS,
+                    );
+                }
+            });
+            let _ = JsFuture::from(p).await;
+
+            // Check if still recording
+            if !state.mic_recording.get_untracked() {
+                break;
+            }
+            // Check file still valid
+            if state.mic_live_file_idx.get_untracked() != Some(file_index) {
+                break;
+            }
+
+            // Borrow live buffer and process new samples
+            let any_update = with_live_samples(is_tauri, |samples| {
+                if samples.len() < FFT_SIZE {
+                    return false;
+                }
+
+                let total_possible_cols = (samples.len() - FFT_SIZE) / HOP_SIZE + 1;
+                if total_possible_cols <= last_processed_col {
+                    return false;
+                }
+
+                let new_col_count = total_possible_cols - last_processed_col;
+
+                // Grow spectral store to accommodate new columns
+                spectral_store::ensure_capacity(file_index, total_possible_cols);
+
+                // Compute new STFT columns directly from the buffer
+                let new_cols = compute_stft_columns(
+                    samples,
+                    sample_rate,
+                    FFT_SIZE,
+                    HOP_SIZE,
+                    last_processed_col,
+                    new_col_count,
+                );
+
+                if new_cols.is_empty() {
+                    return false;
+                }
+
+                // Insert into spectral store
+                spectral_store::insert_columns(file_index, last_processed_col, &new_cols);
+
+                // Render completed tiles (all 256 columns present)
+                let first_tile = last_processed_col / TILE_COLS;
+                let last_tile = (total_possible_cols.saturating_sub(1)) / TILE_COLS;
+                for tile_idx in first_tile..last_tile {
+                    let tile_start = tile_idx * TILE_COLS;
+                    let tile_end = tile_start + TILE_COLS;
+                    if tile_end <= total_possible_cols {
+                        if spectral_store::tile_complete(file_index, tile_start, tile_end) {
+                            tile_cache::render_tile_from_store_sync(file_index, tile_idx);
+                        }
+                    }
+                }
+
+                // Render the rightmost partial (live) tile
+                let live_tile_idx = total_possible_cols.saturating_sub(1) / TILE_COLS;
+                let live_tile_start = live_tile_idx * TILE_COLS;
+                let live_cols = total_possible_cols.saturating_sub(live_tile_start);
+                if live_cols > 0 && live_cols < TILE_COLS {
+                    tile_cache::render_live_tile_sync(file_index, live_tile_idx, live_tile_start, live_cols);
+                }
+
+                // Update file metadata
+                let duration = samples.len() as f64 / sample_rate as f64;
+                state.files.update(|files| {
+                    if let Some(f) = files.get_mut(file_index) {
+                        f.spectrogram.total_columns = total_possible_cols;
+                        f.audio.duration_secs = duration;
+                    }
+                });
+
+                // Periodically snapshot the full buffer for waveform rendering (~1s interval)
+                let snapshot_threshold = (sample_rate as usize).max(44100);
+                if samples.len() - last_snapshot_len >= snapshot_threshold || last_snapshot_len == 0 {
+                    let snapshot = Arc::new(samples.to_vec());
+                    state.files.update(|files| {
+                        if let Some(f) = files.get_mut(file_index) {
+                            f.audio.samples = snapshot;
+                        }
+                    });
+                    last_snapshot_len = samples.len();
+                }
+
+                last_processed_col = total_possible_cols;
+                true
+            });
+
+            if any_update {
+                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
+                // Auto-scroll to keep recording edge visible
+                let total_cols = state.files.with_untracked(|files| {
+                    files.get(file_index).map(|f| f.spectrogram.total_columns).unwrap_or(0)
+                });
+                if total_cols > 0 {
+                    let time_res = HOP_SIZE as f64 / sample_rate as f64;
+                    let recording_time = total_cols as f64 * time_res;
+                    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                    let zoom = state.zoom_level.get_untracked();
+                    if zoom > 0.0 && canvas_w > 0.0 {
+                        let visible_cols = canvas_w / zoom;
+                        let visible_time = visible_cols * time_res;
+                        // Keep recording edge at ~80% of viewport
+                        let target_scroll = (recording_time - visible_time * 0.8).max(0.0);
+                        state.scroll_offset.set(target_scroll);
+                    }
+                }
+            }
+        }
+
+        // Processing loop exited — clean up
+        state.mic_live_file_idx.set(None);
+    });
+}
+
+/// Finalize a live recording by updating the existing live file in-place.
+/// Clears the progressive tiles and re-runs full spectrogram computation for
+/// accurate normalization. Works for both web and Tauri modes.
+fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
+    use crate::canvas::{spectral_store, tile_cache};
+
+    let live_idx = state.mic_live_file_idx.get_untracked();
+    state.mic_live_file_idx.set(None);
+
+    // If no live file exists, fall back to the old path
+    let file_index = match live_idx {
+        Some(idx) => idx,
+        None => {
+            finalize_recording(samples, sample_rate, state);
+            return;
+        }
+    };
+
+    if samples.is_empty() {
+        log::warn!("Empty recording, removing live file");
+        state.files.update(|files| {
+            if file_index < files.len() {
+                files.remove(file_index);
+            }
+        });
+        return;
+    }
+
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let audio = AudioData {
+        samples: samples.into(),
+        sample_rate,
+        channels: 1,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: 0,
+            format: "REC",
+            bits_per_sample: state.mic_bits_per_sample.get_untracked(),
+            is_float: false,
+            guano: None,
+        },
+    };
+
+    let preview = compute_preview(&audio, 256, 128);
+    let audio_for_stft = audio.clone();
+
+    let name_check = state.files.with_untracked(|files| {
+        files.get(file_index).map(|f| f.name.clone()).unwrap_or_default()
+    });
+
+    let is_tauri = state.is_tauri;
+    let name_for_save = name_check.clone();
+
+    // Update the existing file with final audio data and preview
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(file_index) {
+            f.audio = audio;
+            f.preview = Some(preview);
+        }
+    });
+
+    // Clear progressive tiles and spectral store — will be re-rendered with final normalization
+    tile_cache::clear_file(file_index);
+    spectral_store::clear_file(file_index);
+
+    // Try Tauri auto-save in background
+    if is_tauri {
+        let samples_ref = state.files.get_untracked();
+        if let Some(file) = samples_ref.get(file_index) {
+            let wav_data = encode_wav(&file.audio.samples, file.audio.sample_rate);
+            let filename = name_for_save;
+            wasm_bindgen_futures::spawn_local(async move {
+                if try_tauri_save(&wav_data, &filename).await {
+                    state.files.update(|files| {
+                        if let Some(f) = files.get_mut(file_index) {
+                            f.is_recording = false;
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    // Re-compute full spectrogram with accurate final normalization
+    spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
+}
+
 /// Convert recorded samples into a LoadedFile and add to state (web mode).
-pub fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
+/// Used as a fallback when no live file exists.
+fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
     let duration_secs = samples.len() as f64 / sample_rate as f64;
     let now = js_sys::Date::new_0();
     let name = format!(

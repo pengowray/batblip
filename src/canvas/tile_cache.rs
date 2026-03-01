@@ -281,6 +281,59 @@ pub fn render_tile_from_store_sync(file_idx: usize, tile_idx: usize) -> bool {
     }
 }
 
+/// Render a partial (live) tile from the spectral store.
+///
+/// Renders `available_cols` columns starting at `col_start`, padding the rest
+/// of the tile width with black. Overwrites any existing tile at this position
+/// unconditionally (the live tile changes every processing cycle).
+/// Used during live recording for the rightmost tile.
+pub fn render_live_tile_sync(file_idx: usize, tile_idx: usize, col_start: usize, available_cols: usize) -> bool {
+    use crate::canvas::spectral_store;
+
+    let col_end = col_start + available_cols;
+    let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, max_mag| {
+        let partial = spectrogram_renderer::pre_render_columns(cols, max_mag);
+
+        if partial.width == 0 || partial.height == 0 {
+            return partial;
+        }
+
+        // If already full tile width, no padding needed
+        if available_cols >= TILE_COLS {
+            return partial;
+        }
+
+        // Pad to full TILE_COLS width with black pixels
+        let full_width = TILE_COLS as u32;
+        let height = partial.height;
+        let mut full_pixels = vec![0u8; (full_width * height * 4) as usize];
+
+        for y in 0..height {
+            let src_start = (y * partial.width * 4) as usize;
+            let src_end = src_start + (partial.width * 4) as usize;
+            let dst_start = (y * full_width * 4) as usize;
+            let dst_end = dst_start + (partial.width * 4) as usize;
+            if src_end <= partial.pixels.len() {
+                full_pixels[dst_start..dst_end]
+                    .copy_from_slice(&partial.pixels[src_start..src_end]);
+            }
+        }
+
+        PreRendered {
+            width: full_width,
+            height,
+            pixels: full_pixels,
+        }
+    });
+
+    if let Some(rendered) = rendered {
+        CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        true
+    } else {
+        false
+    }
+}
+
 /// Schedule tile generation from the spectral column store (used during
 /// progressive loading when full SpectrogramData isn't assembled yet).
 pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usize) {

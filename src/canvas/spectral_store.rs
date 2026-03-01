@@ -135,6 +135,29 @@ fn farthest_present(columns: &[Option<SpectrogramColumn>], center: usize) -> Opt
     best.map(|(i, _)| i)
 }
 
+/// Extend the store's column capacity to accommodate at least `new_total` columns.
+/// Only grows, never shrinks. If the store doesn't exist, creates it.
+/// Used during live recording where total column count grows incrementally.
+pub fn ensure_capacity(file_idx: usize, new_total: usize) {
+    STORES.with(|s| {
+        let mut stores = s.borrow_mut();
+        match stores.get_mut(&file_idx) {
+            Some(store) => {
+                if new_total > store.columns.len() {
+                    store.columns.resize_with(new_total, || None);
+                }
+            }
+            None => {
+                stores.insert(file_idx, SpectralColumnStore {
+                    columns: (0..new_total).map(|_| None).collect(),
+                    max_magnitude: 0.0,
+                    present_count: 0,
+                });
+            }
+        }
+    });
+}
+
 /// Check whether all columns in the range `tile_start..tile_end` are present.
 pub fn tile_complete(file_idx: usize, tile_start: usize, tile_end: usize) -> bool {
     STORES.with(|s| {
