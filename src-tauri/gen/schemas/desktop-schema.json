@@ -2143,6 +2143,66 @@
           "type": "string",
           "const": "core:window:deny-unminimize",
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the closeUsbDevice command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-closeUsbDevice",
+          "markdownDescription": "Enables the closeUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the getUsbDeviceInfo command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-getUsbDeviceInfo",
+          "markdownDescription": "Enables the getUsbDeviceInfo command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the listUsbDevices command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-listUsbDevices",
+          "markdownDescription": "Enables the listUsbDevices command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the openUsbDevice command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-openUsbDevice",
+          "markdownDescription": "Enables the openUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestUsbPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-requestUsbPermission",
+          "markdownDescription": "Enables the requestUsbPermission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the closeUsbDevice command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-closeUsbDevice",
+          "markdownDescription": "Denies the closeUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the getUsbDeviceInfo command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-getUsbDeviceInfo",
+          "markdownDescription": "Denies the getUsbDeviceInfo command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the listUsbDevices command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-listUsbDevices",
+          "markdownDescription": "Denies the listUsbDevices command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the openUsbDevice command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-openUsbDevice",
+          "markdownDescription": "Denies the openUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestUsbPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-requestUsbPermission",
+          "markdownDescription": "Denies the requestUsbPermission command without any pre-configured scope."
         }
       ]
     },

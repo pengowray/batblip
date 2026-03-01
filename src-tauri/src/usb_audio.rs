@@ -355,7 +355,7 @@ mod isochronous {
             let ret = unsafe {
                 libc::ioctl(
                     fd,
-                    USBDEVFS_SUBMITURB as libc::c_ulong,
+                    USBDEVFS_SUBMITURB as libc::c_int,
                     &urb.urb as *const UsbdevfsUrb,
                 )
             };
@@ -391,7 +391,7 @@ mod isochronous {
             let ret = unsafe {
                 libc::ioctl(
                     fd,
-                    USBDEVFS_REAPURB as libc::c_ulong,
+                    USBDEVFS_REAPURB as libc::c_int,
                     &mut urb_reaped as *mut *mut UsbdevfsUrb,
                 )
             };
@@ -460,7 +460,7 @@ mod isochronous {
             // Resubmit unless cancelling
             if !cancel.load(Ordering::Relaxed) {
                 let ret = unsafe {
-                    libc::ioctl(fd, USBDEVFS_SUBMITURB as libc::c_ulong, urb_reaped)
+                    libc::ioctl(fd, USBDEVFS_SUBMITURB as libc::c_int, urb_reaped)
                 };
                 if ret == 0 {
                     balls_in_air += 1;
@@ -482,7 +482,7 @@ mod isochronous {
             unsafe {
                 libc::ioctl(
                     fd,
-                    USBDEVFS_DISCARDURB as libc::c_ulong,
+                    USBDEVFS_DISCARDURB as libc::c_int,
                     &urb.urb as *const UsbdevfsUrb,
                 );
             }
@@ -492,7 +492,7 @@ mod isochronous {
             unsafe {
                 libc::ioctl(
                     fd,
-                    USBDEVFS_REAPURBNDELAY as libc::c_ulong,
+                    USBDEVFS_REAPURBNDELAY as libc::c_int,
                     &mut urb_reaped as *mut *mut UsbdevfsUrb,
                 );
             }

@@ -4,6 +4,11 @@
   "description": "Default permissions for batmonic desktop app",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "usb-audio:allow-listUsbDevices",
+    "usb-audio:allow-requestUsbPermission",
+    "usb-audio:allow-getUsbDeviceInfo",
+    "usb-audio:allow-openUsbDevice",
+    "usb-audio:allow-closeUsbDevice"
   ]
 }

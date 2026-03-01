@@ -260,30 +260,26 @@ pub fn open_mic(requested_max_rate: u32) -> Result<MicState, String> {
     let device_name = device.name().unwrap_or_else(|_| "Unknown".into());
     let supported_rates = collect_supported_rates(&device);
 
-    let config = if requested_max_rate > 0 {
-        match negotiate_sample_rate(&device, requested_max_rate) {
-            Some(cfg) => {
-                eprintln!(
-                    "Mic rate negotiation: requested max {}Hz, got {}Hz",
-                    requested_max_rate,
-                    cfg.sample_rate().0
-                );
-                cfg
-            }
-            None => {
-                eprintln!(
-                    "Mic rate negotiation: no config found for max {}Hz, using default",
-                    requested_max_rate
-                );
-                device
-                    .default_input_config()
-                    .map_err(|e| format!("Failed to get mic config: {}", e))?
-            }
+    // Auto (0) = highest available rate — this is a bat recording app,
+    // so we always want the highest sample rate the device supports.
+    let effective_max = if requested_max_rate == 0 { u32::MAX } else { requested_max_rate };
+    let config = match negotiate_sample_rate(&device, effective_max) {
+        Some(cfg) => {
+            eprintln!(
+                "Mic rate negotiation: requested max {}Hz, got {}Hz",
+                if requested_max_rate == 0 { "auto".to_string() } else { requested_max_rate.to_string() },
+                cfg.sample_rate().0
+            );
+            cfg
         }
-    } else {
-        device
-            .default_input_config()
-            .map_err(|e| format!("Failed to get mic config: {}", e))?
+        None => {
+            eprintln!(
+                "Mic rate negotiation: no config found, using default"
+            );
+            device
+                .default_input_config()
+                .map_err(|e| format!("Failed to get mic config: {}", e))?
+        }
     };
 
     let format = detect_format(&config);
