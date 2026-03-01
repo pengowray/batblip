@@ -83,6 +83,27 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     >"Reset"</button>
                 </div>
                 <div class="setting-row">
+                    <span class="setting-label">"FFT size"</span>
+                    <select
+                        class="setting-select"
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                            if let Ok(v) = select.value().parse::<usize>() {
+                                state.spect_fft_size.set(v);
+                            }
+                        }
+                        prop:value=move || state.spect_fft_size.get().to_string()
+                    >
+                        <option value="256">"256"</option>
+                        <option value="512">"512"</option>
+                        <option value="1024">"1024"</option>
+                        <option value="2048">"2048"</option>
+                        <option value="4096">"4096"</option>
+                        <option value="8192">"8192"</option>
+                    </select>
+                </div>
+                <div class="setting-row">
                     <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input
                             type="checkbox"

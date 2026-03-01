@@ -2152,24 +2152,50 @@ pub fn draw_tile_debug_overlay(
         ctx.set_stroke_style_str(color);
         ctx.stroke_rect(dx + 0.5, 0.5, dw - 1.0, ch - 1.0);
 
-        // Draw label background
+        // Determine the actually-displayed LOD for resolution info
+        let displayed_lod = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
+            ideal_lod
+        } else {
+            let mut dl = 255u8;
+            for fb_lod in (0..ideal_lod).rev() {
+                let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
+                if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
+                    dl = fb_lod;
+                    break;
+                }
+            }
+            dl
+        };
+        let res_line = if displayed_lod < tile_cache::NUM_LODS as u8 {
+            let cfg = &tile_cache::LOD_CONFIGS[displayed_lod as usize];
+            format!("fft={} hop={}", cfg.fft_size, cfg.hop_size)
+        } else {
+            "no tile".to_string()
+        };
+
+        // Draw label background (two lines)
         let label = format!("T{tile_idx} {lod_label}");
         let label_x = dx + 3.0;
         let label_y = 3.0;
         ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 72.0, 14.0);
+        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 90.0, 27.0);
 
-        // Draw label text
+        // Draw label text — line 1: tile id + LOD
         ctx.set_fill_style_str(color);
         let _ = ctx.fill_text(&label, label_x, label_y);
+        // Line 2: resolution
+        ctx.set_fill_style_str("#aaa");
+        let _ = ctx.fill_text(&res_line, label_x, label_y + 13.0);
     }
 
-    // Draw zoom level + ideal LOD in top-right corner
-    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod}");
+    // Draw zoom level + ideal LOD + resolution in top-right corner
+    let ideal_cfg = &tile_cache::LOD_CONFIGS[ideal_lod as usize];
+    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod} fft={} hop={}", ideal_cfg.fft_size, ideal_cfg.hop_size);
+    let label_w = 200.0;
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-    ctx.fill_rect(cw - 110.0, 3.0, 107.0, 14.0);
+    ctx.fill_rect(cw - label_w - 3.0, 3.0, label_w, 14.0);
     ctx.set_fill_style_str("#fff");
-    let _ = ctx.fill_text(&zoom_label, cw - 108.0, 4.0);
+    let _ = ctx.fill_text(&zoom_label, cw - label_w - 1.0, 4.0);
 
     ctx.restore();
 }

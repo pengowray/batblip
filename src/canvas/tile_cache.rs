@@ -38,7 +38,7 @@ pub struct LodConfig {
 pub const NUM_LODS: usize = 4;
 
 pub const LOD_CONFIGS: [LodConfig; NUM_LODS] = [
-    LodConfig { fft_size: 512,  hop_size: 2048 }, // LOD 0 — wide, blurry preview
+    LodConfig { fft_size: 2048, hop_size: 2048 }, // LOD 0 — wide, same freq resolution as LOD1
     LodConfig { fft_size: 2048, hop_size: 512 },  // LOD 1 — normal resolution
     LodConfig { fft_size: 2048, hop_size: 128 },  // LOD 2 — zoomed in
     LodConfig { fft_size: 2048, hop_size: 32 },   // LOD 3 — deep zoom
@@ -164,6 +164,12 @@ impl TileCache {
                 self.lru.retain(|k| k != &key);
             }
         }
+    }
+
+    fn clear_all(&mut self) {
+        self.tiles.clear();
+        self.lru.clear();
+        self.total_bytes = 0;
     }
 }
 
@@ -310,6 +316,13 @@ pub fn clear_file(file_idx: usize) {
     IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
 }
 
+/// Clear all magnitude tiles (all files, all LODs). Used when global
+/// settings like FFT size change and all cached tiles become stale.
+pub fn clear_all_tiles() {
+    CACHE.with(|c| c.borrow_mut().clear_all());
+    IN_FLIGHT.with(|s| s.borrow_mut().clear());
+}
+
 pub fn evict_far(file_idx: usize, lod: u8, center_tile: usize, keep_radius: usize) {
     CACHE.with(|c| c.borrow_mut().evict_far_from(file_idx, lod, center_tile, keep_radius));
 }
@@ -325,6 +338,8 @@ pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
 // ── Generic LOD tile scheduling ──────────────────────────────────────────────
 
 /// Schedule a tile at any LOD level. Computes STFT from audio samples.
+/// Uses the user's chosen FFT size (from `state.spect_fft_size`), clamped
+/// to at least the LOD's hop size (the FFT window must cover one hop).
 pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
     use crate::dsp::fft::compute_spectrogram_partial;
 
@@ -333,8 +348,10 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
     if IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
-    let config_fft = LOD_CONFIGS[lod as usize].fft_size;
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
+    // Use user FFT size, but must be at least as large as the hop
+    let user_fft = state.spect_fft_size.get_untracked();
+    let actual_fft = user_fft.max(config_hop);
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -361,7 +378,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // Compute STFT columns for this tile
         let col_start = tile_idx * TILE_COLS;
         let cols = compute_spectrogram_partial(
-            &audio, config_fft, config_hop, col_start, TILE_COLS,
+            &audio, actual_fft, config_hop, col_start, TILE_COLS,
         );
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 

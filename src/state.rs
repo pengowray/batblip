@@ -362,6 +362,9 @@ pub struct AppState {
     pub spect_gain_db: RwSignal<f32>,
     /// Show tile debug overlay (borders, LOD labels) on the spectrogram canvas.
     pub debug_tiles: RwSignal<bool>,
+    /// FFT window size for spectrogram computation (default 2048).
+    /// Larger = better frequency resolution, worse time resolution.
+    pub spect_fft_size: RwSignal<usize>,
 
     // Which floating layer panel is currently open
     pub layer_panel_open: RwSignal<Option<LayerPanel>>,
@@ -550,6 +553,7 @@ impl AppState {
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
+            spect_fft_size: RwSignal::new(2048),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),

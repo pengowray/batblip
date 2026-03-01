@@ -158,6 +158,13 @@ pub fn Spectrogram() -> impl IntoView {
 
     // (coherence tiles now use flow cache — cleared in Effect 2 above)
 
+    // Effect 2b: clear all magnitude tiles when FFT size changes
+    Effect::new(move || {
+        let _fft = state.spect_fft_size.get();
+        crate::canvas::tile_cache::clear_all_tiles();
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+
     // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, hover, or new tile change
     Effect::new(move || {
         let _tile_ready = state.tile_ready_signal.get(); // trigger redraw when tiles arrive
