@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use crate::state::{AppState, ChromaColormap, ColormapPreference, MicMode};
 
@@ -58,6 +59,12 @@ pub(super) fn ConfigPanel() -> impl IntoView {
             _ => MicMode::Browser,
         };
         state.mic_mode.set(mode);
+        // Query actual supported rates when switching to cpal
+        if mode == MicMode::Cpal && state.is_tauri {
+            spawn_local(async move {
+                crate::audio::microphone::query_cpal_supported_rates(&state).await;
+            });
+        }
     };
 
     let on_max_sr_change = move |ev: web_sys::Event| {
@@ -69,11 +76,29 @@ pub(super) fn ConfigPanel() -> impl IntoView {
 
     let is_tauri = state.is_tauri;
 
-    // Max rate ceiling depends on mic mode
-    let sr_cap = move || match state.mic_mode.get() {
-        MicMode::Browser => 96_000u32,
-        MicMode::Cpal => 192_000,
-        MicMode::RawUsb => 500_000,
+    // Query cpal rates on initial render if in cpal mode
+    if is_tauri && state.mic_mode.get_untracked() == MicMode::Cpal {
+        spawn_local(async move {
+            crate::audio::microphone::query_cpal_supported_rates(&state).await;
+        });
+    }
+
+    // Check if a specific rate is available based on mode + actual device rates
+    let rate_available = move |rate: u32| -> bool {
+        match state.mic_mode.get() {
+            MicMode::Browser => rate <= 96_000,
+            MicMode::RawUsb => rate <= 500_000,
+            MicMode::Cpal => {
+                let rates = state.mic_supported_rates.get();
+                if rates.is_empty() {
+                    // Not yet queried — show all rates up to 192kHz (cpal ceiling)
+                    rate <= 192_000
+                } else {
+                    // Only show rates the device actually supports
+                    rates.iter().any(|&r| r >= rate)
+                }
+            }
+        }
     };
 
     view! {
@@ -106,22 +131,26 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         on:change=on_max_sr_change
                     >
                         <option value="0" selected=move || state.mic_max_sample_rate.get() == 0>"Auto"</option>
-                        <option value="44100" selected=move || state.mic_max_sample_rate.get() == 44100>"44.1 kHz"</option>
-                        <option value="48000" selected=move || state.mic_max_sample_rate.get() == 48000>"48 kHz"</option>
+                        <option value="44100" selected=move || state.mic_max_sample_rate.get() == 44100
+                            disabled=move || !rate_available(44100)
+                        >"44.1 kHz"</option>
+                        <option value="48000" selected=move || state.mic_max_sample_rate.get() == 48000
+                            disabled=move || !rate_available(48000)
+                        >"48 kHz"</option>
                         <option value="96000" selected=move || state.mic_max_sample_rate.get() == 96000
-                            disabled=move || sr_cap() < 96_000
+                            disabled=move || !rate_available(96000)
                         >"96 kHz"</option>
                         <option value="192000" selected=move || state.mic_max_sample_rate.get() == 192000
-                            disabled=move || sr_cap() < 192_000
+                            disabled=move || !rate_available(192000)
                         >"192 kHz"</option>
                         <option value="256000" selected=move || state.mic_max_sample_rate.get() == 256000
-                            disabled=move || sr_cap() < 256_000
+                            disabled=move || !rate_available(256000)
                         >"256 kHz"</option>
                         <option value="384000" selected=move || state.mic_max_sample_rate.get() == 384000
-                            disabled=move || sr_cap() < 384_000
+                            disabled=move || !rate_available(384000)
                         >"384 kHz"</option>
                         <option value="500000" selected=move || state.mic_max_sample_rate.get() == 500000
-                            disabled=move || sr_cap() < 500_000
+                            disabled=move || !rate_available(500000)
                         >"500 kHz"</option>
                     </select>
                 </div>

@@ -385,6 +385,7 @@ pub struct AppState {
     pub mic_bits_per_sample: RwSignal<u16>,
     pub mic_max_sample_rate: RwSignal<u32>, // 0 = auto (device default)
     pub mic_mode: RwSignal<MicMode>,
+    pub mic_supported_rates: RwSignal<Vec<u32>>, // actual rates from cpal device query
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -549,6 +550,7 @@ impl AppState {
             mic_bits_per_sample: RwSignal::new(16),
             mic_max_sample_rate: RwSignal::new(0),
             mic_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
+            mic_supported_rates: RwSignal::new(Vec::new()),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
             is_mobile: RwSignal::new(detect_mobile()),

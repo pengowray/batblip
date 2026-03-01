@@ -46,6 +46,55 @@ thread_local! {
 
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
 
+/// Query the default cpal input device's supported sample rates without opening the mic.
+/// Updates `state.mic_supported_rates` with the result.
+pub async fn query_cpal_supported_rates(state: &AppState) {
+    if !state.is_tauri {
+        return;
+    }
+    let result = match tauri_invoke_no_args("mic_list_devices").await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    // Result is Vec<DeviceInfo>; find the default device's rates
+    let devices = js_sys::Array::from(&result);
+    for i in 0..devices.length() {
+        let dev = devices.get(i);
+        let is_default = js_sys::Reflect::get(&dev, &JsValue::from_str("is_default"))
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !is_default {
+            continue;
+        }
+        // Parse sample_rate_ranges to collect supported rates
+        let ranges = match js_sys::Reflect::get(&dev, &JsValue::from_str("sample_rate_ranges")).ok() {
+            Some(v) => js_sys::Array::from(&v),
+            None => continue,
+        };
+        let mut rates = std::collections::BTreeSet::new();
+        for j in 0..ranges.length() {
+            let range = ranges.get(j);
+            let min = js_sys::Reflect::get(&range, &JsValue::from_str("min"))
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
+            let max = js_sys::Reflect::get(&range, &JsValue::from_str("max"))
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
+            rates.insert(min);
+            rates.insert(max);
+            for &r in &[44100, 48000, 96000, 192000, 256000, 384000, 500000] {
+                if r >= min && r <= max {
+                    rates.insert(r);
+                }
+            }
+        }
+        let rates_vec: Vec<u32> = rates.into_iter().collect();
+        if !rates_vec.is_empty() {
+            state.mic_supported_rates.set(rates_vec);
+        }
+        break;
+    }
+}
+
 /// Subscribe to a Tauri event, storing the closure in thread-local state.
 fn tauri_listen(event_name: &str, callback: Closure<dyn FnMut(JsValue)>) -> Option<()> {
     let tauri = get_tauri_internals()?;
@@ -331,6 +380,24 @@ async fn ensure_mic_open_tauri(state: &AppState) -> bool {
         .ok()
         .and_then(|v| v.as_string())
         .unwrap_or_else(|| "Unknown".into());
+
+    // Parse supported_sample_rates from MicInfo response
+    let supported_rates: Vec<u32> = js_sys::Reflect::get(&result, &JsValue::from_str("supported_sample_rates"))
+        .ok()
+        .and_then(|v| {
+            let arr = js_sys::Array::from(&v);
+            let mut rates = Vec::new();
+            for i in 0..arr.length() {
+                if let Some(r) = arr.get(i).as_f64() {
+                    rates.push(r as u32);
+                }
+            }
+            if rates.is_empty() { None } else { Some(rates) }
+        })
+        .unwrap_or_default();
+    if !supported_rates.is_empty() {
+        state.mic_supported_rates.set(supported_rates);
+    }
 
     state.mic_sample_rate.set(sample_rate);
     state.mic_bits_per_sample.set(bits_per_sample);
