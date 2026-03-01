@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
-use crate::state::{AppState, LoadedFile};
+use crate::state::{AppState, LoadedFile, MicMode};
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial};
 use crate::dsp::heterodyne::RealtimeHet;
@@ -33,6 +33,13 @@ thread_local! {
     static TAURI_EVENT_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
     /// Unlisten function returned by Tauri event subscription
     static TAURI_UNLISTEN: RefCell<Option<js_sys::Function>> = RefCell::new(None);
+}
+
+// ── Thread-local state: Raw USB mode ─────────────────────────────────
+
+thread_local! {
+    /// Whether the USB stream is currently open
+    static USB_MIC_OPEN: RefCell<bool> = RefCell::new(false);
 }
 
 // ── Tauri IPC helpers ───────────────────────────────────────────────────
@@ -611,19 +618,332 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }
 
-// ── Public API (routes by is_tauri) ─────────────────────────────────────
+// ── Raw USB mode ────────────────────────────────────────────────────────
+
+fn usb_mic_is_open() -> bool {
+    USB_MIC_OPEN.with(|o| *o.borrow())
+}
+
+/// Open the USB mic: enumerate devices, request permission, open device, start stream.
+async fn ensure_mic_open_usb(state: &AppState) -> bool {
+    if usb_mic_is_open() {
+        return true;
+    }
+
+    // Step 1: List USB devices via Kotlin plugin
+    let devices_result = tauri_invoke("plugin:usb-audio|listUsbDevices",
+        &js_sys::Object::new().into()).await;
+    let devices = match devices_result {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("USB device listing failed: {}", e);
+            state.status_message.set(Some(format!("USB: {}", e)));
+            return false;
+        }
+    };
+
+    // Find first audio device
+    let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
+        .ok()
+        .map(|v| js_sys::Array::from(&v))
+        .unwrap_or_else(|| js_sys::Array::new());
+
+    let mut audio_device_name: Option<String> = None;
+    let mut has_permission = false;
+    for i in 0..devices_arr.length() {
+        let dev = devices_arr.get(i);
+        let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
+            .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_audio {
+            audio_device_name = js_sys::Reflect::get(&dev, &JsValue::from_str("deviceName"))
+                .ok().and_then(|v| v.as_string());
+            has_permission = js_sys::Reflect::get(&dev, &JsValue::from_str("hasPermission"))
+                .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+            break;
+        }
+    }
+
+    let device_name = match audio_device_name {
+        Some(n) => n,
+        None => {
+            state.status_message.set(Some("No USB audio device found".into()));
+            return false;
+        }
+    };
+
+    // Step 2: Request permission if needed
+    if !has_permission {
+        let perm_args = js_sys::Object::new();
+        js_sys::Reflect::set(&perm_args, &JsValue::from_str("deviceName"),
+            &JsValue::from_str(&device_name)).ok();
+        match tauri_invoke("plugin:usb-audio|requestUsbPermission", &perm_args.into()).await {
+            Ok(result) => {
+                let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+                if !granted {
+                    state.status_message.set(Some("USB permission denied".into()));
+                    return false;
+                }
+            }
+            Err(e) => {
+                state.status_message.set(Some(format!("USB permission error: {}", e)));
+                return false;
+            }
+        }
+    }
+
+    // Step 3: Open device via Kotlin plugin (returns fd + endpoint info)
+    let max_sr = state.mic_max_sample_rate.get_untracked();
+    let open_args = js_sys::Object::new();
+    js_sys::Reflect::set(&open_args, &JsValue::from_str("deviceName"),
+        &JsValue::from_str(&device_name)).ok();
+    js_sys::Reflect::set(&open_args, &JsValue::from_str("sampleRate"),
+        &JsValue::from_f64(max_sr as f64)).ok();
+
+    let device_info = match tauri_invoke("plugin:usb-audio|openUsbDevice", &open_args.into()).await {
+        Ok(v) => v,
+        Err(e) => {
+            state.status_message.set(Some(format!("USB open failed: {}", e)));
+            return false;
+        }
+    };
+
+    // Parse the response
+    let fd = js_sys::Reflect::get(&device_info, &JsValue::from_str("fd"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(-1.0) as i64;
+    let endpoint_address = js_sys::Reflect::get(&device_info, &JsValue::from_str("endpointAddress"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
+    let max_packet_size = js_sys::Reflect::get(&device_info, &JsValue::from_str("maxPacketSize"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
+    let sample_rate = js_sys::Reflect::get(&device_info, &JsValue::from_str("sampleRate"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(384000.0) as u32;
+    let num_channels = js_sys::Reflect::get(&device_info, &JsValue::from_str("numChannels"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(1.0) as u32;
+    let product_name = js_sys::Reflect::get(&device_info, &JsValue::from_str("productName"))
+        .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
+
+    if fd < 0 || endpoint_address == 0 || max_packet_size == 0 {
+        state.status_message.set(Some("USB device: invalid fd or endpoint".into()));
+        return false;
+    }
+
+    // Step 4: Start USB stream in Rust backend
+    let stream_args = js_sys::Object::new();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("fd"),
+        &JsValue::from_f64(fd as f64)).ok();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("endpointAddress"),
+        &JsValue::from_f64(endpoint_address as f64)).ok();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("maxPacketSize"),
+        &JsValue::from_f64(max_packet_size as f64)).ok();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("sampleRate"),
+        &JsValue::from_f64(sample_rate as f64)).ok();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("numChannels"),
+        &JsValue::from_f64(num_channels as f64)).ok();
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("deviceName"),
+        &JsValue::from_str(&device_name)).ok();
+
+    match tauri_invoke("usb_start_stream", &stream_args.into()).await {
+        Ok(_) => {}
+        Err(e) => {
+            state.status_message.set(Some(format!("USB stream failed: {}", e)));
+            // Close the Kotlin connection on failure
+            let _ = tauri_invoke("plugin:usb-audio|closeUsbDevice",
+                &js_sys::Object::new().into()).await;
+            return false;
+        }
+    }
+
+    state.mic_sample_rate.set(sample_rate);
+    state.mic_bits_per_sample.set(16);
+
+    // Setup HET playback AudioContext (same as cpal mode)
+    let het_ctx = match AudioContext::new() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to create HET AudioContext: {:?}", e);
+            state.status_message.set(Some("Failed to initialize audio output".into()));
+            return false;
+        }
+    };
+    if let Ok(promise) = het_ctx.resume() {
+        let _ = JsFuture::from(promise).await;
+    }
+    HET_CTX.with(|c| *c.borrow_mut() = Some(het_ctx));
+    HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
+    RT_HET.with(|h| h.borrow_mut().reset());
+
+    // Setup event listener for audio chunks (same event as cpal mode)
+    let state_cb = *state;
+    let chunk_handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+        let payload = match js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        let array = js_sys::Array::from(&payload);
+        let len = array.length() as usize;
+        if len == 0 {
+            return;
+        }
+
+        let input_data: Vec<f32> = (0..len)
+            .map(|i| array.get(i as u32).as_f64().unwrap_or(0.0) as f32)
+            .collect();
+
+        if state_cb.mic_recording.get_untracked() {
+            state_cb.mic_samples_recorded.update(|n| *n += len);
+        }
+
+        if state_cb.mic_listening.get_untracked() {
+            let sr = state_cb.mic_sample_rate.get_untracked();
+            let het_freq = state_cb.het_frequency.get_untracked();
+            let het_cutoff = state_cb.het_cutoff.get_untracked();
+            let mut out_data = vec![0.0f32; len];
+            RT_HET.with(|h| {
+                h.borrow_mut().process(&input_data, &mut out_data, sr, het_freq, het_cutoff);
+            });
+
+            HET_CTX.with(|ctx_cell| {
+                let ctx_ref = ctx_cell.borrow();
+                let Some(ctx) = ctx_ref.as_ref() else { return };
+                let Ok(buffer) = ctx.create_buffer(1, len as u32, sr as f32) else { return };
+                let _ = buffer.copy_to_channel(&out_data, 0);
+                let Ok(source) = ctx.create_buffer_source() else { return };
+                source.set_buffer(Some(&buffer));
+                let _ = source.connect_with_audio_node(&ctx.destination());
+
+                let current_time = ctx.current_time();
+                let next_time = HET_NEXT_TIME.with(|t| *t.borrow());
+                let start = if next_time > current_time { next_time } else { current_time };
+                let _ = source.start_with_when(start);
+
+                let duration = len as f64 / sr as f64;
+                HET_NEXT_TIME.with(|t| *t.borrow_mut() = start + duration);
+            });
+        }
+    });
+
+    tauri_listen("mic-audio-chunk", chunk_handler);
+
+    USB_MIC_OPEN.with(|o| *o.borrow_mut() = true);
+    log::info!("USB mic opened: {} at {} Hz", product_name, sample_rate);
+    true
+}
+
+async fn close_mic_usb(state: &AppState) {
+    // Stop USB stream in Rust backend
+    if let Err(e) = tauri_invoke_no_args("usb_stop_stream").await {
+        log::error!("usb_stop_stream failed: {}", e);
+    }
+
+    // Close USB device in Kotlin
+    let _ = tauri_invoke("plugin:usb-audio|closeUsbDevice",
+        &js_sys::Object::new().into()).await;
+
+    // Clean up event listener
+    TAURI_EVENT_CLOSURE.with(|c| { c.borrow_mut().take(); });
+    TAURI_UNLISTEN.with(|u| { u.borrow_mut().take(); });
+
+    // Close HET playback context
+    HET_CTX.with(|c| {
+        if let Some(ctx) = c.borrow_mut().take() {
+            let _ = ctx.close();
+        }
+    });
+
+    RT_HET.with(|h| h.borrow_mut().reset());
+    USB_MIC_OPEN.with(|o| *o.borrow_mut() = false);
+
+    state.mic_sample_rate.set(0);
+    state.mic_samples_recorded.set(0);
+    state.mic_bits_per_sample.set(16);
+    log::info!("USB mic closed");
+}
+
+async fn maybe_close_mic_usb(state: &AppState) {
+    if !state.mic_listening.get_untracked() && !state.mic_recording.get_untracked() {
+        close_mic_usb(state).await;
+    }
+}
+
+async fn toggle_listen_usb(state: &AppState) {
+    if state.mic_listening.get_untracked() {
+        state.mic_listening.set(false);
+        maybe_close_mic_usb(state).await;
+    } else {
+        if ensure_mic_open_usb(state).await {
+            state.mic_listening.set(true);
+        }
+    }
+}
+
+async fn toggle_record_usb(state: &AppState) {
+    if state.mic_recording.get_untracked() {
+        // Stop recording
+        state.mic_recording.set(false);
+        state.mic_samples_recorded.set(0);
+
+        match tauri_invoke_no_args("usb_stop_recording").await {
+            Ok(result) => {
+                finalize_recording_tauri(result, *state);
+            }
+            Err(e) => {
+                log::error!("usb_stop_recording failed: {}", e);
+                state.status_message.set(Some(format!("Recording failed: {}", e)));
+            }
+        }
+
+        maybe_close_mic_usb(state).await;
+    } else {
+        // Start recording
+        if ensure_mic_open_usb(state).await {
+            match tauri_invoke_no_args("usb_start_recording").await {
+                Ok(_) => {
+                    state.mic_samples_recorded.set(0);
+                    state.mic_recording.set(true);
+                    log::info!("USB recording started");
+                }
+                Err(e) => {
+                    log::error!("usb_start_recording failed: {}", e);
+                    state.status_message.set(Some(format!("Failed to start recording: {}", e)));
+                }
+            }
+        }
+    }
+}
+
+async fn stop_all_usb(state: &AppState) {
+    if state.mic_recording.get_untracked() {
+        state.mic_recording.set(false);
+        match tauri_invoke_no_args("usb_stop_recording").await {
+            Ok(result) => {
+                finalize_recording_tauri(result, *state);
+            }
+            Err(e) => {
+                log::error!("usb_stop_recording failed: {}", e);
+            }
+        }
+    }
+    state.mic_listening.set(false);
+    close_mic_usb(state).await;
+}
+
+// ── Public API (routes by mic_mode) ─────────────────────────────────────
 
 /// Toggle live HET listening on/off.
 pub async fn toggle_listen(state: &AppState) {
-    if state.is_tauri {
-        toggle_listen_tauri(state).await;
-    } else {
-        if state.mic_listening.get_untracked() {
-            state.mic_listening.set(false);
-            maybe_close_mic_web(state);
-        } else {
-            if ensure_mic_open_web(state).await {
-                state.mic_listening.set(true);
+    match state.mic_mode.get_untracked() {
+        MicMode::RawUsb if state.is_tauri => toggle_listen_usb(state).await,
+        MicMode::Cpal if state.is_tauri => toggle_listen_tauri(state).await,
+        _ => {
+            // Browser mode or non-Tauri fallback
+            if state.mic_listening.get_untracked() {
+                state.mic_listening.set(false);
+                maybe_close_mic_web(state);
+            } else {
+                if ensure_mic_open_web(state).await {
+                    state.mic_listening.set(true);
+                }
             }
         }
     }
@@ -631,20 +951,23 @@ pub async fn toggle_listen(state: &AppState) {
 
 /// Toggle recording on/off. When stopping, finalizes the recording.
 pub async fn toggle_record(state: &AppState) {
-    if state.is_tauri {
-        toggle_record_tauri(state).await;
-    } else {
-        if state.mic_recording.get_untracked() {
-            if let Some((samples, sr)) = stop_recording_web(state) {
-                finalize_recording(samples, sr, *state);
-            }
-            maybe_close_mic_web(state);
-        } else {
-            if ensure_mic_open_web(state).await {
-                MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
-                state.mic_samples_recorded.set(0);
-                state.mic_recording.set(true);
-                log::info!("Recording started");
+    match state.mic_mode.get_untracked() {
+        MicMode::RawUsb if state.is_tauri => toggle_record_usb(state).await,
+        MicMode::Cpal if state.is_tauri => toggle_record_tauri(state).await,
+        _ => {
+            // Browser mode or non-Tauri fallback
+            if state.mic_recording.get_untracked() {
+                if let Some((samples, sr)) = stop_recording_web(state) {
+                    finalize_recording(samples, sr, *state);
+                }
+                maybe_close_mic_web(state);
+            } else {
+                if ensure_mic_open_web(state).await {
+                    MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
+                    state.mic_samples_recorded.set(0);
+                    state.mic_recording.set(true);
+                    log::info!("Recording started");
+                }
             }
         }
     }
@@ -652,20 +975,32 @@ pub async fn toggle_record(state: &AppState) {
 
 /// Stop both listening and recording, close mic.
 pub fn stop_all(state: &AppState) {
-    if state.is_tauri {
-        let state = *state;
-        wasm_bindgen_futures::spawn_local(async move {
-            stop_all_tauri(&state).await;
-        });
-    } else {
-        if state.mic_recording.get_untracked() {
-            if let Some((samples, sr)) = stop_recording_web(state) {
-                finalize_recording(samples, sr, *state);
-            }
+    let mode = state.mic_mode.get_untracked();
+    let is_tauri = state.is_tauri;
+
+    match mode {
+        MicMode::RawUsb if is_tauri => {
+            let state = *state;
+            wasm_bindgen_futures::spawn_local(async move {
+                stop_all_usb(&state).await;
+            });
         }
-        state.mic_listening.set(false);
-        state.mic_recording.set(false);
-        close_mic_web(state);
+        MicMode::Cpal if is_tauri => {
+            let state = *state;
+            wasm_bindgen_futures::spawn_local(async move {
+                stop_all_tauri(&state).await;
+            });
+        }
+        _ => {
+            if state.mic_recording.get_untracked() {
+                if let Some((samples, sr)) = stop_recording_web(state) {
+                    finalize_recording(samples, sr, *state);
+                }
+            }
+            state.mic_listening.set(false);
+            state.mic_recording.set(false);
+            close_mic_web(state);
+        }
     }
 }
 

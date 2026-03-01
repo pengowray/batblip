@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, ChromaColormap, ColormapPreference};
+use crate::state::{AppState, ChromaColormap, ColormapPreference, MicMode};
 
 fn parse_colormap_pref(s: &str) -> ColormapPreference {
     match s {
@@ -49,6 +49,17 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     };
 
+    let on_mic_mode_change = move |ev: web_sys::Event| {
+        let target = ev.target().unwrap();
+        let select: web_sys::HtmlSelectElement = target.unchecked_into();
+        let mode = match select.value().as_str() {
+            "cpal" => MicMode::Cpal,
+            "raw_usb" => MicMode::RawUsb,
+            _ => MicMode::Browser,
+        };
+        state.mic_mode.set(mode);
+    };
+
     let on_max_sr_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
@@ -56,10 +67,38 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         state.mic_max_sample_rate.set(val);
     };
 
+    let is_tauri = state.is_tauri;
+
+    // Max rate ceiling depends on mic mode
+    let sr_cap = move || match state.mic_mode.get() {
+        MicMode::Browser => 96_000u32,
+        MicMode::Cpal => 192_000,
+        MicMode::RawUsb => 500_000,
+    };
+
     view! {
         <div class="sidebar-panel">
             <div class="setting-group">
                 <div class="setting-group-title">"Recording"</div>
+                <div class="setting-row">
+                    <span class="setting-label">"Mic mode"</span>
+                    <select
+                        class="setting-select"
+                        on:change=on_mic_mode_change
+                    >
+                        <option value="browser"
+                            selected=move || state.mic_mode.get() == MicMode::Browser
+                        >"Browser"</option>
+                        <option value="cpal"
+                            selected=move || state.mic_mode.get() == MicMode::Cpal
+                            disabled=move || !is_tauri
+                        >"cpal"</option>
+                        <option value="raw_usb"
+                            selected=move || state.mic_mode.get() == MicMode::RawUsb
+                            disabled=move || !is_tauri
+                        >{move || if is_tauri { "Raw USB (Recommended)" } else { "Raw USB" }}</option>
+                    </select>
+                </div>
                 <div class="setting-row">
                     <span class="setting-label">"Max sample rate"</span>
                     <select
@@ -69,11 +108,21 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         <option value="0" selected=move || state.mic_max_sample_rate.get() == 0>"Auto"</option>
                         <option value="44100" selected=move || state.mic_max_sample_rate.get() == 44100>"44.1 kHz"</option>
                         <option value="48000" selected=move || state.mic_max_sample_rate.get() == 48000>"48 kHz"</option>
-                        <option value="96000" selected=move || state.mic_max_sample_rate.get() == 96000>"96 kHz"</option>
-                        <option value="192000" selected=move || state.mic_max_sample_rate.get() == 192000>"192 kHz"</option>
-                        <option value="256000" selected=move || state.mic_max_sample_rate.get() == 256000>"256 kHz"</option>
-                        <option value="384000" selected=move || state.mic_max_sample_rate.get() == 384000>"384 kHz"</option>
-                        <option value="500000" selected=move || state.mic_max_sample_rate.get() == 500000>"500 kHz"</option>
+                        <option value="96000" selected=move || state.mic_max_sample_rate.get() == 96000
+                            disabled=move || sr_cap() < 96_000
+                        >"96 kHz"</option>
+                        <option value="192000" selected=move || state.mic_max_sample_rate.get() == 192000
+                            disabled=move || sr_cap() < 192_000
+                        >"192 kHz"</option>
+                        <option value="256000" selected=move || state.mic_max_sample_rate.get() == 256000
+                            disabled=move || sr_cap() < 256_000
+                        >"256 kHz"</option>
+                        <option value="384000" selected=move || state.mic_max_sample_rate.get() == 384000
+                            disabled=move || sr_cap() < 384_000
+                        >"384 kHz"</option>
+                        <option value="500000" selected=move || state.mic_max_sample_rate.get() == 500000
+                            disabled=move || sr_cap() < 500_000
+                        >"500 kHz"</option>
                     </select>
                 </div>
             </div>

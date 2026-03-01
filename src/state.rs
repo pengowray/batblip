@@ -260,6 +260,13 @@ pub enum StatusLevel {
     Info,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MicMode {
+    Browser,
+    Cpal,
+    RawUsb,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -377,6 +384,7 @@ pub struct AppState {
     pub mic_samples_recorded: RwSignal<usize>,
     pub mic_bits_per_sample: RwSignal<u16>,
     pub mic_max_sample_rate: RwSignal<u32>, // 0 = auto (device default)
+    pub mic_mode: RwSignal<MicMode>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -540,6 +548,7 @@ impl AppState {
             mic_samples_recorded: RwSignal::new(0),
             mic_bits_per_sample: RwSignal::new(16),
             mic_max_sample_rate: RwSignal::new(0),
+            mic_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
             is_mobile: RwSignal::new(detect_mobile()),

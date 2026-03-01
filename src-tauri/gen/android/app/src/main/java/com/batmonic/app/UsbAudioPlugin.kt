@@ -43,13 +43,20 @@ private const val DESC_TYPE_CS_ENDPOINT = 0x25
 
 // Control transfer constants
 private const val DEVICE_TO_HOST_CLASS_INTERFACE = 0xA1
+private const val HOST_TO_DEVICE_CLASS_INTERFACE = 0x21
+private const val HOST_TO_DEVICE_CLASS_ENDPOINT = 0x22
 private const val GET_CUR = 0x01
+private const val SET_CUR = 0x01
+private const val USB_DIR_OUT_STANDARD_INTERFACE = 0x01
+private const val USB_REQUEST_SET_INTERFACE = 11
 
 @TauriPlugin
 class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
     private var pendingPermissionInvoke: Invoke? = null
     private var pendingPermissionDevice: UsbDevice? = null
+    private var activeConnection: UsbDeviceConnection? = null
+    private var activeDevice: UsbDevice? = null
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -252,6 +259,218 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /**
+     * Open a USB audio device for isochronous streaming.
+     * Claims the audio interface, sets the alternate setting,
+     * configures the sample rate, and returns the fd + endpoint info.
+     * The connection is kept open until closeUsbDevice is called.
+     */
+    @Command
+    fun openUsbDevice(invoke: Invoke) {
+        val args = invoke.parseArgs(OpenUsbDeviceArgs::class.java)
+        val usbManager = activity.getSystemService(Context.USB_SERVICE) as UsbManager
+        val device = usbManager.deviceList[args.deviceName]
+
+        if (device == null) {
+            invoke.reject("Device not found: ${args.deviceName}")
+            return
+        }
+
+        if (!usbManager.hasPermission(device)) {
+            invoke.reject("No permission for device: ${args.deviceName}")
+            return
+        }
+
+        // Close any previous connection
+        activeConnection?.close()
+        activeConnection = null
+        activeDevice = null
+
+        val connection = usbManager.openDevice(device)
+        if (connection == null) {
+            invoke.reject("Failed to open device: ${args.deviceName}")
+            return
+        }
+
+        try {
+            // Claim all audio interfaces
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                if (iface.interfaceClass == USB_CLASS_AUDIO) {
+                    connection.claimInterface(iface, true)
+                }
+            }
+
+            // Parse descriptors to find the best endpoint
+            val rawDescriptors = connection.rawDescriptors
+            val audioInfo = parseAudioDescriptors(rawDescriptors, connection)
+
+            if (audioInfo.endpoints.isEmpty()) {
+                connection.close()
+                invoke.reject("No audio input endpoints found")
+                return
+            }
+
+            // Select the best endpoint for the requested sample rate
+            val desiredRate = if (args.sampleRate > 0) args.sampleRate else 384000
+            val endpoint = audioInfo.endpoints
+                .filter { it.address and 0x80 != 0 } // input endpoints only
+                .maxByOrNull { it.sampleRate }
+                ?: audioInfo.endpoints.first()
+
+            Log.i(TAG, "Selected endpoint: addr=0x${endpoint.address.toString(16)} " +
+                    "maxPkt=${endpoint.maxPacketSize} rate=${endpoint.sampleRate} " +
+                    "ch=${endpoint.channels} bits=${endpoint.bitResolution} " +
+                    "iface=${endpoint.interfaceNumber} alt=${endpoint.alternateSetting}")
+
+            // Set alternate interface setting via USB control transfer
+            if (endpoint.alternateSetting > 0) {
+                val setAltResult = connection.controlTransfer(
+                    USB_DIR_OUT_STANDARD_INTERFACE,  // 0x01
+                    USB_REQUEST_SET_INTERFACE,        // 11 (SET_INTERFACE)
+                    endpoint.alternateSetting,        // wValue = alternate setting
+                    endpoint.interfaceNumber,         // wIndex = interface number
+                    null, 0, 1000
+                )
+                Log.d(TAG, "SET_INTERFACE alt=${endpoint.alternateSetting} " +
+                        "iface=${endpoint.interfaceNumber} result=$setAltResult")
+            }
+
+            // Set sample rate via control transfer
+            val actualRate = if (desiredRate > 0 && endpoint.sampleRateSettable) {
+                setSampleRate(connection, audioInfo.uacVersion, endpoint, desiredRate)
+            } else {
+                endpoint.sampleRate
+            }
+
+            // Keep connection open for streaming
+            activeConnection = connection
+            activeDevice = device
+
+            val result = JSObject()
+            result.put("fd", connection.fileDescriptor)
+            result.put("endpointAddress", endpoint.address and 0x7F) // strip direction bit
+            result.put("maxPacketSize", endpoint.maxPacketSize)
+            result.put("sampleRate", actualRate)
+            result.put("numChannels", endpoint.channels)
+            result.put("bitResolution", endpoint.bitResolution)
+            result.put("deviceName", device.deviceName)
+            result.put("productName", device.productName ?: "Unknown")
+            result.put("uacVersion", audioInfo.uacVersion)
+            invoke.resolve(result)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening USB device", e)
+            connection.close()
+            invoke.reject("Error opening USB device: ${e.message}")
+        }
+    }
+
+    /**
+     * Close the active USB device connection.
+     */
+    @Command
+    fun closeUsbDevice(invoke: Invoke) {
+        try {
+            activeDevice?.let { device ->
+                activeConnection?.let { conn ->
+                    for (i in 0 until device.interfaceCount) {
+                        val iface = device.getInterface(i)
+                        if (iface.interfaceClass == USB_CLASS_AUDIO) {
+                            conn.releaseInterface(iface)
+                        }
+                    }
+                    conn.close()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing USB device: ${e.message}")
+        }
+        activeConnection = null
+        activeDevice = null
+        invoke.resolve(JSObject())
+    }
+
+    /**
+     * Set the sample rate on a USB audio device.
+     * UAC1: SET_CUR to endpoint with 3-byte LE rate.
+     * UAC2: SET_CUR to clock source with 4-byte LE rate.
+     */
+    private fun setSampleRate(
+        connection: UsbDeviceConnection,
+        uacVersion: Int,
+        endpoint: AudioEndpointInfo,
+        desiredRate: Int
+    ): Int {
+        if (uacVersion == 2) {
+            // UAC2: SET_CUR to clock source
+            // We need the clock ID — try to read it again from descriptors
+            val rawDesc = connection.rawDescriptors
+            val clockId = findUac2ClockId(rawDesc)
+            if (clockId >= 0) {
+                val buffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                buffer.putInt(desiredRate)
+                val data = buffer.array()
+                val result = connection.controlTransfer(
+                    HOST_TO_DEVICE_CLASS_INTERFACE,  // 0x21
+                    SET_CUR,                          // 0x01
+                    0x0100,                           // CS_SAM_FREQ_CONTROL << 8
+                    clockId shl 8,                    // clock ID in high byte
+                    data, data.size, 1000
+                )
+                Log.i(TAG, "UAC2 SET_CUR rate=$desiredRate clockId=$clockId result=$result")
+                if (result >= 0) {
+                    // Verify the rate was set
+                    try {
+                        val actual = getUac2SampleRate(connection, clockId)
+                        if (actual > 0) return actual
+                    } catch (_: Exception) {}
+                    return desiredRate
+                }
+            }
+        } else {
+            // UAC1: SET_CUR to endpoint
+            val data = ByteArray(3)
+            data[0] = (desiredRate and 0xFF).toByte()
+            data[1] = ((desiredRate shr 8) and 0xFF).toByte()
+            data[2] = ((desiredRate shr 16) and 0xFF).toByte()
+            val result = connection.controlTransfer(
+                HOST_TO_DEVICE_CLASS_ENDPOINT,  // 0x22
+                SET_CUR,                         // 0x01
+                0x0100,                          // SAMPLING_FREQ_CONTROL << 8
+                endpoint.address,                // endpoint address
+                data, data.size, 1000
+            )
+            Log.i(TAG, "UAC1 SET_CUR rate=$desiredRate ep=0x${endpoint.address.toString(16)} result=$result")
+            if (result >= 0) return desiredRate
+        }
+        // Fallback to the endpoint's reported rate
+        return endpoint.sampleRate
+    }
+
+    /** Find UAC2 clock source ID from raw descriptors. */
+    private fun findUac2ClockId(raw: ByteArray): Int {
+        var offset = 0
+        while (offset < raw.size) {
+            val bLength = raw[offset].toInt() and 0xFF
+            if (bLength < 2 || offset + bLength > raw.size) break
+            val bDescriptorType = raw[offset + 1].toInt() and 0xFF
+            if (bDescriptorType == DESC_TYPE_CS_INTERFACE && bLength >= 8) {
+                val bDescriptorSubtype = raw[offset + 2].toInt() and 0xFF
+                if (bDescriptorSubtype == UAC2_CLOCK_SOURCE) {
+                    val bClockId = raw[offset + 3].toInt() and 0xFF
+                    val bmAttributes = raw[offset + 4].toInt() and 0xFF
+                    val bmControls = raw[offset + 5].toInt() and 0xFF
+                    if (bmAttributes and 0x03 != 0 && bmControls and 0x01 != 0) {
+                        return bClockId
+                    }
+                }
+            }
+            offset += bLength
+        }
+        return -1
+    }
+
     // ── Raw descriptor parsing ───────────────────────────────────────────
 
     data class AudioEndpointInfo(
@@ -295,6 +514,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         var expectingEndpoint = false
         var isUac2Format = false
         var sampleRateSettable = false
+        var lastEndpointAddress = 0
+        var lastMaxPacketSize = 0
 
         var offset = 0
         while (offset < raw.size) {
@@ -462,8 +683,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
                         if (isInput && isIsochronous) {
                             Log.d(TAG, "Audio endpoint: addr=0x${bEndpointAddress.toString(16)} maxPkt=$wMaxPacketSize")
+                            lastEndpointAddress = bEndpointAddress
+                            lastMaxPacketSize = wMaxPacketSize
                             expectingEndpoint = false
-                            // We'll finalize this endpoint when we see the CS_ENDPOINT
                         }
                     }
                 }
@@ -477,8 +699,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                         // This completes an endpoint discovery — record it
                         if (currentSampleRate > 0) {
                             endpoints.add(AudioEndpointInfo(
-                                address = 0,  // would need to track from endpoint descriptor
-                                maxPacketSize = 0,
+                                address = lastEndpointAddress,
+                                maxPacketSize = lastMaxPacketSize,
                                 channels = currentChannels,
                                 bitResolution = currentBitResolution,
                                 sampleRate = currentSampleRate,
@@ -551,3 +773,6 @@ data class RequestPermissionArgs(val deviceName: String = "")
 
 @InvokeArg
 data class DeviceNameArgs(val deviceName: String = "")
+
+@InvokeArg
+data class OpenUsbDeviceArgs(val deviceName: String = "", val sampleRate: Int = 0)

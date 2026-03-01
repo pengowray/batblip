@@ -1,17 +1,20 @@
 mod audio_decode;
 mod native_playback;
 mod recording;
+mod usb_audio;
 mod xc;
 
 use audio_decode::{AudioFileInfo, FullDecodeResult};
 use native_playback::{NativePlayParams, PlaybackState, PlaybackStatus};
 use recording::{DeviceInfo, MicInfo, MicState, MicStatus, RecordingResult};
+use usb_audio::{UsbStreamInfo, UsbStreamState, UsbStreamStatus};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tauri::Manager;
 
 type MicMutex = Mutex<Option<MicState>>;
 type PlaybackMutex = Mutex<Option<PlaybackState>>;
+type UsbStreamMutex = Mutex<Option<UsbStreamState>>;
 
 #[tauri::command]
 fn save_recording(
@@ -278,6 +281,133 @@ fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+// ── USB audio streaming commands ────────────────────────────────────
+
+#[tauri::command]
+fn usb_start_stream(
+    app: tauri::AppHandle,
+    state: tauri::State<UsbStreamMutex>,
+    fd: i32,
+    endpoint_address: u32,
+    max_packet_size: u32,
+    sample_rate: u32,
+    num_channels: u32,
+    device_name: String,
+) -> Result<UsbStreamInfo, String> {
+    let usb = state.lock().map_err(|e| e.to_string())?;
+    // Stop existing stream if any
+    if let Some(existing) = usb.as_ref() {
+        usb_audio::stop_usb_stream(existing);
+    }
+    drop(usb);
+
+    let stream_state = usb_audio::start_usb_stream(
+        fd,
+        endpoint_address,
+        max_packet_size,
+        sample_rate,
+        num_channels,
+        device_name.clone(),
+        app,
+    )?;
+
+    let info = UsbStreamInfo {
+        sample_rate,
+        device_name,
+    };
+
+    let mut usb = state.lock().map_err(|e| e.to_string())?;
+    *usb = Some(stream_state);
+    Ok(info)
+}
+
+#[tauri::command]
+fn usb_stop_stream(state: tauri::State<UsbStreamMutex>) -> Result<(), String> {
+    {
+        let usb = state.lock().map_err(|e| e.to_string())?;
+        if let Some(s) = usb.as_ref() {
+            usb_audio::stop_usb_stream(s);
+        }
+    }
+    // Give the streaming thread a moment to wind down
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let mut usb = state.lock().map_err(|e| e.to_string())?;
+    *usb = None;
+    Ok(())
+}
+
+#[tauri::command]
+fn usb_start_recording(state: tauri::State<UsbStreamMutex>) -> Result<(), String> {
+    let usb = state.lock().map_err(|e| e.to_string())?;
+    let s = usb.as_ref().ok_or("USB stream not open")?;
+    usb_audio::clear_usb_buffer(s);
+    s.is_recording.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+fn usb_stop_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<UsbStreamMutex>,
+) -> Result<RecordingResult, String> {
+    let usb = state.lock().map_err(|e| e.to_string())?;
+    let s = usb.as_ref().ok_or("USB stream not open")?;
+    s.is_recording.store(false, Ordering::Relaxed);
+
+    let (num_samples, sample_rate) = {
+        let buf = s.buffer.lock().unwrap();
+        (buf.total_samples, buf.sample_rate)
+    };
+
+    if num_samples == 0 {
+        return Err("No samples recorded".into());
+    }
+
+    let duration_secs = num_samples as f64 / sample_rate as f64;
+
+    let now = chrono::Local::now();
+    let filename = now.format("batcap_%Y-%m-%d_%H%M%S.wav").to_string();
+
+    let wav_data = usb_audio::encode_usb_wav(s)?;
+    let samples_f32 = usb_audio::get_usb_samples_f32(s);
+
+    // Save to disk
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("recordings");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&filename);
+    std::fs::write(&path, &wav_data).map_err(|e| e.to_string())?;
+    let saved_path = path.to_string_lossy().to_string();
+
+    Ok(RecordingResult {
+        filename,
+        saved_path,
+        sample_rate,
+        bits_per_sample: 16,
+        is_float: false,
+        duration_secs,
+        num_samples,
+        samples_f32,
+    })
+}
+
+#[tauri::command]
+fn usb_stream_status(state: tauri::State<UsbStreamMutex>) -> UsbStreamStatus {
+    let usb = state.lock().unwrap_or_else(|e| e.into_inner());
+    match usb.as_ref() {
+        Some(s) => usb_audio::get_usb_status(s),
+        None => UsbStreamStatus {
+            is_open: false,
+            is_streaming: false,
+            samples_recorded: 0,
+            sample_rate: 0,
+        },
+    }
+}
+
 // ── Native playback commands ────────────────────────────────────────
 
 #[tauri::command]
@@ -323,6 +453,7 @@ pub fn run() {
         .plugin(tauri::plugin::Builder::<_, ()>::new("usb-audio").build())
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
+        .manage(Mutex::new(None::<UsbStreamState>))
         .setup(|app| {
             let cache_root = app
                 .path()
@@ -360,6 +491,11 @@ pub fn run() {
             xc::xc_species_recordings,
             xc::xc_download,
             xc::xc_is_cached,
+            usb_start_stream,
+            usb_stop_stream,
+            usb_start_recording,
+            usb_stop_recording,
+            usb_stream_status,
             save_noise_preset,
             load_noise_preset,
             list_noise_presets,
