@@ -164,7 +164,7 @@ pub fn start_usb_stream(
     app: tauri::AppHandle,
 ) -> Result<UsbStreamState, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
-    let is_streaming = Arc::new(AtomicBool::new(true));
+    let is_streaming = Arc::new(AtomicBool::new(false));
     let is_recording = Arc::new(AtomicBool::new(false));
     let buffer = Arc::new(Mutex::new(UsbRecordingBuffer::new(sample_rate)));
 
@@ -174,6 +174,9 @@ pub fn start_usb_stream(
     let buf = buffer.clone();
     let channels = num_channels as usize;
 
+    // Channel to wait for the isochronous thread to confirm streaming has started
+    let (startup_tx, startup_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+
     std::thread::spawn(move || {
         let result = isochronous::run_isochronous_loop(
             fd,
@@ -181,8 +184,10 @@ pub fn start_usb_stream(
             max_packet_size,
             channels,
             &cancel,
+            &streaming,
             &recording,
             &buf,
+            startup_tx,
         );
 
         streaming.store(false, Ordering::Relaxed);
@@ -192,6 +197,13 @@ pub fn start_usb_stream(
             Err(e) => eprintln!("USB stream error: {}", e),
         }
     });
+
+    // Wait for the isochronous thread to confirm data is flowing
+    match startup_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(())) => { /* streaming started successfully */ }
+        Ok(Err(e)) => return Err(format!("USB stream failed to start: {}", e)),
+        Err(_) => return Err("USB stream startup timeout (5s) — device may not be sending data".into()),
+    }
 
     // Start emitter for streaming audio chunks to the frontend
     start_usb_emitter(app, buffer.clone(), cancel_flag.clone());
@@ -308,8 +320,10 @@ mod isochronous {
         max_packet_size: u32,
         num_channels: usize,
         cancel: &AtomicBool,
+        is_streaming: &AtomicBool,
         is_recording: &AtomicBool,
         buffer: &Arc<Mutex<UsbRecordingBuffer>>,
+        startup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
     ) -> Result<(), String> {
         let requested_bytes_per_frame = max_packet_size as usize;
 
@@ -361,12 +375,15 @@ mod isochronous {
             };
             if ret != 0 {
                 let err = std::io::Error::last_os_error();
-                return Err(format!("USBDEVFS_SUBMITURB failed: {}", err));
+                let msg = format!("USBDEVFS_SUBMITURB failed: {}", err);
+                let _ = startup_tx.send(Err(msg.clone()));
+                return Err(msg);
             }
         }
 
         let mut balls_in_air = URBS_TO_JUGGLE;
         let mut mono_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
+        let mut startup_signaled = false;
 
         // Main juggling loop
         while !cancel.load(Ordering::Relaxed) || balls_in_air > 0 {
@@ -382,9 +399,11 @@ mod isochronous {
                     break;
                 }
                 discard_urbs(fd, &urbs);
-                return Err(
-                    "USB stream poll timeout — device may have disconnected".to_string(),
-                );
+                let msg = "USB stream poll timeout — device may have disconnected".to_string();
+                if !startup_signaled {
+                    let _ = startup_tx.send(Err(msg.clone()));
+                }
+                return Err(msg);
             }
 
             let mut urb_reaped: *mut UsbdevfsUrb = std::ptr::null_mut();
@@ -403,6 +422,9 @@ mod isochronous {
                 }
                 if err.raw_os_error() == Some(libc::ENODEV) {
                     eprintln!("USB device disconnected");
+                    if !startup_signaled {
+                        let _ = startup_tx.send(Err("USB device disconnected".into()));
+                    }
                     break;
                 }
                 eprintln!("USBDEVFS_REAPURB error: {}", err);
@@ -450,6 +472,13 @@ mod isochronous {
                 }
 
                 if !mono_buf.is_empty() {
+                    // Signal startup success on first URB with actual audio data
+                    if !startup_signaled {
+                        is_streaming.store(true, Ordering::Relaxed);
+                        let _ = startup_tx.send(Ok(()));
+                        startup_signaled = true;
+                    }
+
                     let recording = is_recording.load(Ordering::Relaxed);
                     if let Ok(mut buf) = buffer.lock() {
                         buf.push_samples(&mono_buf, recording);

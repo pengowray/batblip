@@ -340,6 +340,9 @@ fn usb_stop_stream(state: tauri::State<UsbStreamMutex>) -> Result<(), String> {
 fn usb_start_recording(state: tauri::State<UsbStreamMutex>) -> Result<(), String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     let s = usb.as_ref().ok_or("USB stream not open")?;
+    if !s.is_streaming.load(Ordering::Relaxed) {
+        return Err("USB stream is not actively streaming — cannot start recording".into());
+    }
     usb_audio::clear_usb_buffer(s);
     s.is_recording.store(true, Ordering::Relaxed);
     Ok(())
@@ -353,6 +356,7 @@ fn usb_stop_recording(
     let usb = state.lock().map_err(|e| e.to_string())?;
     let s = usb.as_ref().ok_or("USB stream not open")?;
     s.is_recording.store(false, Ordering::Relaxed);
+    let still_streaming = s.is_streaming.load(Ordering::Relaxed);
 
     let (num_samples, sample_rate) = {
         let buf = s.buffer.lock().unwrap();
@@ -360,7 +364,10 @@ fn usb_stop_recording(
     };
 
     if num_samples == 0 {
-        return Err("No samples recorded".into());
+        if !still_streaming {
+            return Err("No samples recorded — USB stream died during recording".into());
+        }
+        return Err("No samples recorded — stream was active but buffer is empty".into());
     }
 
     let duration_secs = num_samples as f64 / sample_rate as f64;
