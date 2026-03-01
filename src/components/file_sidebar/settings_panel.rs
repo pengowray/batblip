@@ -82,6 +82,20 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                         }
                     >"Reset"</button>
                 </div>
+                <div class="setting-row">
+                    <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.debug_tiles.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.debug_tiles.set(input.checked());
+                            }
+                        />
+                        "Debug tiles"
+                    </label>
+                </div>
             </div>
 
             // Flow-specific settings (shown only when Flow view is active)

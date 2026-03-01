@@ -568,6 +568,11 @@ pub fn schedule_lod0_tile(state: AppState, file_idx: usize, tile_idx: usize) {
     });
 }
 
+/// Check if a LOD 0 tile exists in cache.
+pub fn get_lod0_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
+    LOD0_CACHE.with(|c| c.borrow().get(&(file_idx, tile_idx)).map(|_| ()))
+}
+
 /// Borrow a LOD 0 tile for rendering.
 pub fn borrow_lod0_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
     LOD0_CACHE.with(|c| {

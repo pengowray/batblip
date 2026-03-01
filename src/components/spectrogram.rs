@@ -206,6 +206,7 @@ pub fn Spectrogram() -> impl IntoView {
         let spect_range = state.spect_range_db.get();
         let spect_gamma = state.spect_gamma.get();
         let spect_gain = state.spect_gain_db.get();
+        let debug_tiles = state.debug_tiles.get();
         let _pre = pre_rendered.track();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -421,6 +422,13 @@ pub fn Spectrogram() -> impl IntoView {
             ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
             false
         };
+
+        // Tile debug overlay (drawn on top of tiles, under other overlays)
+        if debug_tiles && total_cols > 0 {
+            spectrogram_renderer::draw_tile_debug_overlay(
+                &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
+            );
+        }
 
         // Step 2: Draw overlays on top of the base spectrogram
         if base_drawn {
@@ -1278,7 +1286,7 @@ pub fn Spectrogram() -> impl IntoView {
         } else if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
             state.zoom_level.update(|z| {
-                *z = (*z * delta).max(0.1).min(100.0);
+                *z = (*z * delta).max(0.1).min(400.0);
             });
         } else {
             let delta = ev.delta_y() * 0.001;

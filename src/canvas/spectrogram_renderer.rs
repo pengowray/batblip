@@ -2125,3 +2125,80 @@ pub fn draw_notch_bands(
         let _ = ctx.set_line_dash(&js_sys::Array::new());
     }
 }
+
+/// Draw tile debug overlay: colored borders and LOD labels for each visible tile.
+///
+/// Colors: Green = LOD2, Blue = LOD1, Yellow = LOD0, Red = missing.
+pub fn draw_tile_debug_overlay(
+    ctx: &CanvasRenderingContext2d,
+    canvas: &HtmlCanvasElement,
+    file_idx: usize,
+    total_cols: usize,
+    scroll_col: f64,
+    zoom: f64,
+) {
+    use crate::canvas::tile_cache;
+
+    let cw = canvas.width() as f64;
+    let ch = canvas.height() as f64;
+    if total_cols == 0 || zoom <= 0.0 { return; }
+
+    let visible_cols = cw / zoom;
+    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let src_end = (src_start + visible_cols).min(total_cols as f64);
+
+    let first_tile = (src_start / tile_cache::TILE_COLS as f64).floor() as usize;
+    let last_tile = ((src_end - 1.0).max(0.0) / tile_cache::TILE_COLS as f64).floor() as usize;
+    let n_tiles = (total_cols + tile_cache::TILE_COLS - 1) / tile_cache::TILE_COLS;
+
+    ctx.save();
+    ctx.set_line_width(1.0);
+    ctx.set_font("11px monospace");
+    ctx.set_text_baseline("top");
+
+    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
+        let tile_col_start = tile_idx * tile_cache::TILE_COLS;
+
+        // Determine which LOD is active for this tile
+        let (lod_label, color) = if tile_cache::get_lod2_tile(file_idx, tile_idx).is_some() {
+            ("L2", "#0f0") // green
+        } else if tile_cache::get_tile(file_idx, tile_idx).is_some() {
+            ("L1", "#48f") // blue
+        } else if tile_cache::get_lod0_tile(file_idx, tile_idx).is_some() {
+            ("L0", "#ff0") // yellow
+        } else {
+            ("--", "#f44") // red = missing
+        };
+
+        // Tile destination rectangle on canvas
+        let tile_x_start = ((tile_col_start as f64) - src_start) * zoom;
+        let tile_x_end = ((tile_col_start + tile_cache::TILE_COLS) as f64 - src_start) * zoom;
+        let dx = tile_x_start.max(0.0);
+        let dw = (tile_x_end.min(cw) - dx).max(0.0);
+        if dw <= 0.0 { continue; }
+
+        // Draw border
+        ctx.set_stroke_style_str(color);
+        ctx.stroke_rect(dx + 0.5, 0.5, dw - 1.0, ch - 1.0);
+
+        // Draw label background
+        let label = format!("T{tile_idx} {lod_label}");
+        let label_x = dx + 3.0;
+        let label_y = 3.0;
+        ctx.set_fill_style_str("rgba(0,0,0,0.6)");
+        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 60.0, 14.0);
+
+        // Draw label text
+        ctx.set_fill_style_str(color);
+        let _ = ctx.fill_text(&label, label_x, label_y);
+    }
+
+    // Draw zoom level in top-right corner
+    let zoom_label = format!("z={zoom:.1}");
+    ctx.set_fill_style_str("rgba(0,0,0,0.6)");
+    ctx.fill_rect(cw - 70.0, 3.0, 67.0, 14.0);
+    ctx.set_fill_style_str("#fff");
+    let _ = ctx.fill_text(&zoom_label, cw - 68.0, 4.0);
+
+    ctx.restore();
+}

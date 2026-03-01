@@ -360,6 +360,8 @@ pub struct AppState {
     pub spect_gamma: RwSignal<f32>,
     /// Additive dB gain offset (default 0.0).
     pub spect_gain_db: RwSignal<f32>,
+    /// Show tile debug overlay (borders, LOD labels) on the spectrogram canvas.
+    pub debug_tiles: RwSignal<bool>,
 
     // Which floating layer panel is currently open
     pub layer_panel_open: RwSignal<Option<LayerPanel>>,
@@ -547,6 +549,7 @@ impl AppState {
             spect_range_db: RwSignal::new(80.0),
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
+            debug_tiles: RwSignal::new(false),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),
