@@ -33,10 +33,11 @@ pub enum PlaybackMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum SpectrogramDisplay {
-    FlowCentroid,
-    FlowGradient,
     #[default]
     FlowOptical,
+    PhaseCoherence,
+    FlowCentroid,
+    FlowGradient,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -143,7 +144,6 @@ pub enum MainView {
     ZcChart,
     Flow,
     Chromagram,
-    PhaseCoherence,
 }
 
 impl MainView {
@@ -154,7 +154,6 @@ impl MainView {
             Self::ZcChart => "ZC Chart",
             Self::Flow => "Flow",
             Self::Chromagram => "Chromagram",
-            Self::PhaseCoherence => "Phase Coherence",
         }
     }
 
@@ -165,7 +164,6 @@ impl MainView {
             Self::ZcChart => "ZC",
             Self::Flow => "Flow",
             Self::Chromagram => "Chroma",
-            Self::PhaseCoherence => "Phase",
         }
     }
 
@@ -175,7 +173,6 @@ impl MainView {
         Self::ZcChart,
         Self::Flow,
         Self::Chromagram,
-        Self::PhaseCoherence,
     ];
 }
 
@@ -295,6 +292,7 @@ pub struct AppState {
     pub flow_intensity_gate: RwSignal<f32>,
     pub flow_gate: RwSignal<f32>,
     pub flow_opacity: RwSignal<f32>,
+    pub flow_shift_gain: RwSignal<f32>,
     pub min_display_freq: RwSignal<Option<f64>>,
     pub max_display_freq: RwSignal<Option<f64>>,
     pub mouse_freq: RwSignal<Option<f64>>,
@@ -505,6 +503,7 @@ impl AppState {
             flow_intensity_gate: RwSignal::new(0.5),
             flow_gate: RwSignal::new(0.75),
             flow_opacity: RwSignal::new(0.75),
+            flow_shift_gain: RwSignal::new(3.0),
             min_display_freq: RwSignal::new(None),
             max_display_freq: RwSignal::new(None),
             mouse_freq: RwSignal::new(None),

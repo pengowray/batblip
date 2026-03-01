@@ -63,7 +63,7 @@ pub fn build_flow_colormap(
 
         for pri in 0..256u16 {
             let grey = pri as u8;
-            let rgb = flow_rgb(grey, shift, intensity_gate, flow_gate, opacity);
+            let rgb = flow_rgb(grey, shift, intensity_gate, flow_gate, opacity, 3.0);
             lut[sec as usize * 256 + pri as usize] = rgb;
         }
     }

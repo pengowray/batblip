@@ -67,7 +67,7 @@ fn smoothstep(x: f32, edge0: f32, edge1: f32) -> f32 {
 /// - `intensity_gate` (0.0–1.0): how bright must a pixel be to show color
 /// - `flow_gate` (0.0–1.0): how large must the shift be to show color
 /// - `opacity` (0.0–1.0): overall color strength multiplier
-pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opacity: f32) -> [u8; 3] {
+pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opacity: f32, shift_gain: f32) -> [u8; 3] {
     let g_norm = grey as f32 / 255.0;
 
     // Smooth intensity gate: ramp from gate*0.6 to gate*1.4
@@ -86,8 +86,7 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
         return [grey, grey, grey];
     }
 
-    let gain: f32 = 3.0;
-    let s = (shift * gain * effective).clamp(-1.0, 1.0);
+    let s = (shift * shift_gain * effective).clamp(-1.0, 1.0);
     let g = grey as f32;
     if s > 0.0 {
         // Upward shift → red
@@ -101,6 +100,64 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
         let rg = (g * (1.0 - 0.5 * a)).max(0.0) as u8;
         [rg, rg, b]
     }
+}
+
+/// Map a greyscale base value and a phase deviation to an RGB triple.
+/// `deviation` in [-1.0, 1.0]: 0 = coherent (no phase drift), ±1 = max deviation.
+///
+/// Coherent pixels → bright blue-white. Forward deviation → red. Backward → blue.
+/// `intensity_gate` gates quiet pixels. `opacity` blends between grey and color.
+/// `shift_gain` amplifies the deviation before coloring.
+pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, opacity: f32, shift_gain: f32) -> [u8; 3] {
+    let g_norm = grey as f32 / 255.0;
+
+    // Smooth intensity gate
+    let ig_lo = intensity_gate * 0.6;
+    let ig_hi = (intensity_gate * 1.4).min(1.0);
+    let intensity_factor = smoothstep(g_norm, ig_lo, ig_hi);
+
+    let effective = intensity_factor * opacity;
+    if effective < 0.001 {
+        return [grey, grey, grey];
+    }
+
+    // Scale deviation by shift_gain (default 3.0)
+    let dev = (deviation * shift_gain).clamp(-1.0, 1.0);
+    let abs_dev = dev.abs();
+
+    // Gamma-adjusted brightness from greyscale
+    let bright = g_norm.powf(0.75) * 255.0;
+
+    // Coherent (|dev| small): bright blue-white (#c8e8ff at full brightness)
+    let coh_r = 0.78;
+    let coh_g = 0.91;
+    let coh_b = 1.0;
+
+    let (r, g, b) = if abs_dev < 0.3 {
+        // Mostly coherent: blue-white
+        (bright * coh_r, bright * coh_g, bright * coh_b)
+    } else if dev > 0.0 {
+        // Forward deviation → red
+        let strength = ((abs_dev - 0.1) / 0.9).clamp(0.0, 1.0);
+        let r = bright * (coh_r + strength * (1.0 - coh_r));
+        let g = bright * coh_g * (1.0 - strength * 0.7);
+        let b = bright * coh_b * (1.0 - strength * 0.85);
+        (r, g, b)
+    } else {
+        // Backward deviation → deep blue
+        let strength = ((abs_dev - 0.1) / 0.9).clamp(0.0, 1.0);
+        let r = bright * coh_r * (1.0 - strength * 0.85);
+        let g = bright * coh_g * (1.0 - strength * 0.5);
+        let b = bright * coh_b;
+        (r, g, b)
+    };
+
+    // Blend with greyscale by effective opacity
+    let grey_f = grey as f32;
+    let final_r = (grey_f + effective * (r - grey_f)).clamp(0.0, 255.0) as u8;
+    let final_g = (grey_f + effective * (g - grey_f)).clamp(0.0, 255.0) as u8;
+    let final_b = (grey_f + effective * (b - grey_f)).clamp(0.0, 255.0) as u8;
+    [final_r, final_g, final_b]
 }
 
 /// Label for a frequency marker (number only, e.g. "40").

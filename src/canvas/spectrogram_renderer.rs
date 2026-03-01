@@ -1,6 +1,6 @@
 use crate::canvas::colors::{
     freq_marker_color, freq_marker_label, magnitude_to_greyscale, magnitude_to_db,
-    db_to_greyscale, flow_rgb,
+    db_to_greyscale, flow_rgb, coherence_rgb,
     greyscale_to_viridis, greyscale_to_inferno,
     greyscale_to_magma, greyscale_to_plasma, greyscale_to_cividis, greyscale_to_turbo,
 };
@@ -142,9 +142,10 @@ pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
 /// Algorithm selector for flow detection.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlowAlgo {
+    Optical,
+    PhaseCoherence,
     Centroid,
     Gradient,
-    Optical,
 }
 
 /// Cached intermediate data: greyscale intensities + shift values per pixel.
@@ -201,6 +202,7 @@ pub fn compute_flow_data(data: &SpectrogramData, algo: FlowAlgo) -> FlowData {
                     FlowAlgo::Centroid => compute_centroid_shift(prev_mags, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev_mags, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Optical => compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h),
+                    FlowAlgo::PhaseCoherence => 0.0, // phase coherence uses its own compute path
                 },
             };
 
@@ -226,7 +228,7 @@ pub fn composite_flow(
     let mut pixels = vec![0u8; total * 4];
 
     for i in 0..total {
-        let [r, g, b] = flow_rgb(md.greys[i], md.shifts[i], intensity_gate, flow_gate, opacity);
+        let [r, g, b] = flow_rgb(md.greys[i], md.shifts[i], intensity_gate, flow_gate, opacity, 3.0);
         let pi = i * 4;
         pixels[pi] = r;
         pixels[pi + 1] = g;
@@ -391,6 +393,7 @@ pub fn pre_render_flow_columns(
                     FlowAlgo::Centroid => compute_centroid_shift(prev, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Optical => compute_flow_shift(prev, &col.magnitudes, bin_idx, h),
+                    FlowAlgo::PhaseCoherence => 0.0, // phase coherence uses its own compute path
                 },
             };
 
@@ -1036,16 +1039,16 @@ pub fn blit_tiles_viewport(
 /// Convert flow tile dB+shift data to RGBA pixels at render time.
 ///
 /// For each pixel: convert dB to greyscale using display settings, then apply
-/// `flow_rgb()` with current gate/opacity to produce the final color.
+/// `flow_rgb()` or `coherence_rgb()` depending on algorithm.
 fn db_flow_tile_to_rgba(
     db_data: &[f32],
     flow_shifts: &[f32],
-    _width: u32,
-    _height: u32,
     settings: &SpectDisplaySettings,
     intensity_gate: f32,
     flow_gate: f32,
     opacity: f32,
+    shift_gain: f32,
+    is_coherence: bool,
 ) -> Vec<u8> {
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
@@ -1056,7 +1059,11 @@ fn db_flow_tile_to_rgba(
             settings.gamma, settings.gain_db,
         );
         let shift = if i < flow_shifts.len() { flow_shifts[i] } else { 0.0 };
-        let [r, g, b] = flow_rgb(grey, shift, intensity_gate, flow_gate, opacity);
+        let [r, g, b] = if is_coherence {
+            coherence_rgb(grey, shift, intensity_gate, opacity, shift_gain)
+        } else {
+            flow_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain)
+        };
         let pi = i * 4;
         rgba[pi] = r;
         rgba[pi + 1] = g;
@@ -1080,6 +1087,8 @@ pub fn blit_flow_tiles_viewport(
     intensity_gate: f32,
     flow_gate: f32,
     opacity: f32,
+    shift_gain: f32,
+    is_coherence: bool,
     preview: Option<&PreviewImage>,
     scroll_offset: f64,
     visible_time: f64,
@@ -1130,8 +1139,8 @@ pub fn blit_flow_tiles_viewport(
             let rgba = if !tile.rendered.db_data.is_empty() {
                 db_flow_tile_to_rgba(
                     &tile.rendered.db_data, &tile.rendered.flow_shifts,
-                    tile.rendered.width, tile.rendered.height,
                     display_settings, intensity_gate, flow_gate, opacity,
+                    shift_gain, is_coherence,
                 )
             } else {
                 // Fallback for legacy pre-colored tiles
@@ -1184,101 +1193,6 @@ pub fn blit_flow_tiles_viewport(
     }
 
     any_drawn || preview.is_some()
-}
-
-/// Blit phase coherence tiles from the coherence tile cache.
-///
-/// Coherence tiles store already-colored RGBA pixels (2D colormap pre-applied),
-/// so no colormap step is needed during blit. Structurally identical to flow tiles.
-pub fn blit_coherence_tiles_viewport(
-    ctx: &CanvasRenderingContext2d,
-    canvas: &HtmlCanvasElement,
-    file_idx: usize,
-    total_cols: usize,
-    scroll_col: f64,
-    zoom: f64,
-    freq_crop_lo: f64,
-    freq_crop_hi: f64,
-) -> bool {
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
-
-    // Dark background for areas without tiles
-    ctx.set_fill_style_str("#000");
-    ctx.fill_rect(0.0, 0.0, cw, ch);
-
-    if total_cols == 0 || zoom <= 0.0 {
-        return false;
-    }
-
-    let visible_cols = cw / zoom;
-    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
-    let src_end = (src_start + visible_cols).min(total_cols as f64);
-
-    let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
-    let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
-
-    let fc_lo = freq_crop_lo.max(0.0);
-    let fc_hi = freq_crop_hi.max(0.01);
-
-    let mut any_drawn = false;
-
-    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-        let tile_col_start = tile_idx * TILE_COLS;
-
-        let drawn = tile_cache::borrow_coherence_tile(file_idx, tile_idx, |tile| {
-            let tw = tile.rendered.width as f64;
-            let th = tile.rendered.height as f64;
-            if tw == 0.0 || th == 0.0 { return; }
-
-            // Coherence tiles are already colored — use pixels directly
-            let clamped = Clamped(&tile.rendered.pixels[..]);
-            let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
-                clamped, tile.rendered.width, tile.rendered.height,
-            ) else { return };
-
-            let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
-            if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
-                tmp.set_width(tile.rendered.width);
-                tmp.set_height(tile.rendered.height);
-            }
-            let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
-
-            let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
-            let tile_src_end = (src_end - tile_col_start as f64).min(tw);
-            let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
-            if tile_src_w <= 0.0 { return; }
-
-            let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
-                let sy = th * (1.0 - fc_hi);
-                let sh = th * (fc_hi - fc_lo).max(0.001);
-                (sy, sh, 0.0, ch)
-            } else {
-                let fc_range = (fc_hi - fc_lo).max(0.001);
-                let data_frac = (1.0 - fc_lo) / fc_range;
-                let sh = th * (1.0 - fc_lo);
-                (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
-            };
-
-            let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
-            let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
-            let dst_x = dst_x_raw.floor();
-            let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
-
-            let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                &tmp,
-                tile_src_x, src_y, tile_src_w, src_h,
-                dst_x, dst_y, dst_w, dst_h,
-            );
-        });
-
-        if drawn.is_some() {
-            any_drawn = true;
-        }
-    }
-
-    any_drawn
 }
 
 /// Compute RGB for a chromagram flow pixel.

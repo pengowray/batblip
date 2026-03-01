@@ -255,7 +255,7 @@ fn MainArea() -> impl IntoView {
                         <div class="main-view">
                             // Show the selected main view
                             {move || match state.main_view.get() {
-                                MainView::Spectrogram | MainView::Flow | MainView::PhaseCoherence => view! { <Spectrogram /> }.into_any(),
+                                MainView::Spectrogram | MainView::Flow => view! { <Spectrogram /> }.into_any(),
                                 MainView::Waveform => view! {
                                     <div class="main-waveform-full">
                                         <Waveform />
@@ -409,6 +409,10 @@ fn MainViewButton() -> impl IntoView {
                                         class=layer_opt_class(display == SpectrogramDisplay::FlowOptical)
                                         on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowOptical)
                                     >"Optical"</button>
+                                    <button
+                                        class=layer_opt_class(display == SpectrogramDisplay::PhaseCoherence)
+                                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::PhaseCoherence)
+                                    >"Phase Coherence"</button>
                                     <button
                                         class=layer_opt_class(display == SpectrogramDisplay::FlowCentroid)
                                         on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowCentroid)

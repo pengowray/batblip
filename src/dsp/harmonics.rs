@@ -586,10 +586,7 @@ pub fn compute_tile_phase_data(
     hop_size: usize,
     max_mag: f32,
 ) -> crate::canvas::spectrogram_renderer::PreRendered {
-    use crate::canvas::colors::magnitude_to_greyscale;
-    use crate::canvas::colormap_2d::build_phase_coherence_colormap;
-
-    let colormap = build_phase_coherence_colormap();
+    use crate::canvas::colors::magnitude_to_db;
 
     // Compute complex STFT frames. We need col_count + 1 frames to produce
     // col_count phase-deviation columns (deviation between consecutive frames).
@@ -620,12 +617,9 @@ pub fn compute_tile_phase_data(
     let actual_cols = if frames.len() >= 2 { frames.len() - 1 } else { 0 };
     let width = actual_cols.max(1) as u32;
     let height = n_bins as u32;
-    let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
-
-    // Set all alpha to 255
-    for i in 0..(width as usize * height as usize) {
-        pixels[i * 4 + 3] = 255;
-    }
+    let total = (width as usize) * (height as usize);
+    let mut db_data = vec![f32::NEG_INFINITY; total];
+    let mut flow_shifts = vec![0.0f32; total];
 
     for col in 0..actual_cols {
         let frame_prev = &frames[col];
@@ -635,12 +629,16 @@ pub fn compute_tile_phase_data(
             let mag = frame_curr[k].norm();
             let mag_prev = frame_prev[k].norm();
 
-            // Gate: skip very quiet bins — phase is undefined there
-            let (intensity_byte, deviation_byte) = if mag < 1e-8 || mag_prev < 1e-8 {
-                (0u8, 128u8) // black, neutral
-            } else {
-                let grey = magnitude_to_greyscale(mag, max_mag);
+            let row = n_bins - 1 - k;
+            let idx = row * width as usize + col;
 
+            // Store magnitude as dB
+            db_data[idx] = magnitude_to_db(mag, max_mag);
+
+            // Gate: skip very quiet bins — phase is undefined there
+            if mag < 1e-8 || mag_prev < 1e-8 {
+                flow_shifts[idx] = 0.0; // neutral
+            } else {
                 // Expected phase advance at bin k per hop
                 let expected = 2.0 * PI * k as f32 * hop_size as f32 / fft_size as f32;
                 // Actual phase advance: arg(X[t+1] · conj(X[t]))
@@ -648,30 +646,17 @@ pub fn compute_tile_phase_data(
                 let actual = cross.arg();
                 let deviation = wrap_to_pi(actual - expected);
 
-                // Map signed deviation [-PI, PI] to byte [0, 255] where 128 = neutral
-                let dev_byte = ((deviation / PI) * 128.0 + 128.0).clamp(0.0, 255.0) as u8;
-
-                (grey, dev_byte)
-            };
-
-            // Apply 2D colormap
-            let [r, g, b] = colormap.apply(intensity_byte, deviation_byte);
-
-            // Write pixel: row 0 = highest frequency (bin n_bins-1)
-            let row = n_bins - 1 - k;
-            let idx = (row * width as usize + col) * 4;
-            pixels[idx] = r;
-            pixels[idx + 1] = g;
-            pixels[idx + 2] = b;
-            // alpha already 255
+                // Normalize deviation from [-PI, PI] to [-1.0, 1.0]
+                flow_shifts[idx] = deviation / PI;
+            }
         }
     }
 
     crate::canvas::spectrogram_renderer::PreRendered {
         width,
         height,
-        pixels,
-        db_data: Vec::new(),
-        flow_shifts: Vec::new(),
+        pixels: Vec::new(),
+        db_data,
+        flow_shifts,
     }
 }
