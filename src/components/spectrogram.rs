@@ -158,10 +158,11 @@ pub fn Spectrogram() -> impl IntoView {
 
     // (coherence tiles now use flow cache — cleared in Effect 2 above)
 
-    // Effect 2b: clear all magnitude tiles when FFT size changes
+    // Effect 2b: clear all magnitude tiles AND flow tiles when FFT size changes
     Effect::new(move || {
         let _fft = state.spect_fft_size.get();
         crate::canvas::tile_cache::clear_all_tiles();
+        crate::canvas::tile_cache::clear_flow_cache();
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });
 
@@ -198,8 +199,8 @@ pub fn Spectrogram() -> impl IntoView {
         let flow_on = state.flow_enabled.get_untracked();
         let _flow_ig = state.flow_intensity_gate.get(); // trigger redraw on flow setting change
         let _flow_mg = state.flow_gate.get();
-        let _flow_op = state.flow_opacity.get();
         let _flow_sg = state.flow_shift_gain.get();
+        let _flow_cg = state.flow_color_gamma.get();
         let colormap_pref = state.colormap_preference.get();
         let hfr_colormap_pref = state.hfr_colormap_preference.get();
         let axis_drag_start = state.axis_drag_start_freq.get();
@@ -316,14 +317,21 @@ pub fn Spectrogram() -> impl IntoView {
             // Flow mode (includes phase coherence): composite dB+shift tiles at render time
             let ig = state.flow_intensity_gate.get_untracked();
             let mg = state.flow_gate.get_untracked();
-            let op = state.flow_opacity.get_untracked();
+            let op = 1.0_f32; // opacity consolidated into color gain
             let sg = state.flow_shift_gain.get_untracked();
+            let cg = state.flow_color_gamma.get_untracked();
             let display = state.spectrogram_display.get_untracked();
-            let is_coherence = display == SpectrogramDisplay::PhaseCoherence;
+            let algo = match display {
+                SpectrogramDisplay::FlowOptical => FlowAlgo::Optical,
+                SpectrogramDisplay::PhaseCoherence => FlowAlgo::PhaseCoherence,
+                SpectrogramDisplay::FlowCentroid => FlowAlgo::Centroid,
+                SpectrogramDisplay::FlowGradient => FlowAlgo::Gradient,
+                SpectrogramDisplay::Phase => FlowAlgo::Phase,
+            };
             let drawn = spectrogram_renderer::blit_flow_tiles_viewport(
                 &ctx, canvas, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi,
-                &display_settings, ig, mg, op, sg, is_coherence,
+                &display_settings, ig, mg, op, sg, cg, algo,
                 file.and_then(|f| f.preview.as_ref()),
                 scroll, visible_time, duration,
             );
@@ -338,13 +346,6 @@ pub fn Spectrogram() -> impl IntoView {
                 let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
                 let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
                 let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
-
-                let algo = match display {
-                    SpectrogramDisplay::FlowOptical => FlowAlgo::Optical,
-                    SpectrogramDisplay::PhaseCoherence => FlowAlgo::PhaseCoherence,
-                    SpectrogramDisplay::FlowCentroid => FlowAlgo::Centroid,
-                    SpectrogramDisplay::FlowGradient => FlowAlgo::Gradient,
-                };
 
                 for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
                     if tile_cache::get_flow_tile(file_idx_val, t).is_none() {

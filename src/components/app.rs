@@ -421,6 +421,10 @@ fn MainViewButton() -> impl IntoView {
                                         class=layer_opt_class(display == SpectrogramDisplay::FlowGradient)
                                         on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowGradient)
                                     >"Gradient"</button>
+                                    <button
+                                        class=layer_opt_class(display == SpectrogramDisplay::Phase)
+                                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::Phase)
+                                    >"Phase"</button>
                                 }
                             })}
                         </div>

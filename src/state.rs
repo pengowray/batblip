@@ -38,6 +38,7 @@ pub enum SpectrogramDisplay {
     PhaseCoherence,
     FlowCentroid,
     FlowGradient,
+    Phase,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -293,6 +294,7 @@ pub struct AppState {
     pub flow_gate: RwSignal<f32>,
     pub flow_opacity: RwSignal<f32>,
     pub flow_shift_gain: RwSignal<f32>,
+    pub flow_color_gamma: RwSignal<f32>,
     pub min_display_freq: RwSignal<Option<f64>>,
     pub max_display_freq: RwSignal<Option<f64>>,
     pub mouse_freq: RwSignal<Option<f64>>,
@@ -509,6 +511,7 @@ impl AppState {
             flow_gate: RwSignal::new(0.75),
             flow_opacity: RwSignal::new(0.75),
             flow_shift_gain: RwSignal::new(3.0),
+            flow_color_gamma: RwSignal::new(1.0),
             min_display_freq: RwSignal::new(None),
             max_display_freq: RwSignal::new(None),
             mouse_freq: RwSignal::new(None),

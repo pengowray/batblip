@@ -124,7 +124,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
             {move || {
                 if state.main_view.get() == MainView::Flow {
                     let display = state.spectrogram_display.get();
-                    let is_coherence = display == SpectrogramDisplay::PhaseCoherence;
+                    let _ = display; // used for reactivity trigger above
                     view! {
                         <div class="setting-group">
                             <div class="setting-group-title">"Color"</div>
@@ -139,6 +139,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                             "coherence" => SpectrogramDisplay::PhaseCoherence,
                                             "centroid" => SpectrogramDisplay::FlowCentroid,
                                             "gradient" => SpectrogramDisplay::FlowGradient,
+                                            "phase" => SpectrogramDisplay::Phase,
                                             _ => SpectrogramDisplay::FlowOptical,
                                         };
                                         state.spectrogram_display.set(mode);
@@ -148,12 +149,14 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         SpectrogramDisplay::PhaseCoherence => "coherence",
                                         SpectrogramDisplay::FlowCentroid => "centroid",
                                         SpectrogramDisplay::FlowGradient => "gradient",
+                                        SpectrogramDisplay::Phase => "phase",
                                     }
                                 >
                                     <option value="flow">"Optical"</option>
                                     <option value="coherence">"Phase Coherence"</option>
                                     <option value="centroid">"Centroid"</option>
                                     <option value="gradient">"Gradient"</option>
+                                    <option value="phase">"Phase"</option>
                                 </select>
                             </div>
                             <div class="setting-row">
@@ -199,7 +202,32 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 </div>
                             </div>
                             <div class="setting-row">
-                                <span class="setting-label">"Opacity"</span>
+                                <span class="setting-label">{move || {
+                                    let g = state.flow_color_gamma.get();
+                                    if g == 1.0 { "Color contrast: linear".to_string() }
+                                    else { format!("Color contrast: {:.2}", g) }
+                                }}</span>
+                                <div class="setting-slider-row">
+                                    <input
+                                        type="range"
+                                        class="setting-range"
+                                        min="0.2"
+                                        max="3.0"
+                                        step="0.05"
+                                        prop:value=move || state.flow_color_gamma.get().to_string()
+                                        on:input=move |ev: web_sys::Event| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                            if let Ok(val) = input.value().parse::<f32>() {
+                                                state.flow_color_gamma.set(val);
+                                            }
+                                        }
+                                    />
+                                </div>
+                            </div>
+                            // Flow gate — threshold for minimum shift/deviation magnitude to show color
+                            <div class="setting-row">
+                                <span class="setting-label">"Flow gate"</span>
                                 <div class="setting-slider-row">
                                     <input
                                         type="range"
@@ -207,42 +235,18 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         min="0"
                                         max="100"
                                         step="1"
-                                        prop:value=move || (state.flow_opacity.get() * 100.0).to_string()
+                                        prop:value=move || (state.flow_gate.get() * 100.0).round().to_string()
                                         on:input=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                                             if let Ok(val) = input.value().parse::<f32>() {
-                                                state.flow_opacity.set(val / 100.0);
+                                                state.flow_gate.set(val / 100.0);
                                             }
                                         }
                                     />
-                                    <span class="setting-value">{move || format!("{}%", (state.flow_opacity.get() * 100.0) as u32)}</span>
+                                    <span class="setting-value">{move || format!("{}%", (state.flow_gate.get() * 100.0).round() as u32)}</span>
                                 </div>
                             </div>
-                            // Flow gate — only for shift-based algorithms (not Phase Coherence)
-                            {(!is_coherence).then(|| view! {
-                                <div class="setting-row">
-                                    <span class="setting-label">"Flow gate"</span>
-                                    <div class="setting-slider-row">
-                                        <input
-                                            type="range"
-                                            class="setting-range"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            prop:value=move || (state.flow_gate.get() * 100.0).round().to_string()
-                                            on:input=move |ev: web_sys::Event| {
-                                                let target = ev.target().unwrap();
-                                                let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                                if let Ok(val) = input.value().parse::<f32>() {
-                                                    state.flow_gate.set(val / 100.0);
-                                                }
-                                            }
-                                        />
-                                        <span class="setting-value">{move || format!("{}%", (state.flow_gate.get() * 100.0).round() as u32)}</span>
-                                    </div>
-                                </div>
-                            })}
                         </div>
                     }.into_any()
                 } else {

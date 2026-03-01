@@ -72,7 +72,7 @@ fn smoothstep(x: f32, edge0: f32, edge1: f32) -> f32 {
 /// - `intensity_gate` (0.0–1.0): how bright must a pixel be to show color
 /// - `flow_gate` (0.0–1.0): how large must the shift be to show color
 /// - `opacity` (0.0–1.0): overall color strength multiplier
-pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opacity: f32, shift_gain: f32) -> [u8; 3] {
+pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opacity: f32, shift_gain: f32, color_gamma: f32) -> [u8; 3] {
     let g_norm = grey as f32 / 255.0;
 
     // Smooth intensity gate: ramp from gate*0.6 to gate*1.4
@@ -91,7 +91,9 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
         return [grey, grey, grey];
     }
 
-    let s = (shift * shift_gain * effective).clamp(-1.0, 1.0);
+    let s_raw = (shift * shift_gain * effective).clamp(-1.0, 1.0);
+    // Apply color gamma to magnitude, preserve sign
+    let s = if color_gamma == 1.0 { s_raw } else { s_raw.abs().powf(color_gamma).copysign(s_raw) };
     let g = grey as f32;
     if s > 0.0 {
         // Upward shift → red
@@ -113,7 +115,7 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
 /// Coherent pixels → bright blue-white. Forward deviation → red. Backward → blue.
 /// `intensity_gate` gates quiet pixels. `opacity` blends between grey and color.
 /// `shift_gain` amplifies the deviation before coloring.
-pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, opacity: f32, shift_gain: f32) -> [u8; 3] {
+pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, flow_gate: f32, opacity: f32, shift_gain: f32, color_gamma: f32) -> [u8; 3] {
     let g_norm = grey as f32 / 255.0;
 
     // Smooth intensity gate
@@ -121,13 +123,20 @@ pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, opacity: f32
     let ig_hi = (intensity_gate * 1.4).min(1.0);
     let intensity_factor = smoothstep(g_norm, ig_lo, ig_hi);
 
-    let effective = intensity_factor * opacity;
+    // Smooth flow gate on |deviation| (same pattern as flow_rgb)
+    let abs_dev_raw = deviation.abs();
+    let mg_lo = flow_gate * 0.3;
+    let mg_hi = (flow_gate * 2.0).max(0.05);
+    let flow_factor = smoothstep(abs_dev_raw, mg_lo, mg_hi);
+
+    let effective = intensity_factor * flow_factor * opacity;
     if effective < 0.001 {
         return [grey, grey, grey];
     }
 
-    // Scale deviation by shift_gain (default 3.0)
-    let dev = (deviation * shift_gain).clamp(-1.0, 1.0);
+    // Scale deviation by shift_gain (default 3.0), apply color gamma
+    let dev_raw = (deviation * shift_gain).clamp(-1.0, 1.0);
+    let dev = if color_gamma == 1.0 { dev_raw } else { dev_raw.abs().powf(color_gamma).copysign(dev_raw) };
     let abs_dev = dev.abs();
 
     // Gamma-adjusted brightness from greyscale
@@ -163,6 +172,55 @@ pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, opacity: f32
     let final_g = (grey_f + effective * (g - grey_f)).clamp(0.0, 255.0) as u8;
     let final_b = (grey_f + effective * (b - grey_f)).clamp(0.0, 255.0) as u8;
     [final_r, final_g, final_b]
+}
+
+/// HSV to RGB conversion. H in [0,360), S and V in [0,1]. Returns (r, g, b) in [0,1].
+#[inline]
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let c = v * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h_prime as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (r + m, g + m, b + m)
+}
+
+/// Map instantaneous phase angle and magnitude to an RGB triple.
+/// `phase` in [-1.0, 1.0] (normalized from [-PI, PI]).
+/// `grey` is the magnitude-derived brightness (0-255).
+/// Hue = phase angle mapped to [0, 360°). Brightness = magnitude.
+pub fn phase_rgb(grey: u8, phase: f32, intensity_gate: f32) -> [u8; 3] {
+    let g_norm = grey as f32 / 255.0;
+
+    // Intensity gate (same pattern as flow_rgb)
+    let ig_lo = intensity_gate * 0.6;
+    let ig_hi = (intensity_gate * 1.4).min(1.0);
+    let intensity_factor = smoothstep(g_norm, ig_lo, ig_hi);
+
+    if intensity_factor < 0.001 {
+        return [0, 0, 0];
+    }
+
+    // Map normalized phase [-1, 1] to hue [0, 360)
+    let hue = (phase + 1.0) * 180.0; // [-1,1] -> [0,360)
+    let hue = hue % 360.0;
+
+    // HSV: full saturation, brightness from magnitude
+    let brightness = g_norm;
+    let (r, g, b) = hsv_to_rgb(hue, 1.0, brightness);
+
+    [
+        (r * 255.0).clamp(0.0, 255.0) as u8,
+        (g * 255.0).clamp(0.0, 255.0) as u8,
+        (b * 255.0).clamp(0.0, 255.0) as u8,
+    ]
 }
 
 /// Label for a frequency marker (number only, e.g. "40").

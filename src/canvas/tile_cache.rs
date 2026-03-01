@@ -738,20 +738,20 @@ pub fn schedule_flow_tile(
             return;
         }
 
-        let rendered = if algo == FlowAlgo::PhaseCoherence {
+        let rendered = if algo == FlowAlgo::PhaseCoherence || algo == FlowAlgo::Phase {
             use crate::dsp::harmonics;
 
             let tile_data = state.files.with_untracked(|files| {
                 let file = files.get(file_idx)?;
-                let sr = file.audio.sample_rate;
-                let freq_res = file.spectrogram.freq_resolution;
-                let time_res = file.spectrogram.time_resolution;
-                let fft_size = (sr as f64 / freq_res).round() as usize;
-                let hop_size = (time_res * sr as f64).round() as usize;
+                // Use user's FFT size and LOD1 hop to match magnitude tiles
+                let fft_size = state.spect_fft_size.get_untracked();
+                let hop_size = LOD_CONFIGS[1].hop_size;
 
                 let col_start = tile_idx * TILE_COLS;
                 let sample_start = col_start * hop_size;
-                let sample_end = (sample_start + (TILE_COLS + 1) * hop_size + fft_size).min(file.audio.samples.len());
+                // Phase coherence needs +1 extra frame for inter-frame deviation
+                let extra = if algo == FlowAlgo::PhaseCoherence { TILE_COLS + 1 } else { TILE_COLS };
+                let sample_end = (sample_start + extra * hop_size + fft_size).min(file.audio.samples.len());
                 if sample_start >= file.audio.samples.len() || sample_start >= sample_end {
                     return None;
                 }
@@ -767,9 +767,15 @@ pub fn schedule_flow_tile(
 
             yield_to_browser().await;
 
-            harmonics::compute_tile_phase_data(
-                &samples, TILE_COLS, fft_size, hop_size,
-            )
+            if algo == FlowAlgo::Phase {
+                harmonics::compute_tile_phase_angle_data(
+                    &samples, TILE_COLS, fft_size, hop_size,
+                )
+            } else {
+                harmonics::compute_tile_phase_data(
+                    &samples, TILE_COLS, fft_size, hop_size,
+                )
+            }
         } else {
             let col_start = tile_idx * TILE_COLS;
 

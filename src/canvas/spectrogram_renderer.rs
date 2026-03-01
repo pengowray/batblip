@@ -1,6 +1,6 @@
 use crate::canvas::colors::{
     freq_marker_color, freq_marker_label, magnitude_to_greyscale, magnitude_to_db,
-    db_to_greyscale, flow_rgb, coherence_rgb,
+    db_to_greyscale, flow_rgb, coherence_rgb, phase_rgb,
     greyscale_to_viridis, greyscale_to_inferno,
     greyscale_to_magma, greyscale_to_plasma, greyscale_to_cividis, greyscale_to_turbo,
 };
@@ -145,6 +145,7 @@ pub enum FlowAlgo {
     PhaseCoherence,
     Centroid,
     Gradient,
+    Phase,
 }
 
 /// Cached intermediate data: greyscale intensities + shift values per pixel.
@@ -201,7 +202,7 @@ pub fn compute_flow_data(data: &SpectrogramData, algo: FlowAlgo) -> FlowData {
                     FlowAlgo::Centroid => compute_centroid_shift(prev_mags, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev_mags, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Optical => compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h),
-                    FlowAlgo::PhaseCoherence => 0.0, // phase coherence uses its own compute path
+                    FlowAlgo::PhaseCoherence | FlowAlgo::Phase => 0.0, // these use their own compute paths
                 },
             };
 
@@ -227,7 +228,7 @@ pub fn composite_flow(
     let mut pixels = vec![0u8; total * 4];
 
     for i in 0..total {
-        let [r, g, b] = flow_rgb(md.greys[i], md.shifts[i], intensity_gate, flow_gate, opacity, 3.0);
+        let [r, g, b] = flow_rgb(md.greys[i], md.shifts[i], intensity_gate, flow_gate, opacity, 3.0, 1.0);
         let pi = i * 4;
         pixels[pi] = r;
         pixels[pi + 1] = g;
@@ -391,7 +392,7 @@ pub fn pre_render_flow_columns(
                     FlowAlgo::Centroid => compute_centroid_shift(prev, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Optical => compute_flow_shift(prev, &col.magnitudes, bin_idx, h),
-                    FlowAlgo::PhaseCoherence => 0.0, // phase coherence uses its own compute path
+                    FlowAlgo::PhaseCoherence | FlowAlgo::Phase => 0.0, // these use their own compute paths
                 },
             };
 
@@ -995,7 +996,7 @@ pub fn blit_tiles_viewport(
 /// Convert flow tile dB+shift data to RGBA pixels at render time.
 ///
 /// For each pixel: convert dB to greyscale using display settings, then apply
-/// `flow_rgb()` or `coherence_rgb()` depending on algorithm.
+/// `flow_rgb()`, `coherence_rgb()`, or `phase_rgb()` depending on algorithm.
 fn db_flow_tile_to_rgba(
     db_data: &[f32],
     flow_shifts: &[f32],
@@ -1004,7 +1005,8 @@ fn db_flow_tile_to_rgba(
     flow_gate: f32,
     opacity: f32,
     shift_gain: f32,
-    is_coherence: bool,
+    color_gamma: f32,
+    algo: FlowAlgo,
 ) -> Vec<u8> {
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
@@ -1015,10 +1017,10 @@ fn db_flow_tile_to_rgba(
             settings.gamma, settings.gain_db,
         );
         let shift = if i < flow_shifts.len() { flow_shifts[i] } else { 0.0 };
-        let [r, g, b] = if is_coherence {
-            coherence_rgb(grey, shift, intensity_gate, opacity, shift_gain)
-        } else {
-            flow_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain)
+        let [r, g, b] = match algo {
+            FlowAlgo::Phase => phase_rgb(grey, shift, intensity_gate),
+            FlowAlgo::PhaseCoherence => coherence_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma),
+            _ => flow_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma),
         };
         let pi = i * 4;
         rgba[pi] = r;
@@ -1044,7 +1046,8 @@ pub fn blit_flow_tiles_viewport(
     flow_gate: f32,
     opacity: f32,
     shift_gain: f32,
-    is_coherence: bool,
+    color_gamma: f32,
+    algo: FlowAlgo,
     preview: Option<&PreviewImage>,
     scroll_offset: f64,
     visible_time: f64,
@@ -1096,7 +1099,7 @@ pub fn blit_flow_tiles_viewport(
                 db_flow_tile_to_rgba(
                     &tile.rendered.db_data, &tile.rendered.flow_shifts,
                     display_settings, intensity_gate, flow_gate, opacity,
-                    shift_gain, is_coherence,
+                    shift_gain, color_gamma, algo,
                 )
             } else {
                 // Fallback for legacy pre-colored tiles

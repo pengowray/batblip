@@ -657,3 +657,86 @@ pub fn compute_tile_phase_data(
         flow_shifts,
     }
 }
+
+/// Compute instantaneous phase angle tile data.
+///
+/// Unlike `compute_tile_phase_data` which stores inter-frame phase *deviation*,
+/// this stores the raw phase angle of each bin in each frame, normalized to
+/// [-1.0, 1.0] (from [-PI, PI]). Hue is mapped from the phase angle.
+pub fn compute_tile_phase_angle_data(
+    samples: &[f32],
+    col_count: usize,
+    fft_size: usize,
+    hop_size: usize,
+) -> crate::canvas::spectrogram_renderer::PreRendered {
+    use crate::canvas::colors::magnitude_to_db;
+
+    let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let window = hann_window(fft_size);
+    let n_bins = fft_size / 2 + 1;
+
+    let mut input = fft.make_input_vec();
+    let mut spectrum = fft.make_output_vec();
+
+    let mut actual_cols = 0usize;
+    let width = col_count.max(1) as u32;
+    let height = n_bins as u32;
+    let total = (width as usize) * (height as usize);
+    let mut db_data = vec![f32::NEG_INFINITY; total];
+    let mut flow_shifts = vec![0.0f32; total];
+
+    for col in 0..col_count {
+        let pos = col * hop_size;
+        if pos + fft_size > samples.len() {
+            break;
+        }
+        for (inp, (&s, &w)) in input
+            .iter_mut()
+            .zip(samples[pos..pos + fft_size].iter().zip(window.iter()))
+        {
+            *inp = s * w;
+        }
+        fft.process(&mut input, &mut spectrum).expect("FFT failed");
+
+        for k in 0..n_bins {
+            let mag = spectrum[k].norm();
+            let row = n_bins - 1 - k;
+            let idx = row * width as usize + col;
+
+            db_data[idx] = magnitude_to_db(mag);
+
+            // Store instantaneous phase normalized to [-1, 1]
+            if mag < 1e-8 {
+                flow_shifts[idx] = 0.0;
+            } else {
+                flow_shifts[idx] = spectrum[k].arg() / PI;
+            }
+        }
+        actual_cols += 1;
+    }
+
+    let final_width = actual_cols.max(1) as u32;
+    // If we computed fewer columns than expected, truncate
+    if final_width < width {
+        let fw = final_width as usize;
+        let fh = height as usize;
+        let mut new_db = vec![f32::NEG_INFINITY; fw * fh];
+        let mut new_shifts = vec![0.0f32; fw * fh];
+        for row in 0..fh {
+            for col in 0..fw {
+                new_db[row * fw + col] = db_data[row * (width as usize) + col];
+                new_shifts[row * fw + col] = flow_shifts[row * (width as usize) + col];
+            }
+        }
+        db_data = new_db;
+        flow_shifts = new_shifts;
+    }
+
+    crate::canvas::spectrogram_renderer::PreRendered {
+        width: final_width,
+        height,
+        pixels: Vec::new(),
+        db_data,
+        flow_shifts,
+    }
+}
