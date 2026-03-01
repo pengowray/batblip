@@ -832,7 +832,6 @@ pub fn blit_tiles_viewport(
     let ch = canvas.height() as f64;
 
     // Draw colormapped preview as base layer so tile gaps show preview, not black.
-    // Tiles (opaque) are drawn on top and fully cover the preview where they exist.
     if let Some(pv) = preview {
         blit_preview_as_background(
             ctx, pv, canvas,
@@ -848,31 +847,70 @@ pub fn blit_tiles_viewport(
         return preview.is_some();
     }
 
-    // Visible column range
-    let visible_cols = cw / zoom;
-    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
-    let src_end = (src_start + visible_cols).min(total_cols as f64);
+    // Select ideal LOD for current zoom
+    let ideal_lod = tile_cache::select_lod(zoom);
+    let ratio = tile_cache::lod_ratio(ideal_lod);
 
-    // Tile index range
-    let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
-    let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+    // Visible range in LOD1 column space
+    let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let vis_end = (vis_start + cw / zoom).min(total_cols as f64);
 
-    // Vertical crop
+    // Convert to ideal LOD column space for tile range computation
+    let vis_start_lod = vis_start * ratio;
+    let vis_end_lod = vis_end * ratio;
+
+    let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
+    let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+
     let fc_lo = freq_crop_lo.max(0.0);
     let fc_hi = freq_crop_hi.max(0.01);
 
     let mut any_drawn = false;
-    let use_lod2 = zoom >= tile_cache::LOD2_ZOOM_THRESHOLD;
 
-    // Helper: blit a scaled LOD tile (used by LOD 0 and LOD 2).
-    // The tile may have more or fewer columns than TILE_COLS — source coordinates
-    // are scaled proportionally so the tile covers the same time range.
-    let blit_scaled_tile = |tile: &tile_cache::Tile, tile_col_start: usize| {
+    // Universal tile blit closure — handles any LOD tile at the correct screen position.
+    // clip_lod1_start/end = the LOD1 column range to draw from this tile.
+    let blit_any_tile = |tile: &tile_cache::Tile, tile_lod: u8, tile_idx: usize,
+                         clip_lod1_start: f64, clip_lod1_end: f64| {
         let tw = tile.rendered.width as f64;
         let th = tile.rendered.height as f64;
         if tw == 0.0 || th == 0.0 { return; }
 
+        let tile_ratio = tile_cache::lod_ratio(tile_lod);
+
+        // Tile's LOD1 column range
+        let tile_lod1_start = tile_idx as f64 * TILE_COLS as f64 / tile_ratio;
+        let tile_lod1_end = tile_lod1_start + TILE_COLS as f64 / tile_ratio;
+
+        // Clip to requested range
+        let c_start = clip_lod1_start.max(tile_lod1_start);
+        let c_end = clip_lod1_end.min(tile_lod1_end);
+        if c_end <= c_start { return; }
+
+        // Source coordinates in tile pixel space
+        let src_x = ((c_start - tile_lod1_start) * tile_ratio).max(0.0);
+        let src_x_end = ((c_end - tile_lod1_start) * tile_ratio).min(tw);
+        let src_w = (src_x_end - src_x).max(0.0);
+        if src_w <= 0.0 { return; }
+
+        // Vertical crop
+        let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
+            let sy = th * (1.0 - fc_hi);
+            let sh = th * (fc_hi - fc_lo).max(0.001);
+            (sy, sh, 0.0, ch)
+        } else {
+            let fc_range = (fc_hi - fc_lo).max(0.001);
+            let data_frac = (1.0 - fc_lo) / fc_range;
+            let sh = th * (1.0 - fc_lo);
+            (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
+        };
+
+        // Destination on canvas
+        let dst_x_raw = (c_start - vis_start) * zoom;
+        let dst_x_end_raw = (c_end - vis_start) * zoom;
+        let dst_x = dst_x_raw.floor();
+        let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
+
+        // Convert dB tile to RGBA
         let pixels = if !tile.rendered.db_data.is_empty() {
             db_tile_to_rgba(
                 &tile.rendered.db_data,
@@ -905,136 +943,48 @@ pub fn blit_tiles_viewport(
         }
         let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
 
-        // Scale: tile columns span the same time range as TILE_COLS at LOD 1.
-        // LOD 0: scale < 1 (fewer cols), LOD 2: scale > 1 (more cols).
-        let scale = tw / TILE_COLS as f64;
-        let tile_src_x = ((src_start - tile_col_start as f64).max(0.0)) * scale;
-        let tile_src_end = ((src_end - tile_col_start as f64).min(TILE_COLS as f64)) * scale;
-        let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
-        if tile_src_w <= 0.0 { return; }
-
-        // Vertical crop
-        let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
-            let sy = th * (1.0 - fc_hi);
-            let sh = th * (fc_hi - fc_lo).max(0.001);
-            (sy, sh, 0.0, ch)
-        } else {
-            let fc_range = (fc_hi - fc_lo).max(0.001);
-            let data_frac = (1.0 - fc_lo) / fc_range;
-            let sh = th * (1.0 - fc_lo);
-            (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
-        };
-
-        // Destination: same position as the LOD 1 tile would occupy.
-        let col_offset = (src_start - tile_col_start as f64).max(0.0);
-        let dst_x_raw = ((tile_col_start as f64 + col_offset) - src_start) * zoom;
-        let visible_cols_f = ((src_end - tile_col_start as f64).min(TILE_COLS as f64) - col_offset).max(0.0);
-        let dst_x_end_raw = dst_x_raw + visible_cols_f * zoom;
-        let dst_x = dst_x_raw.floor();
-        let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
-
-        // Enable smoothing for scaled tiles (upscale for LOD 0, downsample for LOD 2)
-        ctx.set_image_smoothing_enabled(true);
+        // Enable smoothing when scaling (fallback tiles are upscaled)
+        ctx.set_image_smoothing_enabled(tile_lod != ideal_lod);
         let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
             &tmp,
-            tile_src_x, src_y, tile_src_w, src_h,
+            src_x, src_y, src_w, src_h,
             dst_x, dst_y, dst_w, dst_h,
         );
     };
 
-    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-        let tile_col_start = tile_idx * TILE_COLS;
+    for tile_idx in first_tile..=last_tile {
+        // LOD1 column range this ideal-LOD tile covers
+        let tile_lod1_start = tile_idx as f64 * TILE_COLS as f64 / ratio;
+        let tile_lod1_end = tile_lod1_start + TILE_COLS as f64 / ratio;
+
+        // Clip to visible range
+        let clip_start = vis_start.max(tile_lod1_start);
+        let clip_end = vis_end.min(tile_lod1_end);
+        if clip_end <= clip_start { continue; }
+
         let mut tile_drawn = false;
 
-        // Try LOD 2 (high-res) first if zoomed in
-        if use_lod2 {
-            let lod2_drawn = tile_cache::borrow_lod2_tile(file_idx, tile_idx, |tile| {
-                blit_scaled_tile(tile, tile_col_start);
-            });
-            if lod2_drawn.is_some() { tile_drawn = true; }
-        }
+        // Try ideal LOD first
+        let r = tile_cache::borrow_tile(file_idx, ideal_lod, tile_idx, |tile| {
+            blit_any_tile(tile, ideal_lod, tile_idx, clip_start, clip_end);
+        });
+        if r.is_some() { tile_drawn = true; }
 
-        // Fall back to LOD 1 (normal resolution)
+        // Fallback to lower LODs (coarser, but covers the same time range)
         if !tile_drawn {
-            let drawn = tile_cache::borrow_tile(file_idx, tile_idx, |tile| {
-                let tw = tile.rendered.width as f64;
-                let th = tile.rendered.height as f64;
-                if tw == 0.0 || th == 0.0 { return; }
-
-                let pixels = if !tile.rendered.db_data.is_empty() {
-                    db_tile_to_rgba(
-                        &tile.rendered.db_data,
-                        tile.rendered.width, tile.rendered.height,
-                        display_settings, colormap,
-                    )
-                } else {
-                    let mut px = tile.rendered.pixels.clone();
-                    match colormap {
-                        ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut px, cm),
-                        ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
-                            apply_hfr_colormap_to_tile(
-                                &mut px, tile.rendered.width, tile.rendered.height,
-                                cm, ff_lo_frac, ff_hi_frac,
-                            );
-                        }
-                    }
-                    px
-                };
-
-                let clamped = Clamped(&pixels[..]);
-                let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
-                    clamped, tile.rendered.width, tile.rendered.height,
-                ) else { return };
-
-                let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
-                if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
-                    tmp.set_width(tile.rendered.width);
-                    tmp.set_height(tile.rendered.height);
-                }
-                let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
-
-                let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
-                let tile_src_end = (src_end - tile_col_start as f64).min(tw);
-                let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
-                if tile_src_w <= 0.0 { return; }
-
-                let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
-                    let sy = th * (1.0 - fc_hi);
-                    let sh = th * (fc_hi - fc_lo).max(0.001);
-                    (sy, sh, 0.0, ch)
-                } else {
-                    let fc_range = (fc_hi - fc_lo).max(0.001);
-                    let data_frac = (1.0 - fc_lo) / fc_range;
-                    let sh = th * (1.0 - fc_lo);
-                    (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
-                };
-
-                let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
-                let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
-                let dst_x = dst_x_raw.floor();
-                let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
-
-                let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                    &tmp,
-                    tile_src_x, src_y, tile_src_w, src_h,
-                    dst_x, dst_y, dst_w, dst_h,
-                );
-            });
-            if drawn.is_some() { tile_drawn = true; }
-        }
-
-        // Fall back to LOD 0 (blurry preview)
-        if !tile_drawn {
-            let lod0_drawn = tile_cache::borrow_lod0_tile(file_idx, tile_idx, |tile| {
-                blit_scaled_tile(tile, tile_col_start);
-            });
-            if lod0_drawn.is_some() { tile_drawn = true; }
+            for fb_lod in (0..ideal_lod).rev() {
+                let (fb_tile, _fb_src_start, _fb_src_end) =
+                    tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
+                let r = tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
+                    blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                });
+                if r.is_some() { tile_drawn = true; break; }
+            }
         }
 
         if tile_drawn { any_drawn = true; }
     }
 
-    // Preview was drawn as base layer, so even if no tiles exist, something is visible
     any_drawn || preview.is_some()
 }
 
@@ -2128,7 +2078,9 @@ pub fn draw_notch_bands(
 
 /// Draw tile debug overlay: colored borders and LOD labels for each visible tile.
 ///
-/// Colors: Green = LOD2, Blue = LOD1, Yellow = LOD0, Red = missing.
+/// Shows the ideal LOD tile grid with colors indicating which LOD is actually
+/// rendered (ideal vs fallback). Colors: LOD3 = cyan, LOD2 = green, LOD1 = blue,
+/// LOD0 = yellow, missing = red.
 pub fn draw_tile_debug_overlay(
     ctx: &CanvasRenderingContext2d,
     canvas: &HtmlCanvasElement,
@@ -2143,36 +2095,55 @@ pub fn draw_tile_debug_overlay(
     let ch = canvas.height() as f64;
     if total_cols == 0 || zoom <= 0.0 { return; }
 
-    let visible_cols = cw / zoom;
-    let src_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
-    let src_end = (src_start + visible_cols).min(total_cols as f64);
+    let ideal_lod = tile_cache::select_lod(zoom);
+    let ratio = tile_cache::lod_ratio(ideal_lod);
 
-    let first_tile = (src_start / tile_cache::TILE_COLS as f64).floor() as usize;
-    let last_tile = ((src_end - 1.0).max(0.0) / tile_cache::TILE_COLS as f64).floor() as usize;
-    let n_tiles = (total_cols + tile_cache::TILE_COLS - 1) / tile_cache::TILE_COLS;
+    let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let vis_end = (vis_start + cw / zoom).min(total_cols as f64);
+
+    let vis_start_lod = vis_start * ratio;
+    let vis_end_lod = vis_end * ratio;
+
+    let first_tile = (vis_start_lod / tile_cache::TILE_COLS as f64).floor() as usize;
+    let last_tile = ((vis_end_lod - 0.001).max(0.0) / tile_cache::TILE_COLS as f64).floor() as usize;
 
     ctx.save();
     ctx.set_line_width(1.0);
     ctx.set_font("11px monospace");
     ctx.set_text_baseline("top");
 
-    for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-        let tile_col_start = tile_idx * tile_cache::TILE_COLS;
+    for tile_idx in first_tile..=last_tile {
+        let tile_lod1_start = tile_idx as f64 * TILE_COLS as f64 / ratio;
+        let tile_lod1_end = tile_lod1_start + TILE_COLS as f64 / ratio;
 
-        // Determine which LOD is active for this tile
-        let (lod_label, color) = if tile_cache::get_lod2_tile(file_idx, tile_idx).is_some() {
-            ("L2", "#0f0") // green
-        } else if tile_cache::get_tile(file_idx, tile_idx).is_some() {
-            ("L1", "#48f") // blue
-        } else if tile_cache::get_lod0_tile(file_idx, tile_idx).is_some() {
-            ("L0", "#ff0") // yellow
+        // Determine which LOD is actually rendered for this tile
+        let (lod_label, color) = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
+            let label = format!("L{ideal_lod}");
+            let c = match ideal_lod { 3 => "#0ff", 2 => "#0f0", 0 => "#ff0", _ => "#48f" };
+            (label, c)
         } else {
-            ("--", "#f44") // red = missing
+            // Check fallback LODs
+            let mut found = None;
+            for fb_lod in (0..ideal_lod).rev() {
+                let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
+                if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
+                    found = Some(fb_lod);
+                    break;
+                }
+            }
+            match found {
+                Some(l) => {
+                    let label = format!("L{l}fb");
+                    let c = match l { 0 => "#ff0", 1 => "#48f", 2 => "#0f0", _ => "#0ff" };
+                    (label, c)
+                }
+                None => ("--".to_string(), "#f44"),
+            }
         };
 
         // Tile destination rectangle on canvas
-        let tile_x_start = ((tile_col_start as f64) - src_start) * zoom;
-        let tile_x_end = ((tile_col_start + tile_cache::TILE_COLS) as f64 - src_start) * zoom;
+        let tile_x_start = (tile_lod1_start - vis_start) * zoom;
+        let tile_x_end = (tile_lod1_end - vis_start) * zoom;
         let dx = tile_x_start.max(0.0);
         let dw = (tile_x_end.min(cw) - dx).max(0.0);
         if dw <= 0.0 { continue; }
@@ -2186,19 +2157,19 @@ pub fn draw_tile_debug_overlay(
         let label_x = dx + 3.0;
         let label_y = 3.0;
         ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 60.0, 14.0);
+        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 72.0, 14.0);
 
         // Draw label text
         ctx.set_fill_style_str(color);
         let _ = ctx.fill_text(&label, label_x, label_y);
     }
 
-    // Draw zoom level in top-right corner
-    let zoom_label = format!("z={zoom:.1}");
+    // Draw zoom level + ideal LOD in top-right corner
+    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod}");
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-    ctx.fill_rect(cw - 70.0, 3.0, 67.0, 14.0);
+    ctx.fill_rect(cw - 110.0, 3.0, 107.0, 14.0);
     ctx.set_fill_style_str("#fff");
-    let _ = ctx.fill_text(&zoom_label, cw - 68.0, 4.0);
+    let _ = ctx.fill_text(&zoom_label, cw - 108.0, 4.0);
 
     ctx.restore();
 }

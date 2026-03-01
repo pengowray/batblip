@@ -357,25 +357,58 @@ pub fn Spectrogram() -> impl IntoView {
                 scroll, visible_time, duration,
             );
 
-            // Schedule any missing visible tiles for on-demand generation
+            // Schedule missing tiles at the ideal LOD for the current zoom
             {
                 use crate::canvas::tile_cache::{self, TILE_COLS};
                 use crate::canvas::spectral_store;
 
-                let visible_cols_f = display_w as f64 / zoom;
-                let src_start = scroll_col.max(0.0);
-                let src_end = (src_start + visible_cols_f).min(total_cols as f64);
-                let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
-                let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-                let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+                let ideal_lod = tile_cache::select_lod(zoom);
+                let ratio = tile_cache::lod_ratio(ideal_lod);
+
+                let vis_start = scroll_col.max(0.0);
+                let vis_end = (vis_start + display_w as f64 / zoom).min(total_cols as f64);
+
+                // Tile range at ideal LOD
+                let vis_start_lod = vis_start * ratio;
+                let vis_end_lod = vis_end * ratio;
+                let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
+                let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
 
                 let is_loading = state.loading_count.get_untracked() > 0;
 
-                for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-                    if tile_cache::get_tile(file_idx_val, t).is_none() {
-                        tile_cache::schedule_lod0_tile(state.clone(), file_idx_val, t);
+                for t in first_tile..=last_tile {
+                    // Schedule ideal LOD tile
+                    if tile_cache::get_tile(file_idx_val, ideal_lod, t).is_none() {
+                        tile_cache::schedule_tile_lod(state.clone(), file_idx_val, ideal_lod, t);
+                    }
 
-                        if !is_loading {
+                    // Also ensure a LOD1 fallback tile exists (for smooth transitions)
+                    if ideal_lod != 1 {
+                        // Map this ideal-LOD tile back to LOD1 tile space
+                        let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
+                        if tile_cache::get_tile(file_idx_val, 1, fb_tile).is_none() {
+                            if !is_loading {
+                                let tile_start = fb_tile * TILE_COLS;
+                                let tile_end = (tile_start + TILE_COLS).min(total_cols);
+                                if spectral_store::has_store(file_idx_val)
+                                    && spectral_store::tile_complete(file_idx_val, tile_start, tile_end)
+                                {
+                                    tile_cache::schedule_tile_from_store(state.clone(), file_idx_val, fb_tile);
+                                } else {
+                                    tile_cache::schedule_tile_on_demand(state.clone(), file_idx_val, fb_tile);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // When ideal LOD is 1, also schedule LOD1 from store/on-demand
+                // for any missing tiles (same as before)
+                if ideal_lod == 1 && !is_loading {
+                    let lod1_first = (vis_start / TILE_COLS as f64).floor() as usize;
+                    let lod1_last = ((vis_end - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+                    for t in lod1_first..=lod1_last {
+                        if tile_cache::get_tile(file_idx_val, 1, t).is_none() {
                             let tile_start = t * TILE_COLS;
                             let tile_end = (tile_start + TILE_COLS).min(total_cols);
                             if spectral_store::has_store(file_idx_val)
@@ -386,13 +419,6 @@ pub fn Spectrogram() -> impl IntoView {
                                 tile_cache::schedule_tile_on_demand(state.clone(), file_idx_val, t);
                             }
                         }
-                    }
-
-                    // Schedule LOD 2 (high-res) tiles when zoomed in
-                    if zoom >= tile_cache::LOD2_ZOOM_THRESHOLD
-                        && tile_cache::get_lod2_tile(file_idx_val, t).is_none()
-                    {
-                        tile_cache::schedule_lod2_tile(state.clone(), file_idx_val, t);
                     }
                 }
             }
