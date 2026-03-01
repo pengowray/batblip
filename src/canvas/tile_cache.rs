@@ -171,19 +171,6 @@ pub fn evict_far(file_idx: usize, center_tile: usize, keep_radius: usize) {
 
 /// Schedule background generation of a tile if not already cached or in-flight.
 pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_idx: usize) {
-    let max_mag = spectrogram_renderer::global_max_magnitude(&file.spectrogram);
-    schedule_tile_with_max(state, file, file_idx, tile_idx, max_mag);
-}
-
-/// Like `schedule_tile` but accepts a pre-computed max magnitude to avoid
-/// redundantly scanning all columns for each tile.
-pub fn schedule_tile_with_max(
-    state: AppState,
-    file: LoadedFile,
-    file_idx: usize,
-    tile_idx: usize,
-    max_mag: f32,
-) {
     let key = (file_idx, tile_idx);
     // Skip if already cached
     if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) {
@@ -227,7 +214,6 @@ pub fn schedule_tile_with_max(
 
         let rendered = spectrogram_renderer::pre_render_columns(
             &file.spectrogram.columns[col_start..col_end],
-            max_mag,
         );
 
         // Store in cache and evict corresponding LOD 0 (no longer needed)
@@ -251,11 +237,8 @@ pub fn schedule_all_tiles(state: AppState, file: LoadedFile, file_idx: usize) {
     if total_cols == 0 { return; }
     let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
 
-    // Compute global max once and share across all tiles
-    let max_mag = spectrogram_renderer::global_max_magnitude(&file.spectrogram);
-
     for tile_idx in 0..n_tiles {
-        schedule_tile_with_max(state.clone(), file.clone(), file_idx, tile_idx, max_mag);
+        schedule_tile(state.clone(), file.clone(), file_idx, tile_idx);
     }
 }
 
@@ -271,8 +254,8 @@ pub fn render_tile_from_store_sync(file_idx: usize, tile_idx: usize) -> bool {
     let col_start = tile_idx * TILE_COLS;
     let col_end = col_start + TILE_COLS; // with_columns clamps to store len
 
-    let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, max_mag| {
-        spectrogram_renderer::pre_render_columns(cols, max_mag)
+    let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, _max_mag| {
+        spectrogram_renderer::pre_render_columns(cols)
     });
 
     if let Some(rendered) = rendered {
@@ -294,8 +277,8 @@ pub fn render_live_tile_sync(file_idx: usize, tile_idx: usize, col_start: usize,
     use crate::canvas::spectral_store;
 
     let col_end = col_start + available_cols;
-    let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, max_mag| {
-        let partial = spectrogram_renderer::pre_render_columns(cols, max_mag);
+    let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, _max_mag| {
+        let partial = spectrogram_renderer::pre_render_columns(cols);
 
         if partial.width == 0 || partial.height == 0 {
             return partial;
@@ -395,8 +378,8 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
         let col_start = tile_idx * TILE_COLS;
         let col_end = col_start + TILE_COLS; // with_columns clamps to store len
 
-        let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, max_mag| {
-            spectrogram_renderer::pre_render_columns(cols, max_mag)
+        let rendered = spectral_store::with_columns(file_idx, col_start, col_end, |cols, _max_mag| {
+            spectrogram_renderer::pre_render_columns(cols)
         });
 
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
@@ -498,10 +481,9 @@ pub fn schedule_tile_on_demand(
 
         // Insert into spectral store so future requests can use them
         spectral_store::insert_columns(file_idx, col_start, &cols);
-        let max_mag = spectral_store::get_max_magnitude(file_idx);
 
         // Render the tile
-        let rendered = spectrogram_renderer::pre_render_columns(&cols, max_mag);
+        let rendered = spectrogram_renderer::pre_render_columns(&cols);
 
         CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         evict_lod0_for_tile(file_idx, tile_idx);
@@ -541,7 +523,6 @@ pub const LOD2_ZOOM_THRESHOLD: f64 = 2.0;
 /// LOD 0 tiles are fast to compute (~5ms) and provide a blurry preview
 /// while full-quality tiles are being generated.
 pub fn schedule_lod0_tile(state: AppState, file_idx: usize, tile_idx: usize) {
-    use crate::canvas::spectral_store;
     use crate::dsp::fft::compute_spectrogram_partial;
 
     let key = (file_idx, tile_idx);
@@ -575,16 +556,7 @@ pub fn schedule_lod0_tile(state: AppState, file_idx: usize, tile_idx: usize) {
 
         if cols.is_empty() { return; }
 
-        // Use global max from spectral store for consistent normalization with LOD 1.
-        // Fall back to per-tile max if the store has no data yet.
-        let store_max = spectral_store::get_max_magnitude(file_idx);
-        let tile_max = cols.iter()
-            .flat_map(|c| c.magnitudes.iter())
-            .copied()
-            .fold(0.0f32, f32::max);
-        let max_mag = if store_max > 0.0 { store_max } else { tile_max };
-
-        let rendered = spectrogram_renderer::pre_render_columns(&cols, max_mag);
+        let rendered = spectrogram_renderer::pre_render_columns(&cols);
         LOD0_CACHE.with(|c| {
             c.borrow_mut().insert(key, Tile {
                 tile_idx,
@@ -615,7 +587,6 @@ fn evict_lod0_for_tile(file_idx: usize, tile_idx: usize) {
 /// Schedule a LOD 2 (high-resolution) tile if not already cached.
 /// LOD 2 tiles use FFT=2048 hop=128 for 4× time resolution, computed when zoomed in.
 pub fn schedule_lod2_tile(state: AppState, file_idx: usize, tile_idx: usize) {
-    use crate::canvas::spectral_store;
     use crate::dsp::fft::compute_spectrogram_partial;
 
     let key = (file_idx, tile_idx);
@@ -658,16 +629,7 @@ pub fn schedule_lod2_tile(state: AppState, file_idx: usize, tile_idx: usize) {
 
         if cols.is_empty() { return; }
 
-        // Use global max from spectral store for consistent normalization with LOD 1.
-        // Fall back to per-tile max if the store has no data yet.
-        let store_max = spectral_store::get_max_magnitude(file_idx);
-        let tile_max = cols.iter()
-            .flat_map(|c| c.magnitudes.iter())
-            .copied()
-            .fold(0.0f32, f32::max);
-        let max_mag = if store_max > 0.0 { store_max } else { tile_max };
-
-        let rendered = spectrogram_renderer::pre_render_columns(&cols, max_mag);
+        let rendered = spectrogram_renderer::pre_render_columns(&cols);
         LOD2_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });
@@ -797,21 +759,10 @@ pub fn schedule_flow_tile(
 
                 let samples = file.audio.samples[sample_start..sample_end].to_vec();
 
-                let store_max = spectral_store::get_max_magnitude(file_idx);
-                let max_mag = if store_max > 0.0 {
-                    store_max
-                } else {
-                    file.spectrogram.columns.iter()
-                        .flat_map(|c| c.magnitudes.iter())
-                        .copied()
-                        .fold(0.0f32, f32::max)
-                        .max(1e-10)
-                };
-
-                Some((samples, fft_size, hop_size, max_mag))
+                Some((samples, fft_size, hop_size))
             });
 
-            let Some((samples, fft_size, hop_size, max_mag)) = tile_data else {
+            let Some((samples, fft_size, hop_size)) = tile_data else {
                 FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                 return;
             };
@@ -819,13 +770,13 @@ pub fn schedule_flow_tile(
             yield_to_browser().await;
 
             harmonics::compute_tile_phase_data(
-                &samples, TILE_COLS, fft_size, hop_size, max_mag,
+                &samples, TILE_COLS, fft_size, hop_size,
             )
         } else {
             // Shift-based flow: compute from spectrogram columns
             let col_start = tile_idx * TILE_COLS;
 
-            let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, max_mag| {
+            let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _max_mag| {
                 let prev_col = if tile_idx > 0 {
                     let prev_end = col_start;
                     let prev_start = prev_end.saturating_sub(1);
@@ -836,7 +787,7 @@ pub fn schedule_flow_tile(
                     None
                 };
                 spectrogram_renderer::pre_render_flow_columns(
-                    cols, prev_col.as_deref(), max_mag, algo,
+                    cols, prev_col.as_deref(), algo,
                 )
             });
 
@@ -846,7 +797,6 @@ pub fn schedule_flow_tile(
                 let fallback = state.files.with_untracked(|files| {
                     files.get(file_idx).and_then(|f| {
                         if f.spectrogram.columns.is_empty() { return None; }
-                        let max_mag = spectrogram_renderer::global_max_magnitude(&f.spectrogram);
                         let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
                         if col_start >= end { return None; }
                         let cols = &f.spectrogram.columns[col_start..end];
@@ -856,7 +806,7 @@ pub fn schedule_flow_tile(
                             None
                         };
                         Some(spectrogram_renderer::pre_render_flow_columns(
-                            cols, prev_col, max_mag, algo,
+                            cols, prev_col, algo,
                         ))
                     })
                 });

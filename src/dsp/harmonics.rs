@@ -571,20 +571,17 @@ fn mean_f32(v: &[f32]) -> f32 {
 
 /// Compute phase coherence tile data for a range of audio samples.
 ///
-/// Returns a `PreRendered` with pre-colored RGBA pixels using a 2D colormap:
-/// - Primary axis: magnitude intensity (greyscale)
-/// - Secondary axis: signed phase deviation direction
+/// Returns a `PreRendered` with absolute dB values and phase deviation shifts
+/// for deferred compositing at render time.
 ///
 /// `samples`: raw audio covering at least `(col_count + 1) * hop_size + fft_size` samples.
 /// `col_count`: number of output columns (typically 256 / TILE_COLS).
 /// `fft_size`, `hop_size`: STFT parameters matching the main spectrogram.
-/// `max_mag`: global max magnitude for intensity normalisation.
 pub fn compute_tile_phase_data(
     samples: &[f32],
     col_count: usize,
     fft_size: usize,
     hop_size: usize,
-    max_mag: f32,
 ) -> crate::canvas::spectrogram_renderer::PreRendered {
     use crate::canvas::colors::magnitude_to_db;
 
@@ -632,8 +629,8 @@ pub fn compute_tile_phase_data(
             let row = n_bins - 1 - k;
             let idx = row * width as usize + col;
 
-            // Store magnitude as dB
-            db_data[idx] = magnitude_to_db(mag, max_mag);
+            // Store magnitude as absolute dB
+            db_data[idx] = magnitude_to_db(mag);
 
             // Gate: skip very quiet bins — phase is undefined there
             if mag < 1e-8 || mag_prev < 1e-8 {

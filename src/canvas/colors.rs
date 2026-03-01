@@ -1,19 +1,24 @@
-/// Convert a magnitude to dB relative to `max_mag`.
-/// Returns a negative value (0 dB = max, more negative = quieter).
+/// Convert a magnitude to absolute dB: `20 * log10(mag)`.
+///
+/// Tiles store absolute dB so that all LOD levels produce identical values
+/// for the same audio sample.  A reference level (`20 * log10(max_mag)`) is
+/// applied at render time as a negative gain offset.
+///
 /// Returns `f32::NEG_INFINITY` for zero/negative magnitudes.
 #[inline]
-pub fn magnitude_to_db(mag: f32, max_mag: f32) -> f32 {
-    if max_mag <= 0.0 || mag <= 0.0 {
+pub fn magnitude_to_db(mag: f32) -> f32 {
+    if mag <= 0.0 {
         return f32::NEG_INFINITY;
     }
-    20.0 * (mag / max_mag).log10()
+    20.0 * mag.log10()
 }
 
 /// Map a spectrogram magnitude to a greyscale pixel value (0-255).
 /// Uses log scale (dB) for perceptual brightness.
 pub fn magnitude_to_greyscale(mag: f32, max_mag: f32) -> u8 {
-    let db = magnitude_to_db(mag, max_mag);
-    db_to_greyscale(db, -80.0, 80.0, 1.0, 0.0)
+    let abs_db = magnitude_to_db(mag);
+    let ref_db = if max_mag > 0.0 { 20.0 * max_mag.log10() } else { 0.0 };
+    db_to_greyscale(abs_db, -80.0, 80.0, 1.0, -ref_db)
 }
 
 /// Convert a dB value to a greyscale pixel value (0-255) using display settings.

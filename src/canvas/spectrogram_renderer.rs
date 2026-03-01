@@ -108,16 +108,15 @@ pub fn pre_render(data: &SpectrogramData) -> PreRendered {
     }
 }
 
-/// Pre-render a slice of columns (a tile) with a given global max magnitude for normalization.
-/// The global max is passed in so all tiles use the same normalisation scale.
+/// Pre-render a slice of columns (a tile) into absolute dB values.
 ///
-/// Stores f32 dB values per pixel so that gain, contrast, and dynamic range
-/// can be adjusted at render time without regenerating the tile.
+/// Stores f32 absolute dB values (`20 * log10(mag)`) per pixel so that gain,
+/// contrast, dynamic range, and reference level can all be adjusted at render
+/// time without regenerating the tile.
 pub fn pre_render_columns(
     columns: &[crate::types::SpectrogramColumn],
-    max_mag: f32,
 ) -> PreRendered {
-    if columns.is_empty() || max_mag <= 0.0 {
+    if columns.is_empty() {
         return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };
     }
     let width = columns.len() as u32;
@@ -125,7 +124,7 @@ pub fn pre_render_columns(
     let mut db_data = vec![f32::NEG_INFINITY; (width * height) as usize];
     for (col_idx, col) in columns.iter().enumerate() {
         for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
-            let db = magnitude_to_db(mag, max_mag);
+            let db = magnitude_to_db(mag);
             let y = height as usize - 1 - bin_idx;
             let idx = y * width as usize + col_idx;
             db_data[idx] = db;
@@ -363,10 +362,9 @@ fn compute_flow_shift(prev: &[f32], curr: &[f32], bin: usize, h: usize) -> f32 {
 pub fn pre_render_flow_columns(
     columns: &[crate::types::SpectrogramColumn],
     prev_column_mags: Option<&[f32]>,
-    max_mag: f32,
     algo: FlowAlgo,
 ) -> PreRendered {
-    if columns.is_empty() || max_mag <= 0.0 {
+    if columns.is_empty() {
         return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };
     }
 
@@ -385,7 +383,7 @@ pub fn pre_render_flow_columns(
         };
 
         for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
-            let db = magnitude_to_db(mag, max_mag);
+            let db = magnitude_to_db(mag);
 
             let shift = match prev_mags {
                 None => 0.0,

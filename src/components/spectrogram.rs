@@ -284,11 +284,22 @@ pub fn Spectrogram() -> impl IntoView {
         let visible_time = (display_w as f64 / zoom) * time_res;
         let duration = file.map(|f| f.audio.duration_secs).unwrap_or(0.0);
 
+        // Compute reference dB level from the file's global max magnitude.
+        // Tiles store absolute dB values; subtracting ref_db converts them back
+        // to the relative scale (0 dB = loudest) used by the display pipeline.
+        let ref_db = if total_cols > 0 {
+            use crate::canvas::spectral_store;
+            let max_mag = spectral_store::get_max_magnitude(file_idx_val);
+            if max_mag > 0.0 { 20.0 * max_mag.log10() } else { 0.0 }
+        } else {
+            0.0
+        };
+
         let display_settings = SpectDisplaySettings {
             floor_db: spect_floor,
             range_db: spect_range,
             gamma: spect_gamma,
-            gain_db: spect_gain,
+            gain_db: spect_gain - ref_db,
         };
 
         // Step 1: Render base spectrogram.
