@@ -865,89 +865,100 @@ pub fn blit_tiles_viewport(
     let fc_hi = freq_crop_hi.max(0.01);
 
     let mut any_drawn = false;
+    let use_lod2 = zoom >= tile_cache::LOD2_ZOOM_THRESHOLD;
+
+    // Helper: blit a scaled LOD tile (used by LOD 0 and LOD 2).
+    // The tile may have more or fewer columns than TILE_COLS — source coordinates
+    // are scaled proportionally so the tile covers the same time range.
+    let blit_scaled_tile = |tile: &tile_cache::Tile, tile_col_start: usize| {
+        let tw = tile.rendered.width as f64;
+        let th = tile.rendered.height as f64;
+        if tw == 0.0 || th == 0.0 { return; }
+
+        let pixels = if !tile.rendered.db_data.is_empty() {
+            db_tile_to_rgba(
+                &tile.rendered.db_data,
+                tile.rendered.width, tile.rendered.height,
+                display_settings, colormap,
+            )
+        } else {
+            let mut px = tile.rendered.pixels.clone();
+            match colormap {
+                ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut px, cm),
+                ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
+                    apply_hfr_colormap_to_tile(
+                        &mut px, tile.rendered.width, tile.rendered.height,
+                        cm, ff_lo_frac, ff_hi_frac,
+                    );
+                }
+            }
+            px
+        };
+
+        let clamped = Clamped(&pixels[..]);
+        let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
+            clamped, tile.rendered.width, tile.rendered.height,
+        ) else { return };
+
+        let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
+        if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
+            tmp.set_width(tile.rendered.width);
+            tmp.set_height(tile.rendered.height);
+        }
+        let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
+
+        // Scale: tile columns span the same time range as TILE_COLS at LOD 1.
+        // LOD 0: scale < 1 (fewer cols), LOD 2: scale > 1 (more cols).
+        let scale = tw / TILE_COLS as f64;
+        let tile_src_x = ((src_start - tile_col_start as f64).max(0.0)) * scale;
+        let tile_src_end = ((src_end - tile_col_start as f64).min(TILE_COLS as f64)) * scale;
+        let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
+        if tile_src_w <= 0.0 { return; }
+
+        // Vertical crop
+        let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
+            let sy = th * (1.0 - fc_hi);
+            let sh = th * (fc_hi - fc_lo).max(0.001);
+            (sy, sh, 0.0, ch)
+        } else {
+            let fc_range = (fc_hi - fc_lo).max(0.001);
+            let data_frac = (1.0 - fc_lo) / fc_range;
+            let sh = th * (1.0 - fc_lo);
+            (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
+        };
+
+        // Destination: same position as the LOD 1 tile would occupy.
+        let col_offset = (src_start - tile_col_start as f64).max(0.0);
+        let dst_x_raw = ((tile_col_start as f64 + col_offset) - src_start) * zoom;
+        let visible_cols_f = ((src_end - tile_col_start as f64).min(TILE_COLS as f64) - col_offset).max(0.0);
+        let dst_x_end_raw = dst_x_raw + visible_cols_f * zoom;
+        let dst_x = dst_x_raw.floor();
+        let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
+
+        // Enable smoothing for scaled tiles (upscale for LOD 0, downsample for LOD 2)
+        ctx.set_image_smoothing_enabled(true);
+        let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+            &tmp,
+            tile_src_x, src_y, tile_src_w, src_h,
+            dst_x, dst_y, dst_w, dst_h,
+        );
+    };
 
     for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
         let tile_col_start = tile_idx * TILE_COLS;
+        let mut tile_drawn = false;
 
-        let drawn = tile_cache::borrow_tile(file_idx, tile_idx, |tile| {
-            let tw = tile.rendered.width as f64;
-            let th = tile.rendered.height as f64;
-            if tw == 0.0 || th == 0.0 { return; }
+        // Try LOD 2 (high-res) first if zoomed in
+        if use_lod2 {
+            let lod2_drawn = tile_cache::borrow_lod2_tile(file_idx, tile_idx, |tile| {
+                blit_scaled_tile(tile, tile_col_start);
+            });
+            if lod2_drawn.is_some() { tile_drawn = true; }
+        }
 
-            // Convert tile data to RGBA pixels with colormap + display settings
-            let pixels = if !tile.rendered.db_data.is_empty() {
-                // dB tile: apply gain/contrast/colormap at render time
-                db_tile_to_rgba(
-                    &tile.rendered.db_data,
-                    tile.rendered.width, tile.rendered.height,
-                    display_settings, colormap,
-                )
-            } else {
-                // RGBA tile (legacy): clone and apply colormap only
-                let mut px = tile.rendered.pixels.clone();
-                match colormap {
-                    ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut px, cm),
-                    ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
-                        apply_hfr_colormap_to_tile(
-                            &mut px, tile.rendered.width, tile.rendered.height,
-                            cm, ff_lo_frac, ff_hi_frac,
-                        );
-                    }
-                }
-                px
-            };
-
-            // Create ImageData and draw to off-screen canvas
-            let clamped = Clamped(&pixels[..]);
-            let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
-                clamped, tile.rendered.width, tile.rendered.height,
-            ) else { return };
-
-            let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
-            // Resize if needed (get_tmp_canvas guarantees >= size)
-            if tmp.width() != tile.rendered.width || tmp.height() != tile.rendered.height {
-                tmp.set_width(tile.rendered.width);
-                tmp.set_height(tile.rendered.height);
-            }
-            let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
-
-            // Source rect within this tile
-            let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
-            let tile_src_end = (src_end - tile_col_start as f64).min(tw);
-            let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
-            if tile_src_w <= 0.0 { return; }
-
-            // Vertical crop
-            let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
-                let sy = th * (1.0 - fc_hi);
-                let sh = th * (fc_hi - fc_lo).max(0.001);
-                (sy, sh, 0.0, ch)
-            } else {
-                let fc_range = (fc_hi - fc_lo).max(0.001);
-                let data_frac = (1.0 - fc_lo) / fc_range;
-                let sh = th * (1.0 - fc_lo);
-                (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
-            };
-
-            // Destination x: where this tile's visible portion starts on canvas.
-            // Floor left edge & ceil right edge to eliminate sub-pixel gaps between tiles.
-            let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
-            let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
-            let dst_x = dst_x_raw.floor();
-            let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
-
-            let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                &tmp,
-                tile_src_x, src_y, tile_src_w, src_h,
-                dst_x, dst_y, dst_w, dst_h,
-            );
-        });
-
-        if drawn.is_some() {
-            any_drawn = true;
-        } else {
-            // LOD 1 tile missing — try LOD 0 (blurry but fast) as fallback
-            let lod0_drawn = tile_cache::borrow_lod0_tile(file_idx, tile_idx, |tile| {
+        // Fall back to LOD 1 (normal resolution)
+        if !tile_drawn {
+            let drawn = tile_cache::borrow_tile(file_idx, tile_idx, |tile| {
                 let tw = tile.rendered.width as f64;
                 let th = tile.rendered.height as f64;
                 if tw == 0.0 || th == 0.0 { return; }
@@ -984,16 +995,11 @@ pub fn blit_tiles_viewport(
                 }
                 let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
 
-                // LOD 0 tile covers the same time range but has fewer columns.
-                // Map source coordinates proportionally: LOD 0's tw columns span
-                // the same range as TILE_COLS at LOD 1.
-                let scale = tw / TILE_COLS as f64;
-                let tile_src_x = ((src_start - tile_col_start as f64).max(0.0)) * scale;
-                let tile_src_end = ((src_end - tile_col_start as f64).min(TILE_COLS as f64)) * scale;
+                let tile_src_x = (src_start - tile_col_start as f64).max(0.0);
+                let tile_src_end = (src_end - tile_col_start as f64).min(tw);
                 let tile_src_w = (tile_src_end - tile_src_x).max(0.0);
                 if tile_src_w <= 0.0 { return; }
 
-                // Vertical crop
                 let (src_y, src_h, dst_y, dst_h) = if fc_hi <= 1.0 {
                     let sy = th * (1.0 - fc_hi);
                     let sh = th * (fc_hi - fc_lo).max(0.001);
@@ -1005,27 +1011,29 @@ pub fn blit_tiles_viewport(
                     (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
                 };
 
-                // Destination: same position as the LOD 1 tile would occupy.
-                // Floor/ceil to match LOD 1 tile snapping and avoid sub-pixel gaps.
-                let col_offset = (src_start - tile_col_start as f64).max(0.0);
-                let dst_x_raw = ((tile_col_start as f64 + col_offset) - src_start) * zoom;
-                let visible_cols = ((src_end - tile_col_start as f64).min(TILE_COLS as f64) - col_offset).max(0.0);
-                let dst_x_end_raw = dst_x_raw + visible_cols * zoom;
+                let dst_x_raw = ((tile_col_start as f64 + tile_src_x) - src_start) * zoom;
+                let dst_x_end_raw = ((tile_col_start as f64 + tile_src_x + tile_src_w) - src_start) * zoom;
                 let dst_x = dst_x_raw.floor();
                 let dst_w = (dst_x_end_raw.ceil() - dst_x).max(1.0);
 
-                // Enable image smoothing for stretched LOD 0
-                ctx.set_image_smoothing_enabled(true);
                 let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
                     &tmp,
                     tile_src_x, src_y, tile_src_w, src_h,
                     dst_x, dst_y, dst_w, dst_h,
                 );
             });
-            if lod0_drawn.is_some() {
-                any_drawn = true;
-            }
+            if drawn.is_some() { tile_drawn = true; }
         }
+
+        // Fall back to LOD 0 (blurry preview)
+        if !tile_drawn {
+            let lod0_drawn = tile_cache::borrow_lod0_tile(file_idx, tile_idx, |tile| {
+                blit_scaled_tile(tile, tile_col_start);
+            });
+            if lod0_drawn.is_some() { tile_drawn = true; }
+        }
+
+        if tile_drawn { any_drawn = true; }
     }
 
     // Preview was drawn as base layer, so even if no tiles exist, something is visible

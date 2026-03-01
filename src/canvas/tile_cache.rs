@@ -123,6 +123,11 @@ thread_local! {
     static CHROMA_GLOBAL_MAX: RefCell<HashMap<usize, (f32, f32)>> =
         RefCell::new(HashMap::new());
 
+    /// Separate cache for LOD 2 (high-resolution) tiles.
+    /// These provide 4× time resolution when zoomed in (hop=128 vs LOD1 hop=512).
+    static LOD2_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static LOD2_IN_FLIGHT: RefCell<std::collections::HashSet<(usize, usize)>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -156,6 +161,8 @@ pub fn clear_file(file_idx: usize) {
     IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
     LOD0_CACHE.with(|c| c.borrow_mut().retain(|k, _| k.0 != file_idx));
     LOD0_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
+    LOD2_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
+    LOD2_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
 }
 
 pub fn evict_far(file_idx: usize, center_tile: usize, keep_radius: usize) {
@@ -515,6 +522,21 @@ const LOD0_HOP: usize = 2048;
 /// LOD 0 columns: 131072 / LOD0_HOP = 64.
 const LOD0_COLS_PER_TILE: usize = (TILE_COLS * 512) / LOD0_HOP;
 
+// ── LOD 2 (high-resolution) tile constants ──────────────────────────────────
+
+/// LOD 2 uses the same FFT size as LOD 1 (preserving frequency resolution)
+/// but a smaller hop for 4× finer time resolution when zoomed in.
+const LOD2_FFT: usize = 2048;
+const LOD2_HOP: usize = 128;
+
+/// Number of LOD 2 columns per tile (same time range as TILE_COLS at LOD 1).
+/// One LOD 1 tile covers TILE_COLS * 512 = 131072 samples.
+/// LOD 2 columns: 131072 / LOD2_HOP = 1024.
+pub const LOD2_COLS_PER_TILE: usize = (TILE_COLS * 512) / LOD2_HOP;
+
+/// Zoom threshold: schedule/render LOD 2 tiles when zoom >= this value.
+pub const LOD2_ZOOM_THRESHOLD: f64 = 2.0;
+
 /// Schedule a LOD 0 (quick-preview) tile if not already cached.
 /// LOD 0 tiles are fast to compute (~5ms) and provide a blurry preview
 /// while full-quality tiles are being generated.
@@ -586,6 +608,91 @@ fn evict_lod0_for_tile(file_idx: usize, tile_idx: usize) {
     LOD0_CACHE.with(|c| {
         c.borrow_mut().remove(&(file_idx, tile_idx));
     });
+}
+
+// ── LOD 2 (high-resolution) tiles ────────────────────────────────────────────
+
+/// Schedule a LOD 2 (high-resolution) tile if not already cached.
+/// LOD 2 tiles use FFT=2048 hop=128 for 4× time resolution, computed when zoomed in.
+pub fn schedule_lod2_tile(state: AppState, file_idx: usize, tile_idx: usize) {
+    use crate::canvas::spectral_store;
+    use crate::dsp::fft::compute_spectrogram_partial;
+
+    let key = (file_idx, tile_idx);
+    // Don't compute LOD 2 if already cached
+    if LOD2_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if LOD2_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+    LOD2_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
+
+    spawn_local(async move {
+        yield_to_browser().await;
+
+        // LOD 2 is expensive — yield extra to keep UI responsive
+        yield_to_browser().await;
+
+        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        if !is_current {
+            for _ in 0..3 {
+                yield_to_browser().await;
+            }
+        }
+
+        let audio = state.files.with_untracked(|files| {
+            files.get(file_idx).map(|f| f.audio.clone())
+        });
+        let Some(audio) = audio else {
+            LOD2_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
+
+        // Convert tile index to LOD 2 column space.
+        // LOD 1 col_start corresponds to sample offset: tile_idx * TILE_COLS * 512.
+        // LOD 2 col_start at the same sample offset: sample_offset / LOD2_HOP.
+        let sample_offset = tile_idx * TILE_COLS * 512;
+        let lod2_col_start = sample_offset / LOD2_HOP;
+
+        let cols = compute_spectrogram_partial(
+            &audio, LOD2_FFT, LOD2_HOP, lod2_col_start, LOD2_COLS_PER_TILE,
+        );
+        LOD2_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+
+        if cols.is_empty() { return; }
+
+        // Use global max from spectral store for consistent normalization with LOD 1.
+        // Fall back to per-tile max if the store has no data yet.
+        let store_max = spectral_store::get_max_magnitude(file_idx);
+        let tile_max = cols.iter()
+            .flat_map(|c| c.magnitudes.iter())
+            .copied()
+            .fold(0.0f32, f32::max);
+        let max_mag = if store_max > 0.0 { store_max } else { tile_max };
+
+        let rendered = spectrogram_renderer::pre_render_columns(&cols, max_mag);
+        LOD2_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+}
+
+/// Borrow a LOD 2 tile for rendering.
+pub fn borrow_lod2_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
+    LOD2_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let key = (file_idx, tile_idx);
+        if cache.tiles.contains_key(&key) {
+            cache.touch(key);
+            drop(cache);
+            LOD2_CACHE.with(|c| {
+                c.borrow().tiles.get(&key).map(|t| f(t))
+            })
+        } else {
+            None
+        }
+    })
+}
+
+/// Check if a LOD 2 tile exists in cache.
+pub fn get_lod2_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
+    LOD2_CACHE.with(|c| c.borrow().get(file_idx, tile_idx).map(|_| ()))
 }
 
 /// Returns the number of complete tiles for a file currently in the cache.

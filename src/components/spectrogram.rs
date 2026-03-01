@@ -375,6 +375,13 @@ pub fn Spectrogram() -> impl IntoView {
                             }
                         }
                     }
+
+                    // Schedule LOD 2 (high-res) tiles when zoomed in
+                    if zoom >= tile_cache::LOD2_ZOOM_THRESHOLD
+                        && tile_cache::get_lod2_tile(file_idx_val, t).is_none()
+                    {
+                        tile_cache::schedule_lod2_tile(state.clone(), file_idx_val, t);
+                    }
                 }
             }
 
