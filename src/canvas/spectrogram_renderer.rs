@@ -144,7 +144,7 @@ pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
 pub enum FlowAlgo {
     Centroid,
     Gradient,
-    Flow,
+    Optical,
 }
 
 /// Cached intermediate data: greyscale intensities + shift values per pixel.
@@ -200,7 +200,7 @@ pub fn compute_flow_data(data: &SpectrogramData, algo: FlowAlgo) -> FlowData {
                 Some(prev_mags) => match algo {
                     FlowAlgo::Centroid => compute_centroid_shift(prev_mags, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev_mags, &col.magnitudes, bin_idx, h),
-                    FlowAlgo::Flow => compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h),
+                    FlowAlgo::Optical => compute_flow_shift(prev_mags, &col.magnitudes, bin_idx, h),
                 },
             };
 
@@ -390,7 +390,7 @@ pub fn pre_render_flow_columns(
                 Some(prev) => match algo {
                     FlowAlgo::Centroid => compute_centroid_shift(prev, &col.magnitudes, bin_idx, h),
                     FlowAlgo::Gradient => compute_gradient_shift(prev, &col.magnitudes, bin_idx, h),
-                    FlowAlgo::Flow => compute_flow_shift(prev, &col.magnitudes, bin_idx, h),
+                    FlowAlgo::Optical => compute_flow_shift(prev, &col.magnitudes, bin_idx, h),
                 },
             };
 

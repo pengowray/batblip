@@ -408,7 +408,7 @@ fn MainViewButton() -> impl IntoView {
                                     <button
                                         class=layer_opt_class(display == SpectrogramDisplay::FlowOptical)
                                         on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowOptical)
-                                    >"Flow"</button>
+                                    >"Optical"</button>
                                     <button
                                         class=layer_opt_class(display == SpectrogramDisplay::FlowCentroid)
                                         on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowCentroid)

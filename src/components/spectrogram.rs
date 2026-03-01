@@ -351,7 +351,7 @@ pub fn Spectrogram() -> impl IntoView {
                 let algo = match display {
                     SpectrogramDisplay::FlowCentroid => FlowAlgo::Centroid,
                     SpectrogramDisplay::FlowGradient => FlowAlgo::Gradient,
-                    SpectrogramDisplay::FlowOptical => FlowAlgo::Flow,
+                    SpectrogramDisplay::FlowOptical => FlowAlgo::Optical,
                 };
 
                 for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
