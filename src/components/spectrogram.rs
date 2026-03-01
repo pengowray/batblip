@@ -460,6 +460,7 @@ pub fn Spectrogram() -> impl IntoView {
         if debug_tiles && total_cols > 0 {
             spectrogram_renderer::draw_tile_debug_overlay(
                 &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
+                state.spect_fft_size.get_untracked(),
             );
         }
 

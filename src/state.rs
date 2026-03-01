@@ -553,7 +553,7 @@ impl AppState {
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
-            spect_fft_size: RwSignal::new(2048),
+            spect_fft_size: RwSignal::new(1024),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),

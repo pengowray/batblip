@@ -93,14 +93,15 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 state.spect_fft_size.set(v);
                             }
                         }
-                        prop:value=move || state.spect_fft_size.get().to_string()
                     >
-                        <option value="256">"256"</option>
-                        <option value="512">"512"</option>
-                        <option value="1024">"1024"</option>
-                        <option value="2048">"2048"</option>
-                        <option value="4096">"4096"</option>
-                        <option value="8192">"8192"</option>
+                        {move || {
+                            let current = state.spect_fft_size.get();
+                            [256, 512, 1024, 2048, 4096, 8192].into_iter().map(|sz| {
+                                let s = sz.to_string();
+                                let s2 = s.clone();
+                                view! { <option value={s} selected=move || sz == current>{s2}</option> }
+                            }).collect::<Vec<_>>()
+                        }}
                     </select>
                 </div>
                 <div class="setting-row">

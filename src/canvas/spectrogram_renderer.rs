@@ -2088,6 +2088,7 @@ pub fn draw_tile_debug_overlay(
     total_cols: usize,
     scroll_col: f64,
     zoom: f64,
+    user_fft: usize,
 ) {
     use crate::canvas::tile_cache;
 
@@ -2117,27 +2118,27 @@ pub fn draw_tile_debug_overlay(
         let tile_lod1_end = tile_lod1_start + TILE_COLS as f64 / ratio;
 
         // Determine which LOD is actually rendered for this tile
-        let (lod_label, color) = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
+        let (displayed_lod, displayed_tile, lod_label, color) = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
             let label = format!("L{ideal_lod}");
             let c = match ideal_lod { 3 => "#0ff", 2 => "#0f0", 0 => "#ff0", _ => "#48f" };
-            (label, c)
+            (ideal_lod, tile_idx, label, c)
         } else {
             // Check fallback LODs
             let mut found = None;
             for fb_lod in (0..ideal_lod).rev() {
                 let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
                 if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
-                    found = Some(fb_lod);
+                    found = Some((fb_lod, fb_tile));
                     break;
                 }
             }
             match found {
-                Some(l) => {
+                Some((l, ft)) => {
                     let label = format!("L{l}fb");
                     let c = match l { 0 => "#ff0", 1 => "#48f", 2 => "#0f0", _ => "#0ff" };
-                    (label, c)
+                    (l, ft, label, c)
                 }
-                None => ("--".to_string(), "#f44"),
+                None => (255, 0, "--".to_string(), "#f44"),
             }
         };
 
@@ -2152,46 +2153,43 @@ pub fn draw_tile_debug_overlay(
         ctx.set_stroke_style_str(color);
         ctx.stroke_rect(dx + 0.5, 0.5, dw - 1.0, ch - 1.0);
 
-        // Determine the actually-displayed LOD for resolution info
-        let displayed_lod = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
-            ideal_lod
-        } else {
-            let mut dl = 255u8;
-            for fb_lod in (0..ideal_lod).rev() {
-                let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
-                if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
-                    dl = fb_lod;
-                    break;
-                }
-            }
-            dl
-        };
-        let res_line = if displayed_lod < tile_cache::NUM_LODS as u8 {
+        // Actual FFT used for this LOD (same logic as schedule_tile_lod)
+        let (res_line, tex_line) = if displayed_lod < tile_cache::NUM_LODS as u8 {
             let cfg = &tile_cache::LOD_CONFIGS[displayed_lod as usize];
-            format!("fft={} hop={}", cfg.fft_size, cfg.hop_size)
+            let actual_fft = user_fft.max(cfg.hop_size);
+            let res = format!("fft={} hop={}", actual_fft, cfg.hop_size);
+            // Get tile texture dimensions
+            let tex = tile_cache::borrow_tile(file_idx, displayed_lod, displayed_tile, |t| {
+                format!("{}x{}px", t.rendered.width, t.rendered.height)
+            }).unwrap_or_else(|| "?".to_string());
+            (res, tex)
         } else {
-            "no tile".to_string()
+            ("no tile".to_string(), String::new())
         };
 
-        // Draw label background (two lines)
+        // Draw label background (three lines)
         let label = format!("T{tile_idx} {lod_label}");
         let label_x = dx + 3.0;
         let label_y = 3.0;
         ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 90.0, 27.0);
+        ctx.fill_rect(label_x - 1.0, label_y - 1.0, 100.0, 40.0);
 
         // Draw label text — line 1: tile id + LOD
         ctx.set_fill_style_str(color);
         let _ = ctx.fill_text(&label, label_x, label_y);
-        // Line 2: resolution
+        // Line 2: fft + hop
         ctx.set_fill_style_str("#aaa");
         let _ = ctx.fill_text(&res_line, label_x, label_y + 13.0);
+        // Line 3: texture pixel size
+        ctx.set_fill_style_str("#888");
+        let _ = ctx.fill_text(&tex_line, label_x, label_y + 26.0);
     }
 
     // Draw zoom level + ideal LOD + resolution in top-right corner
-    let ideal_cfg = &tile_cache::LOD_CONFIGS[ideal_lod as usize];
-    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod} fft={} hop={}", ideal_cfg.fft_size, ideal_cfg.hop_size);
-    let label_w = 200.0;
+    let ideal_hop = tile_cache::LOD_CONFIGS[ideal_lod as usize].hop_size;
+    let actual_fft = user_fft.max(ideal_hop);
+    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}");
+    let label_w = 220.0;
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
     ctx.fill_rect(cw - label_w - 3.0, 3.0, label_w, 14.0);
     ctx.set_fill_style_str("#fff");
