@@ -158,7 +158,8 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     >
                         {move || {
                             let current = state.spect_fft_mode.get();
-                            let options: [(&str, &str); 8] = [
+                            let options: [(&str, &str); 9] = [
+                                ("128", "128"),
                                 ("256", "256"),
                                 ("512", "512"),
                                 ("1024", "1024"),

@@ -258,12 +258,12 @@ impl FftMode {
             }
             FftMode::MultiRes3 => {
                 // Output: 8192/2+1 = 4097 bins total
-                // Low: 0–10% Nyquist → bins 0..410 with 8192 FFT
-                // Mid: 10–40% Nyquist → bins 410..1639 with 2048 FFT
+                // Low: 0–10% Nyquist → bins 0..410 with ~~8192~~ FFT
+                // Mid: 10–40% Nyquist → bins 410..1639 with ~~2048~~ FFT
                 // High: 40–100% Nyquist → bins 1639..4097 with 512 FFT
                 vec![
-                    MultiResBand { fft_size: 8192, output_bin_start: 0, output_bin_end: 410 },
-                    MultiResBand { fft_size: 2048, output_bin_start: 410, output_bin_end: 1639 },
+                    MultiResBand { fft_size: 2048, output_bin_start: 0, output_bin_end: 410 },
+                    MultiResBand { fft_size: 1024, output_bin_start: 410, output_bin_end: 1639 },
                     MultiResBand { fft_size: 512, output_bin_start: 1639, output_bin_end: 4097 },
                 ]
             }
