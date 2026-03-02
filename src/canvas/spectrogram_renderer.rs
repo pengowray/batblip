@@ -2229,6 +2229,7 @@ pub fn draw_tile_debug_overlay(
     scroll_col: f64,
     zoom: f64,
     user_fft: usize,
+    flow_on: bool,
 ) {
     use crate::canvas::tile_cache;
 
@@ -2258,7 +2259,11 @@ pub fn draw_tile_debug_overlay(
         let tile_lod1_end = tile_lod1_start + TILE_COLS as f64 / ratio;
 
         // Determine which LOD is actually rendered for this tile
-        let (displayed_lod, displayed_tile, lod_label, color) = if tile_cache::get_tile(file_idx, ideal_lod, tile_idx).is_some() {
+        let has_tile = |fi, lod, ti| {
+            if flow_on { tile_cache::get_flow_tile(fi, lod, ti).is_some() }
+            else { tile_cache::get_tile(fi, lod, ti).is_some() }
+        };
+        let (displayed_lod, displayed_tile, lod_label, color) = if has_tile(file_idx, ideal_lod, tile_idx) {
             let label = format!("L{ideal_lod}");
             let c = match ideal_lod { 3 => "#0ff", 2 => "#0f0", 0 => "#ff0", _ => "#48f" };
             (ideal_lod, tile_idx, label, c)
@@ -2267,7 +2272,7 @@ pub fn draw_tile_debug_overlay(
             let mut found = None;
             for fb_lod in (0..ideal_lod).rev() {
                 let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
-                if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
+                if has_tile(file_idx, fb_lod, fb_tile) {
                     found = Some((fb_lod, fb_tile));
                     break;
                 }
@@ -2299,9 +2304,15 @@ pub fn draw_tile_debug_overlay(
             let actual_fft = user_fft.max(cfg.hop_size);
             let res = format!("fft={} hop={}", actual_fft, cfg.hop_size);
             // Get tile texture dimensions
-            let tex = tile_cache::borrow_tile(file_idx, displayed_lod, displayed_tile, |t| {
-                format!("{}x{}px", t.rendered.width, t.rendered.height)
-            }).unwrap_or_else(|| "?".to_string());
+            let tex = if flow_on {
+                tile_cache::borrow_flow_tile(file_idx, displayed_lod, displayed_tile, |t| {
+                    format!("{}x{}px", t.rendered.width, t.rendered.height)
+                })
+            } else {
+                tile_cache::borrow_tile(file_idx, displayed_lod, displayed_tile, |t| {
+                    format!("{}x{}px", t.rendered.width, t.rendered.height)
+                })
+            }.unwrap_or_else(|| "?".to_string());
             (res, tex)
         } else {
             ("no tile".to_string(), String::new())
