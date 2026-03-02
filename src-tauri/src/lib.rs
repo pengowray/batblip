@@ -123,7 +123,7 @@ fn mic_stop_recording(
     let filename = now.format("batcap_%Y-%m-%d_%H%M%S.wav").to_string();
 
     // Encode WAV at native bit depth
-    let wav_data = recording::encode_native_wav(&buf)?;
+    let mut wav_data = recording::encode_native_wav(&buf)?;
 
     // Get f32 samples for frontend display
     let samples_f32 = recording::get_samples_f32(&buf);
@@ -132,6 +132,12 @@ fn mic_stop_recording(
     let is_float = buf.format.is_float();
 
     drop(buf);
+
+    // Append GUANO metadata
+    let guano_text = recording::build_recording_guano(
+        sample_rate, num_samples, &m.device_name, &filename, &now,
+    );
+    recording::append_guano_chunk(&mut wav_data, &guano_text);
 
     // Save to disk
     let dir = app
@@ -379,8 +385,14 @@ fn usb_stop_recording(
     let now = chrono::Local::now();
     let filename = now.format("batcap_%Y-%m-%d_%H%M%S.wav").to_string();
 
-    let wav_data = usb_audio::encode_usb_wav(s)?;
+    let mut wav_data = usb_audio::encode_usb_wav(s)?;
     let samples_f32 = usb_audio::get_usb_samples_f32(s);
+
+    // Append GUANO metadata
+    let guano_text = recording::build_recording_guano(
+        sample_rate, num_samples, &s.device_name, &filename, &now,
+    );
+    recording::append_guano_chunk(&mut wav_data, &guano_text);
 
     // Save to disk
     let dir = app

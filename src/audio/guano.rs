@@ -1,10 +1,60 @@
-/// Parser for GUANO metadata embedded in WAV files.
+/// Parser and writer for GUANO metadata embedded in WAV files.
 /// GUANO (Grand Unified Acoustic Notation Ontology) stores text metadata
 /// as a "guan" subchunk in the RIFF structure.
 
 #[derive(Clone, Debug, Default)]
 pub struct GuanoMetadata {
     pub fields: Vec<(String, String)>,
+}
+
+impl GuanoMetadata {
+    pub fn new() -> Self {
+        Self { fields: Vec::new() }
+    }
+
+    pub fn add(&mut self, key: &str, value: &str) -> &mut Self {
+        self.fields.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    /// Build the GUANO text representation (key: value lines).
+    pub fn to_text(&self) -> String {
+        build_guano_text(&self.fields)
+    }
+}
+
+/// Build GUANO text from key-value pairs.
+pub fn build_guano_text(fields: &[(String, String)]) -> String {
+    let mut text = String::new();
+    for (key, value) in fields {
+        text.push_str(key);
+        text.push_str(": ");
+        text.push_str(value);
+        text.push('\n');
+    }
+    text
+}
+
+/// Append a GUANO "guan" RIFF subchunk to WAV bytes in-place.
+/// Updates the RIFF header file size at bytes[4..8].
+pub fn append_guano_chunk(wav_bytes: &mut Vec<u8>, guano_text: &str) {
+    let text_bytes = guano_text.as_bytes();
+    let chunk_size = text_bytes.len() as u32;
+
+    // Append chunk: "guan" + size (LE u32) + text data
+    wav_bytes.extend_from_slice(b"guan");
+    wav_bytes.extend_from_slice(&chunk_size.to_le_bytes());
+    wav_bytes.extend_from_slice(text_bytes);
+
+    // RIFF word-alignment: pad with a zero byte if chunk data size is odd
+    if text_bytes.len() % 2 != 0 {
+        wav_bytes.push(0);
+    }
+
+    // Update RIFF header file size at bytes[4..8]
+    // RIFF file size = total file size - 8 (for "RIFF" + size field itself)
+    let riff_size = (wav_bytes.len() - 8) as u32;
+    wav_bytes[4..8].copy_from_slice(&riff_size.to_le_bytes());
 }
 
 /// Search raw WAV bytes for a "guan" RIFF subchunk and parse GUANO metadata.

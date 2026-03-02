@@ -657,6 +657,29 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         samples.len(), duration_secs, sample_rate, bits_per_sample,
         if is_float { " float" } else { "" }, saved_path);
 
+    // Build GUANO metadata for display in metadata panel
+    let guano = {
+        use crate::audio::guano::GuanoMetadata;
+        let now = js_sys::Date::new_0();
+        let start_ms = now.get_time() - (duration_secs * 1000.0);
+        let start = js_sys::Date::new(&JsValue::from_f64(start_ms));
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            start.get_full_year(), start.get_month() + 1, start.get_date(),
+            start.get_hours(), start.get_minutes(), start.get_seconds(),
+        );
+        let version = env!("CARGO_PKG_VERSION");
+        let mut g = GuanoMetadata::new();
+        g.add("GUANO|Version", "1.0");
+        g.add("Timestamp", &timestamp);
+        g.add("Length", &format!("{:.6}", duration_secs));
+        g.add("Samplerate", &sample_rate.to_string());
+        g.add("Make", "batmonic");
+        g.add("Firmware Version", version);
+        g.add("Original Filename", &filename);
+        g
+    };
+
     let audio = AudioData {
         samples: samples.into(),
         sample_rate,
@@ -667,7 +690,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
             format: "REC",
             bits_per_sample,
             is_float,
-            guano: None,
+            guano: Some(guano),
         },
     };
 
@@ -1173,9 +1196,44 @@ pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     buf
 }
 
+/// Encode WAV with GUANO metadata for a new recording.
+fn encode_wav_with_guano(samples: &[f32], sample_rate: u32, filename: &str) -> Vec<u8> {
+    use crate::audio::guano;
+    let mut wav_data = encode_wav(samples, sample_rate);
+
+    let now = js_sys::Date::new_0();
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+    // Approximate recording start time
+    let start_ms = now.get_time() - (duration_secs * 1000.0);
+    let start = js_sys::Date::new(&JsValue::from_f64(start_ms));
+    let timestamp = format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        start.get_full_year(),
+        start.get_month() + 1,
+        start.get_date(),
+        start.get_hours(),
+        start.get_minutes(),
+        start.get_seconds(),
+    );
+    let version = env!("CARGO_PKG_VERSION");
+
+    let mut guano_meta = guano::GuanoMetadata::new();
+    guano_meta.add("GUANO|Version", "1.0");
+    guano_meta.add("Timestamp", &timestamp);
+    guano_meta.add("Length", &format!("{:.6}", duration_secs));
+    guano_meta.add("Samplerate", &sample_rate.to_string());
+    guano_meta.add("Make", "batmonic");
+    guano_meta.add("Firmware Version", version);
+    guano_meta.add("Original Filename", filename);
+    guano_meta.add("Note", &format!("Recorded with batmonic v{} (browser)", version));
+
+    guano::append_guano_chunk(&mut wav_data, &guano_meta.to_text());
+    wav_data
+}
+
 /// Trigger a browser download of WAV data.
 pub fn download_wav(samples: &[f32], sample_rate: u32, filename: &str) {
-    let wav_data = encode_wav(samples, sample_rate);
+    let wav_data = encode_wav_with_guano(samples, sample_rate, filename);
 
     let array = js_sys::Uint8Array::new_with_length(wav_data.len() as u32);
     array.copy_from(&wav_data);
@@ -1489,6 +1547,33 @@ fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state: AppState)
     }
 
     let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+    let name_check = state.files.with_untracked(|files| {
+        files.get(file_index).map(|f| f.name.clone()).unwrap_or_default()
+    });
+
+    let guano = {
+        use crate::audio::guano::GuanoMetadata;
+        let now = js_sys::Date::new_0();
+        let start_ms = now.get_time() - (duration_secs * 1000.0);
+        let start = js_sys::Date::new(&JsValue::from_f64(start_ms));
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            start.get_full_year(), start.get_month() + 1, start.get_date(),
+            start.get_hours(), start.get_minutes(), start.get_seconds(),
+        );
+        let version = env!("CARGO_PKG_VERSION");
+        let mut g = GuanoMetadata::new();
+        g.add("GUANO|Version", "1.0");
+        g.add("Timestamp", &timestamp);
+        g.add("Length", &format!("{:.6}", duration_secs));
+        g.add("Samplerate", &sample_rate.to_string());
+        g.add("Make", "batmonic");
+        g.add("Firmware Version", version);
+        g.add("Original Filename", &name_check);
+        g
+    };
+
     let audio = AudioData {
         samples: samples.into(),
         sample_rate,
@@ -1499,16 +1584,12 @@ fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state: AppState)
             format: "REC",
             bits_per_sample: state.mic_bits_per_sample.get_untracked(),
             is_float: false,
-            guano: None,
+            guano: Some(guano),
         },
     };
 
     let preview = compute_preview(&audio, 256, 128);
     let audio_for_stft = audio.clone();
-
-    let name_check = state.files.with_untracked(|files| {
-        files.get(file_index).map(|f| f.name.clone()).unwrap_or_default()
-    });
 
     let is_tauri = state.is_tauri;
     let name_for_save = name_check.clone();
@@ -1529,7 +1610,7 @@ fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state: AppState)
     if is_tauri {
         let samples_ref = state.files.get_untracked();
         if let Some(file) = samples_ref.get(file_index) {
-            let wav_data = encode_wav(&file.audio.samples, file.audio.sample_rate);
+            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
                 if try_tauri_save(&wav_data, &filename).await {
@@ -1562,6 +1643,27 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
         now.get_seconds(),
     );
 
+    let guano = {
+        use crate::audio::guano::GuanoMetadata;
+        let start_ms = now.get_time() - (duration_secs * 1000.0);
+        let start = js_sys::Date::new(&JsValue::from_f64(start_ms));
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            start.get_full_year(), start.get_month() + 1, start.get_date(),
+            start.get_hours(), start.get_minutes(), start.get_seconds(),
+        );
+        let version = env!("CARGO_PKG_VERSION");
+        let mut g = GuanoMetadata::new();
+        g.add("GUANO|Version", "1.0");
+        g.add("Timestamp", &timestamp);
+        g.add("Length", &format!("{:.6}", duration_secs));
+        g.add("Samplerate", &sample_rate.to_string());
+        g.add("Make", "batmonic");
+        g.add("Firmware Version", version);
+        g.add("Original Filename", &name);
+        g
+    };
+
     let audio = AudioData {
         samples: samples.into(),
         sample_rate,
@@ -1572,7 +1674,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
             format: "REC",
             bits_per_sample: 16,
             is_float: false,
-            guano: None,
+            guano: Some(guano),
         },
     };
 
@@ -1619,7 +1721,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
     if is_tauri {
         let samples_ref = state.files.get_untracked();
         if let Some(file) = samples_ref.get(file_index) {
-            let wav_data = encode_wav(&file.audio.samples, file.audio.sample_rate);
+            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
                 if try_tauri_save(&wav_data, &filename).await {

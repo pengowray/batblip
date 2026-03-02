@@ -483,6 +483,57 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     Ok(cursor.into_inner())
 }
 
+/// Build GUANO metadata fields for a recording.
+pub fn build_recording_guano(
+    sample_rate: u32,
+    num_samples: usize,
+    device_name: &str,
+    filename: &str,
+    timestamp: &chrono::DateTime<chrono::Local>,
+) -> String {
+    let duration_secs = num_samples as f64 / sample_rate as f64;
+    let version = env!("CARGO_PKG_VERSION");
+    // Compute approximate recording start time from stop time
+    let start_time = *timestamp - chrono::Duration::milliseconds((duration_secs * 1000.0) as i64);
+
+    let mut text = String::new();
+    for (key, value) in [
+        ("GUANO|Version", "1.0".to_string()),
+        ("Timestamp", start_time.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string()),
+        ("Length", format!("{:.6}", duration_secs)),
+        ("Samplerate", sample_rate.to_string()),
+        ("Make", "batmonic".to_string()),
+        ("Firmware Version", version.to_string()),
+        ("Original Filename", filename.to_string()),
+        ("Note", format!("Recorded with batmonic v{} ({})", version, device_name)),
+    ] {
+        text.push_str(key);
+        text.push_str(": ");
+        text.push_str(&value);
+        text.push('\n');
+    }
+    text
+}
+
+/// Append a GUANO "guan" RIFF subchunk to WAV bytes in-place.
+pub fn append_guano_chunk(wav_bytes: &mut Vec<u8>, guano_text: &str) {
+    let text_bytes = guano_text.as_bytes();
+    let chunk_size = text_bytes.len() as u32;
+
+    wav_bytes.extend_from_slice(b"guan");
+    wav_bytes.extend_from_slice(&chunk_size.to_le_bytes());
+    wav_bytes.extend_from_slice(text_bytes);
+
+    // RIFF word-alignment: pad with zero byte if chunk data size is odd
+    if text_bytes.len() % 2 != 0 {
+        wav_bytes.push(0);
+    }
+
+    // Update RIFF header file size at bytes[4..8]
+    let riff_size = (wav_bytes.len() - 8) as u32;
+    wav_bytes[4..8].copy_from_slice(&riff_size.to_le_bytes());
+}
+
 /// Get f32 version of all recorded samples (for frontend spectrogram/display).
 pub fn get_samples_f32(buffer: &RecordingBuffer) -> Vec<f32> {
     match buffer.format {
