@@ -254,7 +254,7 @@ pub fn draw_zc_rate(
         if armed {
             ctx.set_fill_style_str("rgba(100, 200, 100, 0.8)");
         } else {
-            ctx.set_fill_style_str("rgba(80, 80, 80, 0.4)");
+            ctx.set_fill_style_str("rgba(60, 130, 60, 0.35)");
         }
         ctx.fill_rect(x, y, bar_w, bar_h);
     }

@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::state::{AppState, AutoFactorMode, BandpassMode, BandpassRange, PlaybackMode};
+use crate::state::{AppState, AutoFactorMode, BandpassMode, BandpassRange, FilterQuality, PlaybackMode};
 
 #[component]
 pub fn HfrButton() -> impl IntoView {
@@ -112,12 +112,13 @@ pub fn HfrButton() -> impl IntoView {
         }
     });
 
-    // Effect D (carried over): bandpass_mode + bandpass_range → filter_enabled + filter_freq
+    // Effect D (carried over): bandpass_mode + bandpass_range + playback_mode → filter_enabled + filter_freq + filter gains
     Effect::new(move || {
         let bp_mode = state.bandpass_mode.get();
         let bp_range = state.bandpass_range.get();
         let ff_lo = state.ff_freq_lo.get();
         let ff_hi = state.ff_freq_hi.get();
+        let playback_mode = state.playback_mode.get();
 
         match bp_mode {
             BandpassMode::Off => {
@@ -125,10 +126,31 @@ pub fn HfrButton() -> impl IntoView {
             }
             BandpassMode::Auto => {
                 let has_ff = ff_hi > ff_lo;
-                state.filter_enabled.set(has_ff);
-                if has_ff {
-                    state.filter_freq_low.set(ff_lo);
-                    state.filter_freq_high.set(ff_hi);
+                match playback_mode {
+                    PlaybackMode::Heterodyne => {
+                        // HET AUTO: bandpass off
+                        state.filter_enabled.set(false);
+                    }
+                    PlaybackMode::ZeroCrossing => {
+                        // ZC AUTO: HQ with steep -60 dB rolloff
+                        state.filter_enabled.set(has_ff);
+                        if has_ff {
+                            state.filter_freq_low.set(ff_lo);
+                            state.filter_freq_high.set(ff_hi);
+                            state.filter_quality.set(FilterQuality::HQ);
+                            state.filter_db_below.set(-60.0);
+                            state.filter_db_selected.set(0.0);
+                            state.filter_db_above.set(-60.0);
+                        }
+                    }
+                    _ => {
+                        // TE/PS/Normal: enable if FF exists, don't override gain values
+                        state.filter_enabled.set(has_ff);
+                        if has_ff {
+                            state.filter_freq_low.set(ff_lo);
+                            state.filter_freq_high.set(ff_hi);
+                        }
+                    }
                 }
             }
             BandpassMode::On => {
