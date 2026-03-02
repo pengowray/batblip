@@ -18,6 +18,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     let compute_gen = RwSignal::new(0u32);
     let last_computed_idx: RwSignal<Option<usize>> = RwSignal::new(None);
     let last_computed_ff: RwSignal<(f64, f64)> = RwSignal::new((0.0, 0.0));
+    // Bumped by Re-detect to force the Effect to re-run without remounting the component
+    let redetect_trigger = RwSignal::new(0u32);
 
     // Trigger pulse detection when tab is active and file changes
     Effect::new(move || {
@@ -26,13 +28,14 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         let idx = state.current_file_index.get();
         let ff_lo = state.ff_freq_lo.get();
         let ff_hi = state.ff_freq_hi.get();
+        let _trigger = redetect_trigger.get(); // subscribe so Re-detect re-runs this Effect
 
         if tab != RightSidebarTab::Pulses {
             return;
         }
 
         let ff_pair = (ff_lo, ff_hi);
-        // Already computed for this file + same FF range
+        // Already computed for this file + same FF range (trigger bypass: cache was cleared)
         if idx == last_computed_idx.get_untracked()
             && ff_pair == last_computed_ff.get_untracked()
             && !state.detected_pulses.get_untracked().is_empty()
@@ -87,11 +90,12 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
     // Re-detect handler
     let on_redetect = move |_: web_sys::MouseEvent| {
-        // Force re-detection by clearing last computed index
+        // Force re-detection by clearing cache and bumping the trigger signal.
+        // We do NOT set right_sidebar_tab here — that would remount the component
+        // and reset all local slider values back to defaults.
         last_computed_idx.set(None);
         last_computed_ff.set((0.0, 0.0));
-        // Trigger the Effect by nudging a dependency — set current tab again
-        state.right_sidebar_tab.set(RightSidebarTab::Pulses);
+        redetect_trigger.update(|t| *t += 1);
     };
 
     // Click a pulse to navigate
