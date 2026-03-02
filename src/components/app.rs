@@ -261,7 +261,11 @@ fn MainArea() -> impl IntoView {
                                         <Waveform />
                                     </div>
                                 }.into_any(),
-                                MainView::ZcChart => view! { <ZcDotChart /> }.into_any(),
+                                MainView::ZcChart => view! {
+                                    <div class="main-waveform-full">
+                                        <ZcDotChart />
+                                    </div>
+                                }.into_any(),
                                 MainView::Chromagram => view! { <ChromagramView /> }.into_any(),
                             }}
 

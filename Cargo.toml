@@ -3,7 +3,7 @@ members = [".", "src-tauri", "xc-lib", "xc-cli"]
 
 [package]
 name = "batmonic"
-version = "0.2.48"
+version = "0.2.49"
 edition = "2021"
 
 [lib]
