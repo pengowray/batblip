@@ -91,22 +91,29 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
         return [grey, grey, grey];
     }
 
-    let s_raw = (shift * shift_gain * effective).clamp(-1.0, 1.0);
+    // Shift magnitude determines color intensity; effective controls blend with grey
+    let s_raw = (shift * shift_gain).clamp(-1.0, 1.0);
     // Apply color gamma to magnitude, preserve sign
     let s = if color_gamma == 1.0 { s_raw } else { s_raw.abs().powf(color_gamma).copysign(s_raw) };
     let g = grey as f32;
-    if s > 0.0 {
+    let (r, gv, b) = if s > 0.0 {
         // Upward shift → red
-        let r = (g + s * (255.0 - g)).min(255.0) as u8;
-        let gb = (g * (1.0 - 0.5 * s)).max(0.0) as u8;
-        [r, gb, gb]
+        let r = (g + s * (255.0 - g)).min(255.0);
+        let gb = (g * (1.0 - 0.5 * s)).max(0.0);
+        (r, gb, gb)
     } else {
         // Downward shift → blue
         let a = -s;
-        let b = (g + a * (255.0 - g)).min(255.0) as u8;
-        let rg = (g * (1.0 - 0.5 * a)).max(0.0) as u8;
-        [rg, rg, b]
-    }
+        let b = (g + a * (255.0 - g)).min(255.0);
+        let rg = (g * (1.0 - 0.5 * a)).max(0.0);
+        (rg, rg, b)
+    };
+    // Blend between grey and colored pixel using effective as alpha
+    [
+        (g + effective * (r - g)).clamp(0.0, 255.0) as u8,
+        (g + effective * (gv - g)).clamp(0.0, 255.0) as u8,
+        (g + effective * (b - g)).clamp(0.0, 255.0) as u8,
+    ]
 }
 
 // ── Selectable flow color schemes ────────────────────────────────────────────
@@ -153,7 +160,8 @@ fn flow_rgb_diverging(
         return [grey, grey, grey];
     }
 
-    let s_raw = (shift * shift_gain * effective).clamp(-1.0, 1.0);
+    // Shift magnitude determines color intensity; effective controls blend with grey
+    let s_raw = (shift * shift_gain).clamp(-1.0, 1.0);
     let s = if color_gamma == 1.0 { s_raw } else { s_raw.abs().powf(color_gamma).copysign(s_raw) };
 
     // Endpoint colors for each scheme: (neg_r, neg_g, neg_b), (pos_r, pos_g, pos_b)
@@ -169,10 +177,15 @@ fn flow_rgb_diverging(
     let t = s.abs();
     // Interpolate: grey base toward endpoint color based on shift magnitude
     let endpoint = if s >= 0.0 { pos } else { neg };
-    let r = (g + t * (endpoint[0] - g)).clamp(0.0, 255.0) as u8;
-    let gv = (g + t * (endpoint[1] - g)).clamp(0.0, 255.0) as u8;
-    let b = (g + t * (endpoint[2] - g)).clamp(0.0, 255.0) as u8;
-    [r, gv, b]
+    let r = g + t * (endpoint[0] - g);
+    let gv = g + t * (endpoint[1] - g);
+    let b = g + t * (endpoint[2] - g);
+    // Blend between grey and colored pixel using effective as alpha
+    [
+        (g + effective * (r - g)).clamp(0.0, 255.0) as u8,
+        (g + effective * (gv - g)).clamp(0.0, 255.0) as u8,
+        (g + effective * (b - g)).clamp(0.0, 255.0) as u8,
+    ]
 }
 
 /// Map a greyscale base value and a phase deviation to an RGB triple.
