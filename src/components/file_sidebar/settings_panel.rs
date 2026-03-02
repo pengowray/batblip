@@ -157,6 +157,21 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     </select>
                 </div>
                 <div class="setting-row">
+                    <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                        title="Sharpen time-frequency localization using the reassignment method (3x FFT cost)">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.reassign_enabled.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.reassign_enabled.set(input.checked());
+                            }
+                        />
+                        "Reassignment"
+                    </label>
+                </div>
+                <div class="setting-row">
                     <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input
                             type="checkbox"

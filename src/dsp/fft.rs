@@ -1,4 +1,5 @@
 use crate::canvas::colors::magnitude_to_greyscale;
+use crate::canvas::spectrogram_renderer::PreRendered;
 use crate::types::{AudioData, PreviewImage, SpectrogramColumn, SpectrogramData};
 use realfft::RealFftPlanner;
 use std::cell::RefCell;
@@ -8,6 +9,8 @@ use std::sync::Arc;
 thread_local! {
     static FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
     static HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
+    static THANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
+    static DHANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
 }
 
 fn hann_window(size: usize) -> Vec<f32> {
@@ -25,6 +28,172 @@ fn hann_window(size: usize) -> Vec<f32> {
             })
             .clone()
     })
+}
+
+/// Time-ramped Hann window: `(m - center) * h[m]`.
+/// Used for time reassignment (measures displacement from frame center).
+fn t_hann_window(size: usize) -> Vec<f32> {
+    THANN_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(size)
+            .or_insert_with(|| {
+                let h = hann_window(size);
+                let center = (size - 1) as f32 / 2.0;
+                (0..size).map(|i| (i as f32 - center) * h[i]).collect()
+            })
+            .clone()
+    })
+}
+
+/// Derivative of the Hann window: `h'[m] = -π/(N-1) * sin(2πm/(N-1))`.
+/// Used for frequency reassignment.
+fn dh_window(size: usize) -> Vec<f32> {
+    DHANN_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(size)
+            .or_insert_with(|| {
+                let n_minus_1 = (size - 1) as f32;
+                (0..size)
+                    .map(|i| {
+                        -std::f32::consts::PI / n_minus_1
+                            * (2.0 * std::f32::consts::PI * i as f32 / n_minus_1).sin()
+                    })
+                    .collect()
+            })
+            .clone()
+    })
+}
+
+/// Compute a reassigned spectrogram tile from raw audio samples.
+///
+/// Performs 3 FFTs per frame (standard Hann, time-ramped, derivative-windowed),
+/// then accumulates |X|² at corrected (time, frequency) positions using
+/// nearest-neighbor assignment.
+///
+/// Returns a `PreRendered` with `db_data` in the same format as normal tiles
+/// (row 0 = highest freq, absolute dB values).
+///
+/// `samples` must cover at least `col_count * hop_size + fft_size` samples.
+pub fn compute_reassigned_tile(
+    samples: &[f32],
+    col_count: usize,
+    fft_size: usize,
+    hop_size: usize,
+    threshold_db: f32,
+) -> PreRendered {
+    let n_bins = fft_size / 2 + 1;
+
+    if samples.len() < fft_size || col_count == 0 {
+        return PreRendered {
+            width: 0, height: 0,
+            pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new(),
+        };
+    }
+
+    let fft = FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let win_h = hann_window(fft_size);
+    let win_th = t_hann_window(fft_size);
+    let win_dh = dh_window(fft_size);
+
+    // Reusable FFT buffers
+    let mut input = fft.make_input_vec();
+    let mut spec_h = fft.make_output_vec();
+    let mut spec_th = fft.make_output_vec();
+    let mut spec_dh = fft.make_output_vec();
+
+    // Accumulation grid (f64 for precision)
+    let grid_size = col_count * n_bins;
+    let mut accum = vec![0.0f64; grid_size];
+
+    let threshold_power = 10.0f32.powf(threshold_db / 10.0); // power threshold
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let fft_over_two_pi = fft_size as f64 / two_pi;
+
+    let total_cols = if samples.len() >= fft_size {
+        (samples.len() - fft_size) / hop_size + 1
+    } else {
+        0
+    };
+    let actual_cols = col_count.min(total_cols);
+
+    for col_i in 0..actual_cols {
+        let pos = col_i * hop_size;
+        if pos + fft_size > samples.len() {
+            break;
+        }
+
+        let frame = &samples[pos..pos + fft_size];
+
+        // FFT with standard Hann window
+        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_h.iter())) {
+            *inp = s * w;
+        }
+        fft.process(&mut input, &mut spec_h).expect("FFT failed");
+
+        // FFT with time-ramped Hann window
+        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_th.iter())) {
+            *inp = s * w;
+        }
+        fft.process(&mut input, &mut spec_th).expect("FFT failed");
+
+        // FFT with derivative Hann window
+        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_dh.iter())) {
+            *inp = s * w;
+        }
+        fft.process(&mut input, &mut spec_dh).expect("FFT failed");
+
+        for k in 0..n_bins {
+            let xh = spec_h[k];
+            let power = xh.norm_sqr();
+
+            if power < threshold_power {
+                continue;
+            }
+
+            // Complex division: X_th / X_h and X_dh / X_h
+            use realfft::num_complex::Complex;
+            let xh64 = Complex::<f64>::new(xh.re as f64, xh.im as f64);
+            let xth64 = Complex::<f64>::new(spec_th[k].re as f64, spec_th[k].im as f64);
+            let xdh64 = Complex::<f64>::new(spec_dh[k].re as f64, spec_dh[k].im as f64);
+
+            // Corrected time: t_hat = n - Re(X_th / X_h)
+            let t_hat = col_i as f64 - (xth64 / xh64).re;
+
+            // Corrected frequency bin: f_hat = k + (N / 2π) * Im(X_dh / X_h)
+            let f_hat = k as f64 + fft_over_two_pi * (xdh64 / xh64).im;
+
+            // Clamp and round to nearest grid point
+            let t_idx = t_hat.round().clamp(0.0, (col_count - 1) as f64) as usize;
+            let f_idx = f_hat.round().clamp(0.0, (n_bins - 1) as f64) as usize;
+
+            accum[f_idx * col_count + t_idx] += power as f64;
+        }
+    }
+
+    // Convert accumulation grid to dB, flipped vertically (row 0 = highest freq)
+    let width = col_count as u32;
+    let height = n_bins as u32;
+    let mut db_data = vec![f32::NEG_INFINITY; grid_size];
+
+    for bin in 0..n_bins {
+        let y = n_bins - 1 - bin; // flip: row 0 = highest freq
+        for col in 0..col_count {
+            let val = accum[bin * col_count + col];
+            if val > 0.0 {
+                db_data[y * col_count + col] = (10.0 * val.log10()) as f32;
+            }
+        }
+    }
+
+    PreRendered {
+        width,
+        height,
+        pixels: Vec::new(),
+        db_data,
+        flow_shifts: Vec::new(),
+    }
 }
 
 /// Compute a spectrogram from audio data using a Short-Time Fourier Transform (STFT).

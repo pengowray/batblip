@@ -139,6 +139,13 @@ pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
     data.columns.iter().flat_map(|c| c.magnitudes.iter()).copied().fold(0.0f32, f32::max)
 }
 
+/// Selects which tile cache to read from during rendering.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TileSource {
+    Normal,
+    Reassigned,
+}
+
 /// Algorithm selector for flow detection.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlowAlgo {
@@ -835,6 +842,7 @@ pub fn blit_tiles_viewport(
     scroll_offset: f64,    // seconds (for preview mapping)
     visible_time: f64,     // seconds (for preview mapping)
     total_duration: f64,   // seconds (for preview mapping)
+    tile_source: TileSource,
 ) -> bool {
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
@@ -973,8 +981,16 @@ pub fn blit_tiles_viewport(
 
         let mut tile_drawn = false;
 
+        // Helper: borrow from the selected tile cache
+        let borrow_from = |fi: usize, lod: u8, ti: usize, f: &dyn Fn(&tile_cache::Tile)| -> Option<()> {
+            match tile_source {
+                TileSource::Reassigned => tile_cache::borrow_reassign_tile(fi, lod, ti, |t| f(t)),
+                TileSource::Normal => tile_cache::borrow_tile(fi, lod, ti, |t| f(t)),
+            }
+        };
+
         // Try ideal LOD first
-        let r = tile_cache::borrow_tile(file_idx, ideal_lod, tile_idx, |tile| {
+        let r = borrow_from(file_idx, ideal_lod, tile_idx, &|tile| {
             blit_any_tile(tile, ideal_lod, tile_idx, clip_start, clip_end);
         });
         if r.is_some() { tile_drawn = true; }
@@ -984,6 +1000,7 @@ pub fn blit_tiles_viewport(
             for fb_lod in (0..ideal_lod).rev() {
                 let (fb_tile, _fb_src_start, _fb_src_end) =
                     tile_cache::fallback_tile_info(ideal_lod, tile_idx, fb_lod);
+                // Fallback always uses normal tiles (cheaper, already cached)
                 let r = tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
                     blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
                 });

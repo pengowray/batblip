@@ -229,6 +229,11 @@ thread_local! {
     static FLOW_IN_FLIGHT: RefCell<std::collections::HashSet<CacheKey>> =
         RefCell::new(std::collections::HashSet::new());
 
+    /// Reassignment spectrogram tile cache — multi-LOD, same CacheKey as magnitude tiles.
+    static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static REASSIGN_IN_FLIGHT: RefCell<std::collections::HashSet<CacheKey>> =
+        RefCell::new(std::collections::HashSet::new());
+
     /// Chromagram tile cache (LOD1-only).
     static CHROMA_CACHE: RefCell<ChromaTileCache> = RefCell::new(ChromaTileCache::new());
     static CHROMA_IN_FLIGHT: RefCell<std::collections::HashSet<ChromaKey>> =
@@ -755,6 +760,101 @@ pub fn schedule_flow_tile(
 
         FLOW_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
         FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+}
+
+// ── Reassignment spectrogram tile cache ──────────────────────────────────────
+
+pub fn get_reassign_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
+    REASSIGN_CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+}
+
+pub fn borrow_reassign_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
+    REASSIGN_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let key = (file_idx, lod, tile_idx);
+        if cache.tiles.contains_key(&key) {
+            cache.touch(key);
+            drop(cache);
+            REASSIGN_CACHE.with(|c| {
+                c.borrow().tiles.get(&key).map(|t| f(t))
+            })
+        } else {
+            None
+        }
+    })
+}
+
+pub fn clear_reassign_cache() {
+    REASSIGN_CACHE.with(|c| c.borrow_mut().clear_all());
+    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().clear());
+}
+
+pub fn clear_reassign_file(file_idx: usize) {
+    REASSIGN_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
+    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
+}
+
+/// Schedule a reassignment spectrogram tile for background generation.
+///
+/// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
+/// compute corrected time-frequency positions, producing sharper spectrograms.
+pub fn schedule_reassign_tile(
+    state: AppState,
+    file_idx: usize,
+    lod: u8,
+    tile_idx: usize,
+) {
+    use crate::dsp::fft::compute_reassigned_tile;
+
+    let key: CacheKey = (file_idx, lod, tile_idx);
+    if REASSIGN_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if REASSIGN_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
+
+    let config_hop = LOD_CONFIGS[lod as usize].hop_size;
+    let user_fft = state.spect_fft_size.get_untracked();
+    let actual_fft = user_fft.max(config_hop);
+
+    spawn_local(async move {
+        yield_to_browser().await;
+
+        // Extra yields: 3x FFT cost + expensive LODs
+        if lod >= 2 { yield_to_browser().await; }
+        yield_to_browser().await;
+
+        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        if !is_current {
+            for _ in 0..3 { yield_to_browser().await; }
+        }
+
+        let audio = state.files.with_untracked(|files| {
+            files.get(file_idx).map(|f| f.audio.clone())
+        });
+        let Some(audio) = audio else {
+            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
+
+        let sample_start = tile_idx * TILE_COLS * config_hop;
+        let sample_end = (sample_start + TILE_COLS * config_hop + actual_fft)
+            .min(audio.samples.len());
+        if sample_start >= audio.samples.len() || sample_start >= sample_end {
+            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        let samples = &audio.samples[sample_start..sample_end];
+
+        yield_to_browser().await;
+
+        let rendered = compute_reassigned_tile(
+            samples, TILE_COLS, actual_fft, config_hop, -60.0,
+        );
+
+        REASSIGN_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
+        REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });
 }

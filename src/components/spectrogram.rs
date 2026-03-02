@@ -255,12 +255,19 @@ pub fn Spectrogram() -> impl IntoView {
 
     // (coherence tiles now use flow cache — cleared in Effect 2 above)
 
-    // Effect 2b: clear all magnitude tiles AND flow tiles when FFT size changes
+    // Effect 2b: clear all magnitude tiles AND flow tiles AND reassignment tiles when FFT size changes
     Effect::new(move || {
         let _fft = state.spect_fft_size.get();
         crate::canvas::tile_cache::clear_all_tiles();
         crate::canvas::tile_cache::clear_flow_cache();
+        crate::canvas::tile_cache::clear_reassign_cache();
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+
+    // Effect 2c: clear reassignment tile cache when toggle changes
+    Effect::new(move || {
+        let _reassign = state.reassign_enabled.get();
+        crate::canvas::tile_cache::clear_reassign_cache();
     });
 
     // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, hover, or new tile change
@@ -316,6 +323,7 @@ pub fn Spectrogram() -> impl IntoView {
         let spect_gamma = state.spect_gamma.get();
         let spect_gain = state.spect_gain_db.get();
         let debug_tiles = state.debug_tiles.get();
+        let reassign_on = state.reassign_enabled.get();
         // Display-affecting checkbox subscriptions
         let display_auto_gain = state.display_auto_gain.get();
         let _display_eq = state.display_eq.get();
@@ -495,7 +503,13 @@ pub fn Spectrogram() -> impl IntoView {
 
             drawn
         } else if !flow_on && total_cols > 0 {
-            // Normal tile-based rendering
+            // Normal or reassignment tile-based rendering
+            let ideal_lod_for_source = crate::canvas::tile_cache::select_lod(zoom);
+            let tile_source = if reassign_on && ideal_lod_for_source > 0 {
+                spectrogram_renderer::TileSource::Reassigned
+            } else {
+                spectrogram_renderer::TileSource::Normal
+            };
             let drawn = spectrogram_renderer::blit_tiles_viewport(
                 &ctx, canvas, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi, colormap,
@@ -503,6 +517,7 @@ pub fn Spectrogram() -> impl IntoView {
                 freq_adjustments.as_deref(),
                 file.and_then(|f| f.preview.as_ref()),
                 scroll, visible_time, duration,
+                tile_source,
             );
 
             // Schedule missing tiles at the ideal LOD for the current zoom
@@ -524,8 +539,17 @@ pub fn Spectrogram() -> impl IntoView {
 
                 let is_loading = state.loading_count.get_untracked() > 0;
 
+                let use_reassign = reassign_on && ideal_lod > 0;
+
                 for t in first_tile..=last_tile {
-                    // Schedule ideal LOD tile
+                    // Schedule reassignment tiles when enabled (skip LOD0)
+                    if use_reassign {
+                        if tile_cache::get_reassign_tile(file_idx_val, ideal_lod, t).is_none() {
+                            tile_cache::schedule_reassign_tile(state.clone(), file_idx_val, ideal_lod, t);
+                        }
+                    }
+
+                    // Always schedule normal tiles (for fallback and non-reassign mode)
                     if tile_cache::get_tile(file_idx_val, ideal_lod, t).is_none() {
                         tile_cache::schedule_tile_lod(state.clone(), file_idx_val, ideal_lod, t);
                     }

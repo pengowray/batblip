@@ -382,6 +382,9 @@ pub struct AppState {
     /// Larger = better frequency resolution, worse time resolution.
     pub spect_fft_size: RwSignal<usize>,
 
+    /// Enable reassignment spectrogram (sharper time-frequency localization).
+    pub reassign_enabled: RwSignal<bool>,
+
     // Which floating layer panel is currently open
     pub layer_panel_open: RwSignal<Option<LayerPanel>>,
 
@@ -591,6 +594,7 @@ impl AppState {
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
             spect_fft_size: RwSignal::new(1024),
+            reassign_enabled: RwSignal::new(false),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),
