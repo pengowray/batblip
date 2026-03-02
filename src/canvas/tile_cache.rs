@@ -293,10 +293,11 @@ pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
 // ── Generic LOD tile scheduling ──────────────────────────────────────────────
 
 /// Schedule a tile at any LOD level. Computes STFT from audio samples.
-/// Uses the user's chosen FFT size (from `state.spect_fft_size`), clamped
-/// to at least the LOD's hop size (the FFT window must cover one hop).
+/// Uses the user's chosen FFT mode (from `state.spect_fft_mode`).
+/// For single-FFT mode, the size is clamped to at least the LOD's hop size.
+/// For multi-resolution mode, each band uses its own FFT size.
 pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::fft::compute_spectrogram_partial;
+    use crate::dsp::fft::{compute_spectrogram_partial, compute_multires_partial};
 
     let key: CacheKey = (file_idx, lod, tile_idx);
     if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
@@ -304,9 +305,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    // Use user FFT size, but must be at least as large as the hop
-    let user_fft = state.spect_fft_size.get_untracked();
-    let actual_fft = user_fft.max(config_hop);
+    let fft_mode = state.spect_fft_mode.get_untracked();
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -332,9 +331,14 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
         // Compute STFT columns for this tile
         let col_start = tile_idx * TILE_COLS;
-        let cols = compute_spectrogram_partial(
-            &audio, actual_fft, config_hop, col_start, TILE_COLS,
-        );
+        let cols = if fft_mode.is_multi_res() {
+            let bands = fft_mode.bands();
+            let output_bins = fft_mode.max_fft_size() / 2 + 1;
+            compute_multires_partial(&audio, &bands, output_bins, config_hop, col_start, TILE_COLS)
+        } else {
+            let actual_fft = fft_mode.max_fft_size().max(config_hop);
+            compute_spectrogram_partial(&audio, actual_fft, config_hop, col_start, TILE_COLS)
+        };
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 
         if cols.is_empty() { return; }
@@ -680,7 +684,7 @@ pub fn schedule_flow_tile(
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let user_fft = state.spect_fft_size.get_untracked();
+    let user_fft = state.spect_fft_mode.get_untracked().max_fft_size();
     let actual_fft = user_fft.max(config_hop);
 
     spawn_local(async move {
@@ -814,7 +818,7 @@ pub fn schedule_reassign_tile(
     REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let user_fft = state.spect_fft_size.get_untracked();
+    let user_fft = state.spect_fft_mode.get_untracked().max_fft_size();
     let actual_fft = user_fft.max(config_hop);
 
     spawn_local(async move {

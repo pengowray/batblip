@@ -339,6 +339,74 @@ pub fn compute_stft_columns(
     columns
 }
 
+/// Compute a multi-resolution spectrogram tile by running multiple STFT passes
+/// at different FFT sizes and merging the results. Each band covers a frequency
+/// range using its own FFT size: large windows for low frequencies (better freq
+/// resolution), small windows for high frequencies (better time resolution).
+///
+/// Returns standard `Vec<SpectrogramColumn>` with `output_bins` magnitudes each,
+/// compatible with `pre_render_columns`.
+pub fn compute_multires_partial(
+    audio: &AudioData,
+    bands: &[crate::state::MultiResBand],
+    output_bins: usize,
+    hop_size: usize,
+    col_start: usize,
+    col_count: usize,
+) -> Vec<SpectrogramColumn> {
+    if bands.is_empty() || output_bins == 0 {
+        return vec![];
+    }
+
+    // Compute STFT for each band at its own FFT size
+    let band_results: Vec<Vec<SpectrogramColumn>> = bands
+        .iter()
+        .map(|band| compute_spectrogram_partial(audio, band.fft_size, hop_size, col_start, col_count))
+        .collect();
+
+    // Use the minimum column count across all bands
+    let actual_cols = band_results.iter().map(|r| r.len()).min().unwrap_or(0);
+    if actual_cols == 0 {
+        return vec![];
+    }
+
+    let mut output = Vec::with_capacity(actual_cols);
+
+    for col_i in 0..actual_cols {
+        let mut magnitudes = vec![0.0f32; output_bins];
+        // Use time offset from the first band (all share the same hop)
+        let time_offset = band_results[0][col_i].time_offset;
+
+        for (band_idx, band) in bands.iter().enumerate() {
+            let src_mags = &band_results[band_idx][col_i].magnitudes;
+            let src_bins = band.fft_size / 2 + 1;
+            let end = band.output_bin_end.min(output_bins);
+
+            for out_bin in band.output_bin_start..end {
+                // Map output bin to source bin via frequency fraction
+                let freq_frac = out_bin as f64 / (output_bins - 1) as f64;
+                let src_bin_f = freq_frac * (src_bins - 1) as f64;
+                let src_lo = src_bin_f.floor() as usize;
+                let src_hi = (src_lo + 1).min(src_bins - 1);
+                let frac = (src_bin_f - src_lo as f64) as f32;
+
+                let mag = if src_lo < src_mags.len() && src_hi < src_mags.len() {
+                    src_mags[src_lo] * (1.0 - frac) + src_mags[src_hi] * frac
+                } else if src_lo < src_mags.len() {
+                    src_mags[src_lo]
+                } else {
+                    0.0
+                };
+                magnitudes[out_bin] = mag;
+            }
+        }
+
+        output.push(SpectrogramColumn { magnitudes, time_offset });
+    }
+
+    output
+}
+
 /// Compute a fast low-resolution preview spectrogram as an RGBA pixel buffer.
 /// Uses FFT=256 with a dynamic hop to produce roughly `target_width` columns.
 pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32) -> PreviewImage {

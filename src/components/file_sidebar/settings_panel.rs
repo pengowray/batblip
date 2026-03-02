@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, FlowColorScheme, MainView, SpectrogramDisplay};
+use crate::state::{AppState, FftMode, FlowColorScheme, MainView, SpectrogramDisplay};
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
 #[component]
@@ -141,17 +141,43 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
-                            if let Ok(v) = select.value().parse::<usize>() {
-                                state.spect_fft_size.set(v);
-                            }
+                            let val = select.value();
+                            let mode = match val.as_str() {
+                                "multi2" => FftMode::MultiRes2,
+                                "multi3" => FftMode::MultiRes3,
+                                _ => {
+                                    if let Ok(v) = val.parse::<usize>() {
+                                        FftMode::Single(v)
+                                    } else {
+                                        return;
+                                    }
+                                }
+                            };
+                            state.spect_fft_mode.set(mode);
                         }
                     >
                         {move || {
-                            let current = state.spect_fft_size.get();
-                            [256, 512, 1024, 2048, 4096, 8192].into_iter().map(|sz| {
-                                let s = sz.to_string();
-                                let s2 = s.clone();
-                                view! { <option value={s} selected=move || sz == current>{s2}</option> }
+                            let current = state.spect_fft_mode.get();
+                            let options: [(&str, &str); 8] = [
+                                ("256", "256"),
+                                ("512", "512"),
+                                ("1024", "1024"),
+                                ("2048", "2048"),
+                                ("4096", "4096"),
+                                ("8192", "8192"),
+                                ("multi2", "Multi 2\u{00d7}"),
+                                ("multi3", "Multi 3\u{00d7}"),
+                            ];
+                            options.into_iter().map(|(value, label)| {
+                                let is_selected = match (value, current) {
+                                    ("multi2", FftMode::MultiRes2) => true,
+                                    ("multi3", FftMode::MultiRes3) => true,
+                                    (v, FftMode::Single(sz)) => v.parse::<usize>().ok() == Some(sz),
+                                    _ => false,
+                                };
+                                let v = value.to_string();
+                                let l = label.to_string();
+                                view! { <option value={v} selected=move || is_selected>{l}</option> }
                             }).collect::<Vec<_>>()
                         }}
                     </select>

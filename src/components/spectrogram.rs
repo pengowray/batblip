@@ -255,9 +255,9 @@ pub fn Spectrogram() -> impl IntoView {
 
     // (coherence tiles now use flow cache — cleared in Effect 2 above)
 
-    // Effect 2b: clear all magnitude tiles AND flow tiles AND reassignment tiles when FFT size changes
+    // Effect 2b: clear all magnitude tiles AND flow tiles AND reassignment tiles when FFT mode changes
     Effect::new(move || {
-        let _fft = state.spect_fft_size.get();
+        let _fft = state.spect_fft_mode.get();
         crate::canvas::tile_cache::clear_all_tiles();
         crate::canvas::tile_cache::clear_flow_cache();
         crate::canvas::tile_cache::clear_reassign_cache();
@@ -439,7 +439,7 @@ pub fn Spectrogram() -> impl IntoView {
             gain_db: effective_spect_gain - ref_db,
         };
         // Pre-compute per-frequency dB adjustments for display EQ / noise filter
-        let tile_height = state.spect_fft_size.get_untracked().max(2048) / 2 + 1;
+        let tile_height = state.spect_fft_mode.get_untracked().max_fft_size().max(2048) / 2 + 1;
         let freq_adjustments = compute_freq_adjustments(&state, file_max_freq, tile_height);
 
         // Step 1: Render base spectrogram.
@@ -625,7 +625,7 @@ pub fn Spectrogram() -> impl IntoView {
         if debug_tiles && total_cols > 0 {
             spectrogram_renderer::draw_tile_debug_overlay(
                 &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
-                state.spect_fft_size.get_untracked(), flow_on,
+                state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
             );
         }
 
