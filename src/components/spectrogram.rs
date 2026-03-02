@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent};
 use crate::canvas::spectrogram_renderer::{self, Colormap, ColormapMode, FreqMarkerState, FreqShiftMode, FlowAlgo, PreRendered, SpectDisplaySettings};
-use crate::state::{AppState, CanvasTool, ColormapPreference, SpectrogramHandle, PlaybackMode, Selection, SpectrogramDisplay};
+use crate::state::{AppState, CanvasTool, ColormapPreference, SpectrogramHandle, MainView, PlaybackMode, Selection, SpectrogramDisplay};
 
 /// Compute per-row dB adjustments for display EQ and noise filtering.
 /// Returns None if no adjustments are needed (both checkboxes off).
@@ -892,6 +892,102 @@ pub fn Spectrogram() -> impl IntoView {
             state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
         }
     });
+
+    // Effect 5: pre-fetch tiles ahead of the viewport and at the start of the file.
+    // Debounced at 200ms so it doesn't fire at 60fps during playback.
+    {
+        let prefetch_handle: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+
+        Effect::new(move || {
+            // Subscribe to coarse-grained signals (NOT playhead_time)
+            let _scroll = state.scroll_offset.get();
+            let _zoom = state.zoom_level.get();
+            let _playing = state.is_playing.get();
+            let _file_idx = state.current_file_index.get();
+            let _main_view = state.main_view.get();
+            let _reassign = state.reassign_enabled.get();
+            let _flow = state.flow_enabled.get();
+            let _tile_ready = state.tile_ready_signal.get();
+
+            // Cancel previous debounce timer
+            if let Some(h) = prefetch_handle.get() {
+                let _ = web_sys::window().unwrap().clear_timeout_with_handle(h);
+            }
+
+            let handle_rc = prefetch_handle.clone();
+            let cb = Closure::once(move || {
+                use crate::canvas::tile_cache;
+
+                handle_rc.set(None);
+
+                let main_view = state.main_view.get_untracked();
+                if matches!(main_view, MainView::Waveform | MainView::ZcChart) {
+                    return;
+                }
+
+                let Some(file_idx) = state.current_file_index.get_untracked() else { return };
+                let (total_samples, sample_rate, time_res) = state.files.with_untracked(|files| {
+                    files.get(file_idx).map(|f| {
+                        (f.audio.samples.len(), f.audio.sample_rate, f.spectrogram.time_resolution)
+                    })
+                }).unwrap_or((0, 44100, 0.01));
+                if total_samples == 0 { return; }
+
+                let zoom = state.zoom_level.get_untracked();
+                let scroll = state.scroll_offset.get_untracked();
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let visible_time = if zoom > 0.0 { (canvas_w / zoom) * time_res } else { 1.0 };
+                let viewport_right = scroll + visible_time;
+
+                let is_playing = state.is_playing.get_untracked();
+                let center = if is_playing {
+                    let playhead = state.playhead_time.get_untracked();
+                    playhead.max(viewport_right)
+                } else {
+                    viewport_right
+                };
+
+                let flow_on = state.flow_enabled.get_untracked();
+                let flow_algo = if flow_on {
+                    let display = state.spectrogram_display.get_untracked();
+                    Some(match display {
+                        SpectrogramDisplay::FlowOptical => FlowAlgo::Optical,
+                        SpectrogramDisplay::PhaseCoherence => FlowAlgo::PhaseCoherence,
+                        SpectrogramDisplay::FlowCentroid => FlowAlgo::Centroid,
+                        SpectrogramDisplay::FlowGradient => FlowAlgo::Gradient,
+                        SpectrogramDisplay::Phase => FlowAlgo::Phase,
+                    })
+                } else {
+                    None
+                };
+
+                let reassign = state.reassign_enabled.get_untracked();
+
+                tile_cache::schedule_prefetch_tiles(
+                    state,
+                    file_idx,
+                    total_samples,
+                    sample_rate,
+                    center,
+                    5.0,  // pre-fetch 5 seconds ahead
+                    3.0,  // keep first 3 seconds ready
+                    zoom,
+                    flow_algo,
+                    reassign,
+                );
+            });
+
+            let h = web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(),
+                    200,
+                )
+                .unwrap_or(0);
+            cb.forget();
+            prefetch_handle.set(Some(h));
+        });
+    }
 
     // Helper to get (px_x, px_y, time, freq) from mouse event
     let mouse_to_xtf = move |ev: &MouseEvent| -> Option<(f64, f64, f64, f64)> {

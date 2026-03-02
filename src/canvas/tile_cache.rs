@@ -596,6 +596,69 @@ pub fn schedule_visible_tiles_from_store(state: AppState, file_idx: usize, total
     }
 }
 
+/// Pre-fetch tiles around a target time position and from the start of the file.
+///
+/// Schedules tiles covering `ahead_secs` seconds ahead of `center_time`, plus
+/// `initial_secs` from the start, at the ideal LOD for the current zoom level.
+///
+/// The existing `IN_FLIGHT` sets prevent duplicate work with viewport scheduling.
+pub fn schedule_prefetch_tiles(
+    state: AppState,
+    file_idx: usize,
+    total_samples: usize,
+    sample_rate: u32,
+    center_time: f64,
+    ahead_secs: f64,
+    initial_secs: f64,
+    zoom: f64,
+    flow_algo: Option<FlowAlgo>,
+    reassign: bool,
+) {
+    let lod = select_lod(zoom);
+    let hop = LOD_CONFIGS[lod as usize].hop_size;
+    let max_tiles = tile_count_for_samples(total_samples, lod);
+    if max_tiles == 0 { return; }
+
+    let time_to_tile = |t: f64| -> usize {
+        let sample = (t * sample_rate as f64) as usize;
+        let col = sample / hop;
+        col / TILE_COLS
+    };
+
+    let mut tiles: Vec<usize> = Vec::with_capacity(40);
+    let max_prefetch: usize = 30;
+
+    // Region 1: ahead of center_time
+    let center_tile = time_to_tile(center_time);
+    let ahead_end = time_to_tile(center_time + ahead_secs).min(max_tiles.saturating_sub(1));
+    for t in center_tile..=ahead_end {
+        if tiles.len() >= max_prefetch { break; }
+        tiles.push(t);
+    }
+
+    // Region 2: first initial_secs from file start
+    let initial_end = time_to_tile(initial_secs).min(max_tiles.saturating_sub(1));
+    for t in 0..=initial_end {
+        if tiles.len() >= max_prefetch { break; }
+        if !tiles.contains(&t) {
+            tiles.push(t);
+        }
+    }
+
+    for t in tiles {
+        // Always schedule magnitude tiles (base layer / fallback)
+        schedule_tile_lod(state, file_idx, lod, t);
+
+        if let Some(algo) = flow_algo {
+            schedule_flow_tile(state, file_idx, lod, t, algo);
+        }
+
+        if reassign && lod > 0 {
+            schedule_reassign_tile(state, file_idx, lod, t);
+        }
+    }
+}
+
 /// Schedule LOD1 on-demand tile computation from audio samples.
 pub fn schedule_tile_on_demand(
     state: AppState,
