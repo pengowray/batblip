@@ -109,6 +109,72 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
     }
 }
 
+// ── Selectable flow color schemes ────────────────────────────────────────────
+
+use crate::state::FlowColorScheme;
+
+/// Dispatch to the selected flow color scheme.
+/// Phase and PhaseCoherence algorithms ignore this and use their own color functions.
+pub fn flow_rgb_scheme(
+    grey: u8, shift: f32,
+    intensity_gate: f32, flow_gate: f32, opacity: f32,
+    shift_gain: f32, color_gamma: f32,
+    scheme: FlowColorScheme,
+) -> [u8; 3] {
+    match scheme {
+        FlowColorScheme::RedBlue => flow_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma),
+        _ => flow_rgb_diverging(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma, scheme),
+    }
+}
+
+/// Generic diverging colormap: interpolates between two endpoint colors through
+/// a neutral midpoint, with brightness from greyscale and direction from shift.
+fn flow_rgb_diverging(
+    grey: u8, shift: f32,
+    intensity_gate: f32, flow_gate: f32, opacity: f32,
+    shift_gain: f32, color_gamma: f32,
+    scheme: FlowColorScheme,
+) -> [u8; 3] {
+    let g_norm = grey as f32 / 255.0;
+
+    // Smooth intensity gate
+    let ig_lo = intensity_gate * 0.6;
+    let ig_hi = (intensity_gate * 1.4).min(1.0);
+    let intensity_factor = smoothstep(g_norm, ig_lo, ig_hi);
+
+    // Smooth flow gate
+    let abs_shift = shift.abs();
+    let mg_lo = flow_gate * 0.3;
+    let mg_hi = (flow_gate * 2.0).max(0.05);
+    let flow_factor = smoothstep(abs_shift, mg_lo, mg_hi);
+
+    let effective = intensity_factor * flow_factor * opacity;
+    if effective < 0.001 {
+        return [grey, grey, grey];
+    }
+
+    let s_raw = (shift * shift_gain * effective).clamp(-1.0, 1.0);
+    let s = if color_gamma == 1.0 { s_raw } else { s_raw.abs().powf(color_gamma).copysign(s_raw) };
+
+    // Endpoint colors for each scheme: (neg_r, neg_g, neg_b), (pos_r, pos_g, pos_b)
+    let (neg, pos) = match scheme {
+        FlowColorScheme::CoolWarm => ([59.0, 76.0, 192.0], [180.0, 4.0, 38.0]),
+        FlowColorScheme::TealOrange => ([0.0, 128.0, 128.0], [210.0, 105.0, 30.0]),
+        FlowColorScheme::PurpleGreen => ([128.0, 0.0, 128.0], [0.0, 160.0, 0.0]),
+        FlowColorScheme::Spectral => ([48.0, 18.0, 220.0], [220.0, 18.0, 48.0]),
+        _ => ([0.0, 0.0, 255.0], [255.0, 0.0, 0.0]), // fallback
+    };
+
+    let g = grey as f32;
+    let t = s.abs();
+    // Interpolate: grey base toward endpoint color based on shift magnitude
+    let endpoint = if s >= 0.0 { pos } else { neg };
+    let r = (g + t * (endpoint[0] - g)).clamp(0.0, 255.0) as u8;
+    let gv = (g + t * (endpoint[1] - g)).clamp(0.0, 255.0) as u8;
+    let b = (g + t * (endpoint[2] - g)).clamp(0.0, 255.0) as u8;
+    [r, gv, b]
+}
+
 /// Map a greyscale base value and a phase deviation to an RGB triple.
 /// `deviation` in [-1.0, 1.0]: 0 = coherent (no phase drift), ±1 = max deviation.
 ///
@@ -174,28 +240,59 @@ pub fn coherence_rgb(grey: u8, deviation: f32, intensity_gate: f32, flow_gate: f
     [final_r, final_g, final_b]
 }
 
-/// HSV to RGB conversion. H in [0,360), S and V in [0,1]. Returns (r, g, b) in [0,1].
-#[inline]
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
-    let c = v * s;
-    let h_prime = h / 60.0;
-    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
-    let m = v - c;
-    let (r, g, b) = match h_prime as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    (r + m, g + m, b + m)
+// ── Oklch perceptually uniform phase colormap ────────────────────────────────
+
+/// Convert Oklch (L, C, h) to linear sRGB (r, g, b).
+/// L: lightness [0, 1], C: chroma [0, ~0.37], h: hue in radians.
+fn oklch_to_linear_srgb(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
+    // Oklch → Oklab
+    let a = c * h.cos();
+    let b_ab = c * h.sin();
+    // Oklab → LMS (inverse of cube-root transform)
+    let l_ = l + 0.3963377774 * a + 0.2158037573 * b_ab;
+    let m_ = l - 0.1055613458 * a - 0.0638541728 * b_ab;
+    let s_ = l - 0.0894841775 * a - 1.2914855480 * b_ab;
+    let l3 = l_ * l_ * l_;
+    let m3 = m_ * m_ * m_;
+    let s3 = s_ * s_ * s_;
+    // LMS → linear sRGB
+    let r =  4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+    let g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
+    let b = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3;
+    (r, g, b)
 }
 
-/// Map instantaneous phase angle and magnitude to an RGB triple.
+/// Linear sRGB component to sRGB with gamma encoding.
+#[inline]
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 { c * 12.92 }
+    else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// Pre-computed 256-entry Oklch phase hue colormap.
+/// Index maps linearly to hue angle [0, 2*PI). Fixed L=0.75, C=0.12 for
+/// sRGB gamut safety and good visibility. Perceptually uniform: all hues
+/// have equal perceived brightness, unlike HSV.
+static OKLCH_PHASE_LUT: std::sync::LazyLock<[[u8; 3]; 256]> = std::sync::LazyLock::new(|| {
+    let mut lut = [[0u8; 3]; 256];
+    for i in 0..256 {
+        let hue = i as f32 * std::f32::consts::TAU / 256.0;
+        let (r, g, b) = oklch_to_linear_srgb(0.75, 0.12, hue);
+        lut[i] = [
+            (linear_to_srgb(r.clamp(0.0, 1.0)) * 255.0) as u8,
+            (linear_to_srgb(g.clamp(0.0, 1.0)) * 255.0) as u8,
+            (linear_to_srgb(b.clamp(0.0, 1.0)) * 255.0) as u8,
+        ];
+    }
+    lut
+});
+
+/// Map instantaneous phase angle and magnitude to an RGB triple using
+/// an Oklch perceptually uniform circular colormap.
+///
 /// `phase` in [-1.0, 1.0] (normalized from [-PI, PI]).
 /// `grey` is the magnitude-derived brightness (0-255).
-/// Hue = phase angle mapped to [0, 360°). Brightness = magnitude.
+/// Hue = phase angle via Oklch LUT. Brightness scaled by magnitude.
 pub fn phase_rgb(grey: u8, phase: f32, intensity_gate: f32) -> [u8; 3] {
     let g_norm = grey as f32 / 255.0;
 
@@ -208,18 +305,16 @@ pub fn phase_rgb(grey: u8, phase: f32, intensity_gate: f32) -> [u8; 3] {
         return [0, 0, 0];
     }
 
-    // Map normalized phase [-1, 1] to hue [0, 360)
-    let hue = (phase + 1.0) * 180.0; // [-1,1] -> [0,360)
-    let hue = hue % 360.0;
+    // Map normalized phase [-1, 1] to LUT index [0, 255]
+    let idx = (((phase + 1.0) * 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+    let [base_r, base_g, base_b] = OKLCH_PHASE_LUT[idx as usize];
 
-    // HSV: full saturation, brightness from magnitude
+    // Scale by magnitude-derived brightness
     let brightness = g_norm;
-    let (r, g, b) = hsv_to_rgb(hue, 1.0, brightness);
-
     [
-        (r * 255.0).clamp(0.0, 255.0) as u8,
-        (g * 255.0).clamp(0.0, 255.0) as u8,
-        (b * 255.0).clamp(0.0, 255.0) as u8,
+        (base_r as f32 * brightness).clamp(0.0, 255.0) as u8,
+        (base_g as f32 * brightness).clamp(0.0, 255.0) as u8,
+        (base_b as f32 * brightness).clamp(0.0, 255.0) as u8,
     ]
 }
 

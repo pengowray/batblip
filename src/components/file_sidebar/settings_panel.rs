@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, MainView, SpectrogramDisplay};
+use crate::state::{AppState, FlowColorScheme, MainView, SpectrogramDisplay};
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
 #[component]
@@ -159,6 +159,52 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     <option value="phase">"Phase"</option>
                                 </select>
                             </div>
+                            // Color scheme selector (only for flow algorithms, not phase)
+                            {move || {
+                                let display = state.spectrogram_display.get();
+                                let is_flow_algo = matches!(display,
+                                    SpectrogramDisplay::FlowOptical |
+                                    SpectrogramDisplay::FlowCentroid |
+                                    SpectrogramDisplay::FlowGradient
+                                );
+                                if is_flow_algo {
+                                    view! {
+                                        <div class="setting-row">
+                                            <span class="setting-label">"Color scheme"</span>
+                                            <select
+                                                class="setting-select"
+                                                on:change=move |ev: web_sys::Event| {
+                                                    let target = ev.target().unwrap();
+                                                    let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                                                    let scheme = match select.value().as_str() {
+                                                        "coolwarm" => FlowColorScheme::CoolWarm,
+                                                        "tealorange" => FlowColorScheme::TealOrange,
+                                                        "purplegreen" => FlowColorScheme::PurpleGreen,
+                                                        "spectral" => FlowColorScheme::Spectral,
+                                                        _ => FlowColorScheme::RedBlue,
+                                                    };
+                                                    state.flow_color_scheme.set(scheme);
+                                                }
+                                                prop:value=move || match state.flow_color_scheme.get() {
+                                                    FlowColorScheme::RedBlue => "redblue",
+                                                    FlowColorScheme::CoolWarm => "coolwarm",
+                                                    FlowColorScheme::TealOrange => "tealorange",
+                                                    FlowColorScheme::PurpleGreen => "purplegreen",
+                                                    FlowColorScheme::Spectral => "spectral",
+                                                }
+                                            >
+                                                <option value="redblue">"Red-Blue"</option>
+                                                <option value="coolwarm">"Cool-Warm"</option>
+                                                <option value="tealorange">"Teal-Orange"</option>
+                                                <option value="purplegreen">"Purple-Green"</option>
+                                                <option value="spectral">"Spectral"</option>
+                                            </select>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
                             <div class="setting-row">
                                 <span class="setting-label">"Intensity gate"</span>
                                 <div class="setting-slider-row">

@@ -173,57 +173,7 @@ impl TileCache {
     }
 }
 
-// ── Flow cache key (LOD1-only for now) ───────────────────────────────────────
-type FlowKey = (usize, usize); // (file_idx, tile_idx)
-
-struct FlowTileCache {
-    tiles: HashMap<FlowKey, Tile>,
-    lru: Vec<FlowKey>,
-    total_bytes: usize,
-}
-
-impl FlowTileCache {
-    fn new() -> Self {
-        Self { tiles: HashMap::new(), lru: Vec::new(), total_bytes: 0 }
-    }
-
-    fn insert(&mut self, file_idx: usize, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, tile_idx);
-        let bytes = rendered.byte_len();
-        if let Some(old) = self.tiles.remove(&key) {
-            self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
-            self.lru.retain(|k| k != &key);
-        }
-        while self.total_bytes + bytes > MAX_BYTES && !self.lru.is_empty() {
-            let oldest = self.lru.remove(0);
-            if let Some(evicted) = self.tiles.remove(&oldest) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
-        self.total_bytes += bytes;
-        self.tiles.insert(key, Tile { tile_idx, file_idx, lod: 1, rendered });
-        self.lru.push(key);
-    }
-
-    fn get(&self, file_idx: usize, tile_idx: usize) -> Option<&Tile> {
-        self.tiles.get(&(file_idx, tile_idx))
-    }
-
-    fn touch(&mut self, key: FlowKey) {
-        self.lru.retain(|k| k != &key);
-        self.lru.push(key);
-    }
-
-    fn clear_for_file(&mut self, file_idx: usize) {
-        let keys: Vec<_> = self.tiles.keys().copied().filter(|k| k.0 == file_idx).collect();
-        for key in keys {
-            if let Some(evicted) = self.tiles.remove(&key) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                self.lru.retain(|k| k != &key);
-            }
-        }
-    }
-}
+// ── Flow cache (multi-LOD, same CacheKey as magnitude tiles) ─────────────────
 
 // Reuse FlowTileCache type for chroma too (same key shape)
 type ChromaKey = (usize, usize);
@@ -274,9 +224,9 @@ thread_local! {
     static IN_FLIGHT: RefCell<std::collections::HashSet<CacheKey>> =
         RefCell::new(std::collections::HashSet::new());
 
-    /// Flow-mode tile cache (LOD1-only for now).
-    static FLOW_CACHE: RefCell<FlowTileCache> = RefCell::new(FlowTileCache::new());
-    static FLOW_IN_FLIGHT: RefCell<std::collections::HashSet<FlowKey>> =
+    /// Flow-mode tile cache — multi-LOD, same CacheKey as magnitude tiles.
+    static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static FLOW_IN_FLIGHT: RefCell<std::collections::HashSet<CacheKey>> =
         RefCell::new(std::collections::HashSet::new());
 
     /// Chromagram tile cache (LOD1-only).
@@ -675,14 +625,14 @@ pub fn schedule_tile_on_demand(
 
 // ── Flow tile cache (LOD1-only) ──────────────────────────────────────────────
 
-pub fn get_flow_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
-    FLOW_CACHE.with(|c| c.borrow().get(file_idx, tile_idx).map(|_| ()))
+pub fn get_flow_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
+    FLOW_CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
 }
 
-pub fn borrow_flow_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
+pub fn borrow_flow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
     FLOW_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
-        let key = (file_idx, tile_idx);
+        let key = (file_idx, lod, tile_idx);
         if cache.tiles.contains_key(&key) {
             cache.touch(key);
             drop(cache);
@@ -696,12 +646,7 @@ pub fn borrow_flow_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Til
 }
 
 pub fn clear_flow_cache() {
-    FLOW_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        cache.tiles.clear();
-        cache.lru.clear();
-        cache.total_bytes = 0;
-    });
+    FLOW_CACHE.with(|c| c.borrow_mut().clear_all());
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().clear());
 }
 
@@ -710,120 +655,105 @@ pub fn clear_flow_file(file_idx: usize) {
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k| k.0 != file_idx));
 }
 
-/// Schedule a flow tile for background generation (LOD1).
+/// Schedule a flow tile for background generation at any LOD.
+///
+/// All algorithms (Optical, Centroid, Gradient, PhaseCoherence, Phase) compute
+/// from raw audio using the user's FFT size and the LOD's hop size, so FFT
+/// changes and LOD selection both work correctly.
 pub fn schedule_flow_tile(
     state: AppState,
     file_idx: usize,
+    lod: u8,
     tile_idx: usize,
     algo: FlowAlgo,
 ) {
-    use crate::canvas::spectral_store;
+    use crate::dsp::fft::compute_spectrogram_partial;
 
-    let key = (file_idx, tile_idx);
+    let key: CacheKey = (file_idx, lod, tile_idx);
     if FLOW_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
     if FLOW_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
+    let config_hop = LOD_CONFIGS[lod as usize].hop_size;
+    let user_fft = state.spect_fft_size.get_untracked();
+    let actual_fft = user_fft.max(config_hop);
+
     spawn_local(async move {
         yield_to_browser().await;
 
+        // Extra yields for expensive LODs and non-current files
+        if lod >= 2 {
+            yield_to_browser().await;
+        }
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
             for _ in 0..3 { yield_to_browser().await; }
         }
 
-        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
-        if !still_loaded {
+        let audio = state.files.with_untracked(|files| {
+            files.get(file_idx).map(|f| f.audio.clone())
+        });
+        let Some(audio) = audio else {
             FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
+        };
 
-        let rendered = if algo == FlowAlgo::PhaseCoherence || algo == FlowAlgo::Phase {
-            use crate::dsp::harmonics;
+        let col_start = tile_idx * TILE_COLS;
 
-            let tile_data = state.files.with_untracked(|files| {
-                let file = files.get(file_idx)?;
-                // Use user's FFT size and LOD1 hop to match magnitude tiles
-                let fft_size = state.spect_fft_size.get_untracked();
-                let hop_size = LOD_CONFIGS[1].hop_size;
+        let rendered = match algo {
+            FlowAlgo::Phase | FlowAlgo::PhaseCoherence => {
+                use crate::dsp::harmonics;
 
-                let col_start = tile_idx * TILE_COLS;
-                let sample_start = col_start * hop_size;
-                // Phase coherence needs +1 extra frame for inter-frame deviation
+                let sample_start = col_start * config_hop;
                 let extra = if algo == FlowAlgo::PhaseCoherence { TILE_COLS + 1 } else { TILE_COLS };
-                let sample_end = (sample_start + extra * hop_size + fft_size).min(file.audio.samples.len());
-                if sample_start >= file.audio.samples.len() || sample_start >= sample_end {
-                    return None;
+                let sample_end = (sample_start + extra * config_hop + actual_fft).min(audio.samples.len());
+                if sample_start >= audio.samples.len() || sample_start >= sample_end {
+                    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                    return;
                 }
 
-                let samples = file.audio.samples[sample_start..sample_end].to_vec();
-                Some((samples, fft_size, hop_size))
-            });
+                let samples = &audio.samples[sample_start..sample_end];
 
-            let Some((samples, fft_size, hop_size)) = tile_data else {
-                FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-                return;
-            };
+                yield_to_browser().await;
 
-            yield_to_browser().await;
-
-            if algo == FlowAlgo::Phase {
-                harmonics::compute_tile_phase_angle_data(
-                    &samples, TILE_COLS, fft_size, hop_size,
-                )
-            } else {
-                harmonics::compute_tile_phase_data(
-                    &samples, TILE_COLS, fft_size, hop_size,
-                )
+                if algo == FlowAlgo::Phase {
+                    harmonics::compute_tile_phase_angle_data(
+                        samples, TILE_COLS, actual_fft, config_hop,
+                    )
+                } else {
+                    harmonics::compute_tile_phase_data(
+                        samples, TILE_COLS, actual_fft, config_hop,
+                    )
+                }
             }
-        } else {
-            let col_start = tile_idx * TILE_COLS;
-
-            let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _max_mag| {
+            FlowAlgo::Optical | FlowAlgo::Centroid | FlowAlgo::Gradient => {
+                // Compute STFT from raw audio at the LOD's hop size and user FFT size
                 let prev_col = if tile_idx > 0 {
-                    let prev_end = col_start;
-                    let prev_start = prev_end.saturating_sub(1);
-                    spectral_store::with_columns(file_idx, prev_start, prev_end, |prev_cols, _| {
-                        prev_cols.last().map(|c| c.magnitudes.clone())
-                    }).flatten()
+                    let prev_cols = compute_spectrogram_partial(
+                        &audio, actual_fft, config_hop, col_start.saturating_sub(1), 1,
+                    );
+                    prev_cols.first().map(|c| c.magnitudes.clone())
                 } else {
                     None
                 };
-                spectrogram_renderer::pre_render_flow_columns(
-                    cols, prev_col.as_deref(), algo,
-                )
-            });
 
-            if let Some(r) = result {
-                r
-            } else {
-                let fallback = state.files.with_untracked(|files| {
-                    files.get(file_idx).and_then(|f| {
-                        if f.spectrogram.columns.is_empty() { return None; }
-                        let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
-                        if col_start >= end { return None; }
-                        let cols = &f.spectrogram.columns[col_start..end];
-                        let prev_col = if col_start > 0 {
-                            Some(f.spectrogram.columns[col_start - 1].magnitudes.as_slice())
-                        } else {
-                            None
-                        };
-                        Some(spectrogram_renderer::pre_render_flow_columns(
-                            cols, prev_col, algo,
-                        ))
-                    })
-                });
-                match fallback {
-                    Some(r) => r,
-                    None => {
-                        FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-                        return;
-                    }
+                yield_to_browser().await;
+
+                let cols = compute_spectrogram_partial(
+                    &audio, actual_fft, config_hop, col_start, TILE_COLS,
+                );
+                if cols.is_empty() {
+                    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                    return;
                 }
+
+                spectrogram_renderer::pre_render_flow_columns(
+                    &cols, prev_col.as_deref(), algo,
+                )
             }
         };
 
-        FLOW_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        FLOW_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
         FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });

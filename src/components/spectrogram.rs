@@ -201,6 +201,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _flow_mg = state.flow_gate.get();
         let _flow_sg = state.flow_shift_gain.get();
         let _flow_cg = state.flow_color_gamma.get();
+        let _flow_scheme = state.flow_color_scheme.get(); // trigger redraw on color scheme change
         let colormap_pref = state.colormap_preference.get();
         let hfr_colormap_pref = state.hfr_colormap_preference.get();
         let axis_drag_start = state.axis_drag_start_freq.get();
@@ -328,28 +329,43 @@ pub fn Spectrogram() -> impl IntoView {
                 SpectrogramDisplay::FlowGradient => FlowAlgo::Gradient,
                 SpectrogramDisplay::Phase => FlowAlgo::Phase,
             };
+            let flow_scheme = state.flow_color_scheme.get_untracked();
             let drawn = spectrogram_renderer::blit_flow_tiles_viewport(
                 &ctx, canvas, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi,
-                &display_settings, ig, mg, op, sg, cg, algo,
+                &display_settings, ig, mg, op, sg, cg, algo, flow_scheme,
                 file.and_then(|f| f.preview.as_ref()),
                 scroll, visible_time, duration,
             );
 
-            // Schedule missing flow tiles
+            // Schedule missing flow tiles at ideal LOD
             {
                 use crate::canvas::tile_cache::{self, TILE_COLS};
 
-                let visible_cols_f = display_w as f64 / zoom;
-                let src_start = scroll_col.max(0.0);
-                let src_end = (src_start + visible_cols_f).min(total_cols as f64);
-                let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
-                let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-                let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+                let ideal_lod = tile_cache::select_lod(zoom);
+                let ratio = tile_cache::lod_ratio(ideal_lod);
 
-                for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-                    if tile_cache::get_flow_tile(file_idx_val, t).is_none() {
-                        tile_cache::schedule_flow_tile(state.clone(), file_idx_val, t, algo);
+                let vis_start = scroll_col.max(0.0);
+                let vis_end = (vis_start + display_w as f64 / zoom).min(total_cols as f64);
+
+                // Convert to ideal-LOD tile space
+                let vis_start_lod = vis_start * ratio;
+                let vis_end_lod = vis_end * ratio;
+                let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
+                let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+
+                for t in first_tile..=last_tile {
+                    // Schedule ideal LOD tile
+                    if tile_cache::get_flow_tile(file_idx_val, ideal_lod, t).is_none() {
+                        tile_cache::schedule_flow_tile(state.clone(), file_idx_val, ideal_lod, t, algo);
+                    }
+
+                    // Also ensure a LOD1 fallback exists for smooth transitions
+                    if ideal_lod != 1 {
+                        let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
+                        if tile_cache::get_flow_tile(file_idx_val, 1, fb_tile).is_none() {
+                            tile_cache::schedule_flow_tile(state.clone(), file_idx_val, 1, fb_tile, algo);
+                        }
                     }
                 }
             }

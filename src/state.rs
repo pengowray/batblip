@@ -42,6 +42,16 @@ pub enum SpectrogramDisplay {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum FlowColorScheme {
+    #[default]
+    RedBlue,
+    CoolWarm,
+    TealOrange,
+    PurpleGreen,
+    Spectral,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum RightSidebarTab {
     #[default]
     Metadata,
@@ -295,6 +305,7 @@ pub struct AppState {
     pub flow_opacity: RwSignal<f32>,
     pub flow_shift_gain: RwSignal<f32>,
     pub flow_color_gamma: RwSignal<f32>,
+    pub flow_color_scheme: RwSignal<FlowColorScheme>,
     pub min_display_freq: RwSignal<Option<f64>>,
     pub max_display_freq: RwSignal<Option<f64>>,
     pub mouse_freq: RwSignal<Option<f64>>,
@@ -512,6 +523,7 @@ impl AppState {
             flow_opacity: RwSignal::new(0.75),
             flow_shift_gain: RwSignal::new(3.0),
             flow_color_gamma: RwSignal::new(1.0),
+            flow_color_scheme: RwSignal::new(FlowColorScheme::default()),
             min_display_freq: RwSignal::new(None),
             max_display_freq: RwSignal::new(None),
             mouse_freq: RwSignal::new(None),
