@@ -69,7 +69,10 @@ pub(crate) struct PlaybackParams {
 }
 
 /// Duration of fade-out when stopping playback (milliseconds).
-const FADE_OUT_MS: f64 = 15.0;
+const FADE_OUT_MS: f64 = 30.0;
+
+/// Duration of fade-in when starting playback (milliseconds).
+const FADE_IN_MS: f64 = 30.0;
 
 /// Stop any active streaming playback with a short fade-out to avoid clicks.
 pub(crate) fn stop_stream() {
@@ -181,6 +184,13 @@ async fn chunk_loop(
     let mut pos = start_sample;
     // Small initial delay so the first chunk has time to be created
     let mut scheduled_time = ctx.current_time() + 0.02;
+
+    // Fade in from silence to avoid click when crossfading with old stream
+    {
+        let param = gain_node.gain();
+        let _ = param.set_value_at_time(0.0, scheduled_time);
+        let _ = param.linear_ramp_to_value_at_time(1.0, scheduled_time + FADE_IN_MS / 1000.0);
+    }
 
     // For auto-gain: pre-scan up to ~15s of the selection so quiet intros
     // don't cause excessive gain, without stalling on very long files.
