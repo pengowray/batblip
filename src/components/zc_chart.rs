@@ -180,8 +180,12 @@ pub fn ZcDotChart() -> impl IntoView {
 
         // Dot size scaling based on zoom
         let dot_spacing_px = ZC_BIN_DURATION * px_per_sec;
-        let radius_armed = (dot_spacing_px * 0.4).clamp(0.5, 3.0);
-        let radius_unarmed = (dot_spacing_px * 0.3).clamp(0.4, 2.5);
+        let radius_armed = (dot_spacing_px * 0.4).clamp(0.7, 3.0);
+        let radius_unarmed = (dot_spacing_px * 0.3).clamp(0.5, 2.5);
+
+        // Glow factor: 0.0 at full size, 1.0 at minimum size
+        let glow_t = (1.0 - (radius_armed - 0.7) / 2.3).clamp(0.0, 1.0);
+        let shadow_blur = glow_t * 4.0;
 
         // Only iterate visible bins
         let end_time = start_time + visible_time;
@@ -189,7 +193,14 @@ pub fn ZcDotChart() -> impl IntoView {
         let last_bin = ((end_time / ZC_BIN_DURATION) as usize + 2).min(bins.len());
 
         // Batch armed dots
-        ctx.set_fill_style_str("rgba(100, 200, 100, 0.9)");
+        let armed_alpha = 0.9 + glow_t * 0.1;
+        ctx.set_fill_style_str(&format!("rgba(100, 200, 100, {armed_alpha:.2})"));
+        if shadow_blur > 0.0 {
+            ctx.set_shadow_blur(shadow_blur);
+            ctx.set_shadow_color(&format!("rgba(120, 255, 120, {:.2})", glow_t * 0.9));
+            ctx.set_shadow_offset_x(0.0);
+            ctx.set_shadow_offset_y(0.0);
+        }
         ctx.begin_path();
         for bin_idx in first_bin..last_bin {
             let (rate_hz, armed) = bins[bin_idx];
@@ -202,9 +213,19 @@ pub fn ZcDotChart() -> impl IntoView {
             let _ = ctx.arc(x, y, radius_armed, 0.0, TAU);
         }
         ctx.fill();
+        if shadow_blur > 0.0 {
+            ctx.set_shadow_blur(0.0);
+        }
 
         // Batch unarmed dots (dim green, visible but secondary)
-        ctx.set_fill_style_str("rgba(60, 130, 60, 0.35)");
+        let unarmed_alpha = 0.35 + glow_t * 0.30;
+        ctx.set_fill_style_str(&format!("rgba(60, 130, 60, {unarmed_alpha:.2})"));
+        if shadow_blur > 0.0 {
+            ctx.set_shadow_blur(shadow_blur * 0.75);
+            ctx.set_shadow_color(&format!("rgba(80, 180, 80, {:.2})", glow_t * 0.5));
+            ctx.set_shadow_offset_x(0.0);
+            ctx.set_shadow_offset_y(0.0);
+        }
         ctx.begin_path();
         for bin_idx in first_bin..last_bin {
             let (rate_hz, armed) = bins[bin_idx];
@@ -217,6 +238,9 @@ pub fn ZcDotChart() -> impl IntoView {
             let _ = ctx.arc(x, y, radius_unarmed, 0.0, TAU);
         }
         ctx.fill();
+        if shadow_blur > 0.0 {
+            ctx.set_shadow_blur(0.0);
+        }
 
         // Draw "play here" marker when not playing
         if !is_playing && canvas_tool == CanvasTool::Hand {
