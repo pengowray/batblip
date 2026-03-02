@@ -525,6 +525,10 @@ pub struct AppState {
     pub colormap_preference: RwSignal<ColormapPreference>,
     // Chromagram colormap mode
     pub chroma_colormap: RwSignal<ChromaColormap>,
+    // Chromagram display: brightness multiplier (1.0 = default)
+    pub chroma_gain: RwSignal<f32>,
+    // Chromagram display: gamma curve (1.0 = linear)
+    pub chroma_gamma: RwSignal<f32>,
     // Colormap preference used when HFR mode is active
     pub hfr_colormap_preference: RwSignal<ColormapPreference>,
     // When false, the Range button is hidden at full range
@@ -703,6 +707,8 @@ impl AppState {
             settings_page_open: RwSignal::new(false),
             colormap_preference: RwSignal::new(ColormapPreference::Viridis),
             chroma_colormap: RwSignal::new(ChromaColormap::PitchClass),
+            chroma_gain: RwSignal::new(1.0),
+            chroma_gamma: RwSignal::new(1.0),
             hfr_colormap_preference: RwSignal::new(ColormapPreference::Inferno),
             always_show_view_range: RwSignal::new(false),
 

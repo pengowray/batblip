@@ -1272,6 +1272,8 @@ pub fn blit_chromagram_tiles_viewport(
     scroll_col: f64,
     zoom: f64,
     chroma_colormap: crate::state::ChromaColormap,
+    chroma_gain: f32,
+    chroma_gamma: f32,
 ) -> bool {
     use crate::state::ChromaColormap;
     use crate::canvas::colormap_2d::{
@@ -1322,11 +1324,19 @@ pub fn blit_chromagram_tiles_viewport(
             let th = tile.rendered.height as f64;
             if tw == 0.0 || th == 0.0 { return; }
 
-            // Apply 2D chromagram colormap: R=class intensity, G=note intensity, B=flow
+            // Apply gain/gamma then 2D chromagram colormap: R=class intensity, G=note intensity, B=flow
+            let apply_gain_gamma = chroma_gain != 1.0 || chroma_gamma != 1.0;
+            #[inline]
+            fn adjust_byte(val: u8, gain: f32, gamma: f32) -> u8 {
+                let norm = (val as f32 / 255.0) * gain;
+                let clamped = norm.clamp(0.0, 1.0);
+                if gamma == 1.0 { (clamped * 255.0) as u8 }
+                else { (clamped.powf(gamma) * 255.0) as u8 }
+            }
             let mut pixels = tile.rendered.pixels.clone();
             for i in (0..pixels.len()).step_by(4) {
-                let class_byte = pixels[i];
-                let note_byte = pixels[i + 1];
+                let class_byte = if apply_gain_gamma { adjust_byte(pixels[i], chroma_gain, chroma_gamma) } else { pixels[i] };
+                let note_byte = if apply_gain_gamma { adjust_byte(pixels[i + 1], chroma_gain, chroma_gamma) } else { pixels[i + 1] };
                 let flow_byte = pixels[i + 2];
                 let pixel_idx = i / 4;
                 let tile_w = tile.rendered.width as usize;

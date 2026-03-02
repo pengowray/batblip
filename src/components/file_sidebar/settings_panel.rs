@@ -393,6 +393,72 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     view! { <span></span> }.into_any()
                 }
             }}
+
+            // Chromagram-specific settings (shown only when Chromagram view is active)
+            {move || {
+                if state.main_view.get() == MainView::Chromagram {
+                    view! {
+                        <div class="setting-group">
+                            <div class="setting-group-title">"Chromagram"</div>
+                            <div class="setting-row">
+                                <span class="setting-label">{move || {
+                                    let g = state.chroma_gain.get();
+                                    if g == 1.0 { "Gain: default".to_string() }
+                                    else { format!("Gain: {:.2}x", g) }
+                                }}</span>
+                                <input
+                                    type="range"
+                                    class="setting-range"
+                                    min="0.25"
+                                    max="4.0"
+                                    step="0.05"
+                                    prop:value=move || state.chroma_gain.get().to_string()
+                                    on:input=move |ev: web_sys::Event| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                        if let Ok(v) = input.value().parse::<f32>() {
+                                            state.chroma_gain.set(v);
+                                        }
+                                    }
+                                />
+                            </div>
+                            <div class="setting-row">
+                                <span class="setting-label">{move || {
+                                    let g = state.chroma_gamma.get();
+                                    if g == 1.0 { "Contrast: linear".to_string() }
+                                    else { format!("Contrast: {:.2}", g) }
+                                }}</span>
+                                <input
+                                    type="range"
+                                    class="setting-range"
+                                    min="0.2"
+                                    max="3.0"
+                                    step="0.05"
+                                    prop:value=move || state.chroma_gamma.get().to_string()
+                                    on:input=move |ev: web_sys::Event| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                        if let Ok(v) = input.value().parse::<f32>() {
+                                            state.chroma_gamma.set(v);
+                                        }
+                                    }
+                                />
+                            </div>
+                            <div class="setting-row">
+                                <button
+                                    class="setting-button"
+                                    on:click=move |_| {
+                                        state.chroma_gain.set(1.0);
+                                        state.chroma_gamma.set(1.0);
+                                    }
+                                >"Reset"</button>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
         </div>
     }
 }

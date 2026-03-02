@@ -27,6 +27,8 @@ pub fn ChromagramView() -> impl IntoView {
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
         let chroma_colormap = state.chroma_colormap.get();
+        let chroma_gain = state.chroma_gain.get();
+        let chroma_gamma = state.chroma_gamma.get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let is_playing = state.is_playing.get();
@@ -67,6 +69,7 @@ pub fn ChromagramView() -> impl IntoView {
         spectrogram_renderer::blit_chromagram_tiles_viewport(
             &ctx, canvas, file_idx, total_cols,
             scroll_col, zoom, chroma_colormap,
+            chroma_gain, chroma_gamma,
         );
 
         // Schedule missing chromagram tiles
