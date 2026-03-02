@@ -400,6 +400,16 @@ pub fn OverviewPanel() -> impl IntoView {
                 );
             }
         }
+
+        // Time markers along the bottom edge (full file duration)
+        crate::canvas::time_markers::draw_time_markers(
+            &ctx,
+            0.0,
+            file.audio.duration_secs,
+            w as f64,
+            h as f64,
+            file.audio.duration_secs,
+        );
     });
 
     // ── Mouse handlers ────────────────────────────────────────────────────────

@@ -165,6 +165,19 @@ pub fn Waveform() -> impl IntoView {
                 );
             }
 
+            // Time markers along the bottom edge
+            {
+                let visible_time = (display_w as f64 / zoom) * file.spectrogram.time_resolution;
+                crate::canvas::time_markers::draw_time_markers(
+                    &ctx,
+                    scroll,
+                    visible_time,
+                    display_w as f64,
+                    display_h as f64,
+                    file.audio.duration_secs,
+                );
+            }
+
             // Draw "play here" marker when not playing
             if !is_playing && canvas_tool == CanvasTool::Hand {
                 let visible_time = (display_w as f64 / zoom) * file.spectrogram.time_resolution;
