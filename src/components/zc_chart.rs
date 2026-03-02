@@ -2,25 +2,14 @@ use leptos::prelude::*;
 use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
-use crate::state::{AppState, CanvasTool, FilterQuality};
+use crate::state::{AppState, CanvasTool, FilterQuality, SpectrogramHandle};
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 const TAU: f64 = std::f64::consts::TAU;
 const LABEL_AREA_WIDTH: f64 = 60.0;
-
-/// Convert a canvas-local Y coordinate to a frequency (Hz).
-fn y_to_freq(y: f64, min_freq: f64, max_freq: f64, canvas_height: f64) -> f64 {
-    min_freq + (1.0 - y / canvas_height) * (max_freq - min_freq)
-}
-
-/// Convert a frequency (Hz) to a canvas-local Y coordinate.
-fn freq_to_y(freq: f64, min_freq: f64, max_freq: f64, canvas_height: f64) -> f64 {
-    let range = max_freq - min_freq;
-    if range <= 0.0 { return canvas_height / 2.0; }
-    canvas_height * (1.0 - (freq - min_freq) / range)
-}
 
 /// Pick a nice grid interval (in kHz) for the visible frequency range.
 fn grid_interval_khz(range_khz: f64) -> f64 {
@@ -38,6 +27,30 @@ pub fn ZcDotChart() -> impl IntoView {
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
     let pinch_state: RwSignal<Option<crate::components::pinch::PinchState>> = RwSignal::new(None);
     let axis_drag_raw_start = RwSignal::new(0.0f64);
+
+    // FF handle hit-test (FF-only, no HET)
+    let hit_test_ff_handles = move |mouse_y: f64, min_freq: f64, max_freq: f64, canvas_height: f64, threshold: f64| -> Option<SpectrogramHandle> {
+        let ff_lo = state.ff_freq_lo.get_untracked();
+        let ff_hi = state.ff_freq_hi.get_untracked();
+        if ff_hi <= ff_lo { return None; }
+
+        let mut candidates: Vec<(SpectrogramHandle, f64)> = Vec::new();
+        let y_upper = spectrogram_renderer::freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
+        let y_lower = spectrogram_renderer::freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
+        let d_upper = (mouse_y - y_upper).abs();
+        let d_lower = (mouse_y - y_lower).abs();
+        if d_upper <= threshold { candidates.push((SpectrogramHandle::FfUpper, d_upper)); }
+        if d_lower <= threshold { candidates.push((SpectrogramHandle::FfLower, d_lower)); }
+
+        let mid_freq = (ff_lo + ff_hi) / 2.0;
+        let y_mid = spectrogram_renderer::freq_to_y(mid_freq.clamp(min_freq, max_freq), min_freq, max_freq, canvas_height);
+        let d_mid = (mouse_y - y_mid).abs();
+        if d_mid <= threshold { candidates.push((SpectrogramHandle::FfMiddle, d_mid)); }
+
+        if candidates.is_empty() { return None; }
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Some(candidates[0].0)
+    };
 
     // Cache ZC bins — recompute when the file or EQ settings change.
     let zc_bins = Memo::new(move |_| {
@@ -80,8 +93,12 @@ pub fn ZcDotChart() -> impl IntoView {
         let display_max_freq = state.max_display_freq.get();
         let ff_lo = state.ff_freq_lo.get();
         let ff_hi = state.ff_freq_hi.get();
-        let _axis_drag_s = state.axis_drag_start_freq.get();
-        let _axis_drag_c = state.axis_drag_current_freq.get();
+        let axis_drag_start = state.axis_drag_start_freq.get();
+        let axis_drag_current = state.axis_drag_current_freq.get();
+        let spec_hover = state.spec_hover_handle.get();
+        let spec_drag = state.spec_drag_handle.get();
+        let mouse_freq = state.mouse_freq.get();
+        let mouse_cx = state.mouse_canvas_x.get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -143,25 +160,6 @@ pub fn ZcDotChart() -> impl IntoView {
             }
         }
 
-        // FF range overlay
-        if ff_hi > ff_lo {
-            let y_top = freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, ch);
-            let y_bot = freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, ch);
-            if y_bot > y_top {
-                ctx.set_fill_style_str("rgba(80, 160, 255, 0.08)");
-                ctx.fill_rect(LABEL_AREA_WIDTH, y_top, dot_area_w, y_bot - y_top);
-                // FF boundary lines
-                ctx.set_stroke_style_str("rgba(80, 160, 255, 0.3)");
-                ctx.set_line_width(1.0);
-                for &yy in &[y_top, y_bot] {
-                    ctx.begin_path();
-                    ctx.move_to(LABEL_AREA_WIDTH, yy);
-                    ctx.line_to(cw, yy);
-                    ctx.stroke();
-                }
-            }
-        }
-
         // Horizontal grid lines (in dot area)
         let min_freq_khz = min_freq / 1000.0;
         let max_freq_khz = max_freq / 1000.0;
@@ -170,11 +168,9 @@ pub fn ZcDotChart() -> impl IntoView {
         let first_grid = ((min_freq_khz / interval).ceil() * interval) as f64;
         ctx.set_stroke_style_str("#222");
         ctx.set_line_width(1.0);
-        ctx.set_fill_style_str("#555");
-        ctx.set_font("10px monospace");
         let mut freq_khz = first_grid;
         while freq_khz < max_freq_khz {
-            let y = freq_to_y(freq_khz * 1000.0, min_freq, max_freq, ch);
+            let y = spectrogram_renderer::freq_to_y(freq_khz * 1000.0, min_freq, max_freq, ch);
             ctx.begin_path();
             ctx.move_to(LABEL_AREA_WIDTH, y);
             ctx.line_to(cw, y);
@@ -201,7 +197,7 @@ pub fn ZcDotChart() -> impl IntoView {
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
             let x = LABEL_AREA_WIDTH + (bin_time - start_time) * px_per_sec;
-            let y = freq_to_y(rate_hz, min_freq, max_freq, ch);
+            let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
             let _ = ctx.move_to(x + radius_armed, y);
             let _ = ctx.arc(x, y, radius_armed, 0.0, TAU);
         }
@@ -216,7 +212,7 @@ pub fn ZcDotChart() -> impl IntoView {
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
             let x = LABEL_AREA_WIDTH + (bin_time - start_time) * px_per_sec;
-            let y = freq_to_y(rate_hz, min_freq, max_freq, ch);
+            let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
             let _ = ctx.move_to(x + radius_unarmed, y);
             let _ = ctx.arc(x, y, radius_unarmed, 0.0, TAU);
         }
@@ -242,8 +238,19 @@ pub fn ZcDotChart() -> impl IntoView {
 
         ctx.restore(); // un-clip dot area
 
+        // FF overlay (dimming outside FF range + amber handles)
+        if ff_hi > ff_lo {
+            spectrogram_renderer::draw_ff_overlay(
+                &ctx,
+                ff_lo, ff_hi,
+                min_freq, max_freq,
+                ch, cw,
+                spec_hover, spec_drag,
+            );
+        }
+
         // ── Left label area ────────────────────────────────────────────
-        // Background
+        // Background (paints over FF dimming in label area)
         ctx.set_fill_style_str("#0e0e0e");
         ctx.fill_rect(0.0, 0.0, LABEL_AREA_WIDTH, ch);
 
@@ -255,42 +262,44 @@ pub fn ZcDotChart() -> impl IntoView {
         ctx.line_to(LABEL_AREA_WIDTH, ch);
         ctx.stroke();
 
-        // Frequency labels
-        ctx.set_fill_style_str("#888");
-        ctx.set_font("10px monospace");
-        ctx.set_text_align("right");
-        let mut freq_khz2 = first_grid;
-        while freq_khz2 < max_freq_khz {
-            let y = freq_to_y(freq_khz2 * 1000.0, min_freq, max_freq, ch);
-            if y > 6.0 && y < ch - 2.0 {
-                let label = if freq_khz2.fract() == 0.0 {
-                    format!("{:.0}k", freq_khz2)
-                } else {
-                    format!("{:.1}k", freq_khz2)
-                };
-                let _ = ctx.fill_text(&label, LABEL_AREA_WIDTH - 4.0, y + 3.5);
-            }
-            freq_khz2 += interval;
-        }
-        ctx.set_text_align("start"); // reset
+        // Frequency markers (color bars, labels, ticks, cursor indicator)
+        let shift_mode = FreqShiftMode::Divide(state.zc_factor.get());
+        let (adl, adh) = match (axis_drag_start, axis_drag_current) {
+            (Some(a), Some(b)) => (Some(a.min(b)), Some(a.max(b))),
+            _ => (None, None),
+        };
+        let ff_drag_active = matches!(spec_drag,
+            Some(SpectrogramHandle::FfUpper) |
+            Some(SpectrogramHandle::FfLower) |
+            Some(SpectrogramHandle::FfMiddle)
+        );
+        let in_label = mouse_freq.is_some() && mouse_cx < LABEL_AREA_WIDTH;
+        let label_hover_op = if in_label { 1.0 } else { 0.0 };
 
-        // FF range labels on axis
-        if ff_hi > ff_lo {
-            ctx.set_fill_style_str("rgba(80, 160, 255, 0.6)");
-            ctx.set_font("9px monospace");
-            let y_top = freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, ch);
-            let y_bot = freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, ch);
-            if y_top > 6.0 && y_top < ch - 2.0 {
-                ctx.set_text_align("right");
-                let _ = ctx.fill_text(&format!("{:.0}k", ff_hi / 1000.0), LABEL_AREA_WIDTH - 4.0, y_top - 2.0);
-                ctx.set_text_align("start");
-            }
-            if y_bot > 6.0 && y_bot < ch - 2.0 {
-                ctx.set_text_align("right");
-                let _ = ctx.fill_text(&format!("{:.0}k", ff_lo / 1000.0), LABEL_AREA_WIDTH - 4.0, y_bot + 10.0);
-                ctx.set_text_align("start");
-            }
-        }
+        let marker_state = FreqMarkerState {
+            mouse_freq,
+            mouse_in_label_area: in_label,
+            label_hover_opacity: label_hover_op,
+            has_selection: selection.is_some(),
+            file_max_freq,
+            axis_drag_lo: adl,
+            axis_drag_hi: adh,
+            ff_drag_active,
+            ff_lo,
+            ff_hi,
+            ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
+        };
+
+        spectrogram_renderer::draw_freq_markers(
+            &ctx,
+            min_freq,
+            max_freq,
+            ch,
+            cw,
+            shift_mode,
+            &marker_state,
+            0.0, // no HET in ZC view
+        );
     });
 
     // Auto-scroll to follow playhead during playback (with suspension support)
@@ -372,7 +381,21 @@ pub fn ZcDotChart() -> impl IntoView {
         let ch = canvas.height() as f64;
         if ch <= 0.0 { return None; }
         let (min_freq, max_freq) = get_freq_range();
-        let freq = y_to_freq(px_y, min_freq, max_freq, ch);
+        let freq = spectrogram_renderer::y_to_freq(px_y, min_freq, max_freq, ch);
+        Some((px_x, px_y, freq))
+    };
+
+    // Helper: convert touch to (px_x, px_y, freq) for FF handle interaction
+    let touch_to_yf = move |touch: &web_sys::Touch| -> Option<(f64, f64, f64)> {
+        let canvas_el = canvas_ref.get()?;
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let px_x = touch.client_x() as f64 - rect.left();
+        let px_y = touch.client_y() as f64 - rect.top();
+        let ch = canvas.height() as f64;
+        if ch <= 0.0 { return None; }
+        let (min_freq, max_freq) = get_freq_range();
+        let freq = spectrogram_renderer::y_to_freq(px_y, min_freq, max_freq, ch);
         Some((px_x, px_y, freq))
     };
 
@@ -403,6 +426,14 @@ pub fn ZcDotChart() -> impl IntoView {
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
 
+        // FF handle drag takes priority over everything
+        if let Some(handle) = state.spec_hover_handle.get_untracked() {
+            state.spec_drag_handle.set(Some(handle));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
+
         // Check for axis drag (left label area)
         if let Some((px_x, _px_y, freq)) = mouse_to_xf(&ev) {
             if px_x < LABEL_AREA_WIDTH {
@@ -428,52 +459,118 @@ pub fn ZcDotChart() -> impl IntoView {
     };
 
     let on_mousemove = move |ev: MouseEvent| {
-        if !state.is_dragging.get_untracked() { return; }
+        if let Some((px_x, px_y, freq)) = mouse_to_xf(&ev) {
+            // Always track mouse position for frequency display
+            state.mouse_freq.set(Some(freq));
+            state.mouse_canvas_x.set(px_x);
+            let in_label_area = px_x < LABEL_AREA_WIDTH;
+            state.mouse_in_label_area.set(in_label_area);
+            state.label_hover_opacity.set(if in_label_area { 1.0 } else { 0.0 });
 
-        // Axis drag takes priority
-        if state.axis_drag_start_freq.get_untracked().is_some() {
-            if let Some((_px_x, _px_y, freq)) = mouse_to_xf(&ev) {
-                let raw_start = axis_drag_raw_start.get_untracked();
-                let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
-                let (snapped_start, snapped_end) = if freq > raw_start {
-                    ((raw_start / snap).floor() * snap, (freq / snap).ceil() * snap)
-                } else if freq < raw_start {
-                    ((raw_start / snap).ceil() * snap, (freq / snap).floor() * snap)
+            if state.is_dragging.get_untracked() {
+                // FF handle drag takes highest priority
+                if let Some(handle) = state.spec_drag_handle.get_untracked() {
+                    let Some(canvas_el) = canvas_ref.get() else { return };
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    let ch = canvas.height() as f64;
+                    let (min_freq, max_freq) = get_freq_range();
+                    let freq_at_mouse = spectrogram_renderer::y_to_freq(px_y, min_freq, max_freq, ch);
+                    let file_max_freq = {
+                        let files = state.files.get_untracked();
+                        let idx = state.current_file_index.get_untracked();
+                        idx.and_then(|i| files.get(i))
+                            .map(|f| f.spectrogram.max_freq)
+                            .unwrap_or(96_000.0)
+                    };
+
+                    match handle {
+                        SpectrogramHandle::FfUpper => {
+                            let lo = state.ff_freq_lo.get_untracked();
+                            state.ff_freq_hi.set(freq_at_mouse.clamp(lo + 500.0, file_max_freq));
+                        }
+                        SpectrogramHandle::FfLower => {
+                            let hi = state.ff_freq_hi.get_untracked();
+                            state.ff_freq_lo.set(freq_at_mouse.clamp(0.0, hi - 500.0));
+                        }
+                        SpectrogramHandle::FfMiddle => {
+                            let lo = state.ff_freq_lo.get_untracked();
+                            let hi = state.ff_freq_hi.get_untracked();
+                            let bw = hi - lo;
+                            let mid = (lo + hi) / 2.0;
+                            let delta = freq_at_mouse - mid;
+                            let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
+                            let new_hi = new_lo + bw;
+                            state.ff_freq_lo.set(new_lo);
+                            state.ff_freq_hi.set(new_hi);
+                        }
+                        _ => {} // No HET handles in ZC view
+                    }
+                    return;
+                }
+
+                // Axis drag takes second priority
+                if state.axis_drag_start_freq.get_untracked().is_some() {
+                    let raw_start = axis_drag_raw_start.get_untracked();
+                    let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+                    let (snapped_start, snapped_end) = if freq > raw_start {
+                        ((raw_start / snap).floor() * snap, (freq / snap).ceil() * snap)
+                    } else if freq < raw_start {
+                        ((raw_start / snap).ceil() * snap, (freq / snap).floor() * snap)
+                    } else {
+                        let s = (raw_start / snap).round() * snap;
+                        (s, s)
+                    };
+                    state.axis_drag_start_freq.set(Some(snapped_start));
+                    state.axis_drag_current_freq.set(Some(snapped_end));
+                    let lo = snapped_start.min(snapped_end);
+                    let hi = snapped_start.max(snapped_end);
+                    if hi - lo > 500.0 {
+                        state.ff_freq_lo.set(lo);
+                        state.ff_freq_hi.set(hi);
+                    }
+                    return;
+                }
+
+                // Hand panning
+                if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+                let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
+                let dx = ev.client_x() as f64 - start_client_x;
+                let cw = state.spectrogram_canvas_width.get_untracked();
+                if cw == 0.0 { return; }
+                let files = state.files.get_untracked();
+                let idx = state.current_file_index.get_untracked();
+                let file = idx.and_then(|i| files.get(i));
+                let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                let zoom = state.zoom_level.get_untracked();
+                let visible_time = (cw / zoom) * time_res;
+                let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+                let max_scroll = (duration - visible_time).max(0.0);
+                let dt = -(dx / cw) * visible_time;
+                state.suspend_follow();
+                state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+            } else {
+                // Not dragging: do FF handle hover detection (skip in label area)
+                if !in_label_area {
+                    let Some(canvas_el) = canvas_ref.get() else { return };
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    let ch = canvas.height() as f64;
+                    let (min_freq, max_freq) = get_freq_range();
+                    let handle = hit_test_ff_handles(px_y, min_freq, max_freq, ch, 8.0);
+                    state.spec_hover_handle.set(handle);
                 } else {
-                    let s = (raw_start / snap).round() * snap;
-                    (s, s)
-                };
-                state.axis_drag_start_freq.set(Some(snapped_start));
-                state.axis_drag_current_freq.set(Some(snapped_end));
-                let lo = snapped_start.min(snapped_end);
-                let hi = snapped_start.max(snapped_end);
-                if hi - lo > 500.0 {
-                    state.ff_freq_lo.set(lo);
-                    state.ff_freq_hi.set(hi);
+                    state.spec_hover_handle.set(None);
                 }
             }
-            return;
         }
-
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
-        let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
-        let dx = ev.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
-        if cw == 0.0 { return; }
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
-        let file = idx.and_then(|i| files.get(i));
-        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-        let zoom = state.zoom_level.get_untracked();
-        let visible_time = (cw / zoom) * time_res;
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-        let max_scroll = (duration - visible_time).max(0.0);
-        let dt = -(dx / cw) * visible_time;
-        state.suspend_follow();
-        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
     };
 
     let on_mouseup = move |_ev: MouseEvent| {
+        // End FF handle drag
+        if state.spec_drag_handle.get_untracked().is_some() {
+            state.spec_drag_handle.set(None);
+            state.is_dragging.set(false);
+            return;
+        }
         // End axis drag
         if state.axis_drag_start_freq.get_untracked().is_some() {
             let lo = state.ff_freq_lo.get_untracked();
@@ -492,6 +589,11 @@ pub fn ZcDotChart() -> impl IntoView {
     };
 
     let on_mouseleave = move |_ev: MouseEvent| {
+        state.mouse_freq.set(None);
+        state.mouse_in_label_area.set(false);
+        state.label_hover_opacity.set(0.0);
+        state.spec_hover_handle.set(None);
+        state.spec_drag_handle.set(None);
         if state.axis_drag_start_freq.get_untracked().is_some() {
             state.axis_drag_start_freq.set(None);
             state.axis_drag_current_freq.set(None);
@@ -530,6 +632,21 @@ pub fn ZcDotChart() -> impl IntoView {
         pinch_state.set(None);
 
         let touch = touches.get(0).unwrap();
+
+        // FF handle drag via touch (wider threshold)
+        if let Some((_px_x, px_y, _freq)) = touch_to_yf(&touch) {
+            let Some(canvas_el) = canvas_ref.get() else { return };
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.height() as f64;
+            let (min_freq, max_freq) = get_freq_range();
+            if let Some(handle) = hit_test_ff_handles(px_y, min_freq, max_freq, ch, 16.0) {
+                state.spec_drag_handle.set(Some(handle));
+                state.is_dragging.set(true);
+                ev.prevent_default();
+                return;
+            }
+        }
+
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         if state.is_playing.get_untracked() {
             let t = state.playhead_time.get_untracked();
@@ -565,6 +682,49 @@ pub fn ZcDotChart() -> impl IntoView {
 
         if n != 1 { return; }
         let touch = touches.get(0).unwrap();
+
+        // FF handle drag via touch
+        if let Some(handle) = state.spec_drag_handle.get_untracked() {
+            if let Some((_px_x, px_y, _freq)) = touch_to_yf(&touch) {
+                let Some(canvas_el) = canvas_ref.get() else { return };
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let ch = canvas.height() as f64;
+                let (min_freq, max_freq) = get_freq_range();
+                let freq_at_touch = spectrogram_renderer::y_to_freq(px_y, min_freq, max_freq, ch);
+                let file_max_freq = {
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    idx.and_then(|i| files.get(i))
+                        .map(|f| f.spectrogram.max_freq)
+                        .unwrap_or(96_000.0)
+                };
+                match handle {
+                    SpectrogramHandle::FfUpper => {
+                        let lo = state.ff_freq_lo.get_untracked();
+                        state.ff_freq_hi.set(freq_at_touch.clamp(lo + 500.0, file_max_freq));
+                    }
+                    SpectrogramHandle::FfLower => {
+                        let hi = state.ff_freq_hi.get_untracked();
+                        state.ff_freq_lo.set(freq_at_touch.clamp(0.0, hi - 500.0));
+                    }
+                    SpectrogramHandle::FfMiddle => {
+                        let lo = state.ff_freq_lo.get_untracked();
+                        let hi = state.ff_freq_hi.get_untracked();
+                        let bw = hi - lo;
+                        let mid = (lo + hi) / 2.0;
+                        let delta = freq_at_touch - mid;
+                        let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
+                        let new_hi = new_lo + bw;
+                        state.ff_freq_lo.set(new_lo);
+                        state.ff_freq_hi.set(new_hi);
+                    }
+                    _ => {}
+                }
+            }
+            ev.prevent_default();
+            return;
+        }
+
         if !state.is_dragging.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
@@ -590,6 +750,12 @@ pub fn ZcDotChart() -> impl IntoView {
         if remaining < 2 {
             pinch_state.set(None);
         }
+        // End FF handle drag
+        if state.spec_drag_handle.get_untracked().is_some() {
+            state.spec_drag_handle.set(None);
+            state.is_dragging.set(false);
+            return;
+        }
         if remaining == 1 {
             if let Some(touch) = _ev.touches().get(0) {
                 hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
@@ -606,13 +772,19 @@ pub fn ZcDotChart() -> impl IntoView {
 
     view! {
         <div class="waveform-container"
-            style=move || match state.canvas_tool.get() {
-                CanvasTool::Hand => if state.is_dragging.get() {
-                    "cursor: grabbing; touch-action: none;"
-                } else {
-                    "cursor: grab; touch-action: none;"
-                },
-                CanvasTool::Selection => "cursor: crosshair; touch-action: none;",
+            style=move || {
+                // FF handle hover: show resize cursor
+                if state.spec_hover_handle.get().is_some() || state.spec_drag_handle.get().is_some() {
+                    return "cursor: ns-resize; touch-action: none;";
+                }
+                match state.canvas_tool.get() {
+                    CanvasTool::Hand => if state.is_dragging.get() {
+                        "cursor: grabbing; touch-action: none;"
+                    } else {
+                        "cursor: grab; touch-action: none;"
+                    },
+                    CanvasTool::Selection => "cursor: crosshair; touch-action: none;",
+                }
             }
         >
             <canvas
