@@ -166,7 +166,7 @@ pub fn zc_rate_per_bin(
     bins
 }
 
-fn cascaded_lp(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
+pub(crate) fn cascaded_lp(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
     let mut result = samples.to_vec();
     for _ in 0..passes {
         result = lowpass_filter(&result, cutoff, sample_rate);
@@ -174,7 +174,7 @@ fn cascaded_lp(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) ->
     result
 }
 
-fn smooth_envelope(samples: &[f32], window: usize) -> Vec<f32> {
+pub(crate) fn smooth_envelope(samples: &[f32], window: usize) -> Vec<f32> {
     let mut env = vec![0.0f32; samples.len()];
     let attack = 1.0 / window as f32;
     let release = 1.0 / (window as f32 * 4.0);

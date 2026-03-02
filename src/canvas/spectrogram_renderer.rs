@@ -1866,6 +1866,75 @@ pub fn draw_het_overlay(
     }
 }
 
+/// Draw detected pulse markers as vertical bands on the spectrogram.
+pub fn draw_pulses(
+    ctx: &CanvasRenderingContext2d,
+    pulses: &[crate::dsp::pulse_detect::DetectedPulse],
+    selected_index: Option<usize>,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+) {
+    if pulses.is_empty() {
+        return;
+    }
+
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+
+    for pulse in pulses {
+        // Skip pulses not in view
+        if pulse.end_time < start_time || pulse.start_time > end_time {
+            continue;
+        }
+
+        let x0 = ((pulse.start_time - start_time) * px_per_sec).max(0.0);
+        let x1 = ((pulse.end_time - start_time) * px_per_sec).min(canvas_width);
+        if x1 <= x0 {
+            continue;
+        }
+
+        let is_selected = selected_index == Some(pulse.index);
+
+        // Fill — full-height vertical band
+        if is_selected {
+            ctx.set_fill_style_str("rgba(255, 180, 50, 0.20)");
+        } else {
+            ctx.set_fill_style_str("rgba(50, 200, 120, 0.08)");
+        }
+        ctx.fill_rect(x0, 0.0, x1 - x0, canvas_height);
+
+        // Edge lines
+        if is_selected {
+            ctx.set_stroke_style_str("rgba(255, 200, 80, 0.8)");
+            ctx.set_line_width(1.5);
+        } else {
+            ctx.set_stroke_style_str("rgba(80, 220, 150, 0.4)");
+            ctx.set_line_width(0.5);
+        }
+        ctx.begin_path();
+        ctx.move_to(x0, 0.0);
+        ctx.line_to(x0, canvas_height);
+        ctx.stroke();
+
+        // Pulse number label at top (only if wide enough)
+        if x1 - x0 > 12.0 {
+            if is_selected {
+                ctx.set_fill_style_str("rgba(255, 200, 80, 0.9)");
+            } else {
+                ctx.set_fill_style_str("rgba(80, 220, 150, 0.7)");
+            }
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_baseline("top");
+            let _ = ctx.fill_text(&format!("{}", pulse.index), x0 + 2.0, 2.0);
+        }
+    }
+}
+
 /// Draw selection rectangle overlay on spectrogram.
 pub fn draw_selection(
     ctx: &CanvasRenderingContext2d,

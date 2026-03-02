@@ -60,6 +60,7 @@ pub enum RightSidebarTab {
     Analysis,
     Harmonics,
     Notch,
+    Pulses,
 }
 
 impl RightSidebarTab {
@@ -71,6 +72,7 @@ impl RightSidebarTab {
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::Notch => "Noise Filter",
+            Self::Pulses => "Pulses",
         }
     }
 
@@ -81,6 +83,7 @@ impl RightSidebarTab {
         Self::Analysis,
         Self::Harmonics,
         Self::Notch,
+        Self::Pulses,
     ];
 }
 
@@ -467,6 +470,12 @@ pub struct AppState {
     pub noise_reduce_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
     pub noise_reduce_learning: RwSignal<bool>,
 
+    // Pulse detection
+    pub detected_pulses: RwSignal<Vec<crate::dsp::pulse_detect::DetectedPulse>>,
+    pub pulse_overlay_enabled: RwSignal<bool>,
+    pub selected_pulse_index: RwSignal<Option<usize>>,
+    pub pulse_detecting: RwSignal<bool>,
+
     // Display-affecting checkboxes (spectrogram intensity settings)
     pub display_auto_gain: RwSignal<bool>,
     pub display_eq: RwSignal<bool>,
@@ -632,6 +641,11 @@ impl AppState {
             noise_reduce_strength: RwSignal::new(1.0),
             noise_reduce_floor: RwSignal::new(None),
             noise_reduce_learning: RwSignal::new(false),
+
+            detected_pulses: RwSignal::new(Vec::new()),
+            pulse_overlay_enabled: RwSignal::new(true),
+            selected_pulse_index: RwSignal::new(None),
+            pulse_detecting: RwSignal::new(false),
 
             display_auto_gain: RwSignal::new(false),
             display_eq: RwSignal::new(false),

@@ -6,7 +6,7 @@ use crate::state::{AppState, RightSidebarTab};
 
 use crate::components::file_sidebar::{
     SpectrogramSettingsPanel, SelectionPanel, SidebarAnalysisPanel,
-    MetadataPanel, HarmonicsPanel, NotchPanel,
+    MetadataPanel, HarmonicsPanel, NotchPanel, PulsePanel,
 };
 
 #[component]
@@ -145,6 +145,7 @@ pub fn RightSidebar() -> impl IntoView {
                 RightSidebarTab::Analysis => view! { <SidebarAnalysisPanel /> }.into_any(),
                 RightSidebarTab::Harmonics => view! { <HarmonicsPanel /> }.into_any(),
                 RightSidebarTab::Notch => view! { <NotchPanel /> }.into_any(),
+                RightSidebarTab::Pulses => view! { <PulsePanel /> }.into_any(),
                 RightSidebarTab::Metadata => view! { <MetadataPanel /> }.into_any(),
             }}
         </div>

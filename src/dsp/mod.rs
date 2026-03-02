@@ -10,3 +10,4 @@ pub mod zc_divide;
 pub mod wsnr;
 pub mod zero_crossing;
 pub mod chromagram;
+pub mod pulse_detect;

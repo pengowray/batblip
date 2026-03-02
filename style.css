@@ -486,6 +486,60 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
+/* Pulse detection panel */
+.pulse-list {
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 4px 0;
+}
+
+.pulse-item {
+    display: flex;
+    gap: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #aaa;
+    border-left: 2px solid transparent;
+    align-items: baseline;
+}
+
+.pulse-item:hover {
+    background: #1a2a20;
+    color: #ccc;
+}
+
+.pulse-item.selected {
+    background: #1f2f25;
+    color: #eee;
+    border-left-color: #4a8;
+}
+
+.pulse-index {
+    color: #6a6;
+    font-weight: 600;
+    min-width: 28px;
+}
+
+.pulse-time {
+    min-width: 48px;
+}
+
+.pulse-dur {
+    min-width: 40px;
+    color: #888;
+}
+
+.pulse-freq {
+    min-width: 48px;
+    color: #8af;
+}
+
+.pulse-snr {
+    color: #888;
+    margin-left: auto;
+}
+
 /* Settings panel */
 .sidebar-panel {
     flex: 1;

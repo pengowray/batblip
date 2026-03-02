@@ -307,6 +307,9 @@ pub fn Spectrogram() -> impl IntoView {
         let notch_enabled = state.notch_enabled.get();
         let notch_hovering = state.notch_hovering_band.get();
         let harmonic_suppression = state.notch_harmonic_suppression.get();
+        let detected_pulses = state.detected_pulses.get();
+        let pulse_overlay = state.pulse_overlay_enabled.get();
+        let selected_pulse = state.selected_pulse_index.get();
         let _main_view = state.main_view.get();
         let spect_floor = state.spect_floor_db.get();
         let spect_range = state.spect_range_db.get();
@@ -658,6 +661,20 @@ pub fn Spectrogram() -> impl IntoView {
                 display_h as f64,
                 duration,
             );
+
+            // Pulse detection overlay
+            if pulse_overlay && !detected_pulses.is_empty() {
+                spectrogram_renderer::draw_pulses(
+                    &ctx,
+                    &detected_pulses,
+                    selected_pulse,
+                    scroll,
+                    time_res,
+                    zoom,
+                    display_w as f64,
+                    display_h as f64,
+                );
+            }
 
             // Notch filter band markers
             if !notch_bands.is_empty() {
