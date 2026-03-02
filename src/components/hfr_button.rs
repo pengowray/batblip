@@ -112,6 +112,41 @@ pub fn HfrButton() -> impl IntoView {
         }
     });
 
+    // Effect: ZC mode display settings save/restore.
+    // ZC remembers its own display_eq / display_noise_filter / display_auto_gain.
+    {
+        let prev_mode = RwSignal::new(state.playback_mode.get_untracked());
+        Effect::new(move || {
+            let mode = state.playback_mode.get();
+            let old = prev_mode.get_untracked();
+            if mode == old { return; }
+            prev_mode.set(mode);
+
+            let was_zc = old == PlaybackMode::ZeroCrossing;
+            let is_zc = mode == PlaybackMode::ZeroCrossing;
+
+            if was_zc && !is_zc {
+                // Leaving ZC: save ZC settings, restore normal settings
+                state.zc_saved_display_auto_gain.set(state.display_auto_gain.get_untracked());
+                state.zc_saved_display_eq.set(state.display_eq.get_untracked());
+                state.zc_saved_display_noise_filter.set(state.display_noise_filter.get_untracked());
+
+                state.display_auto_gain.set(state.normal_saved_display_auto_gain.get_untracked());
+                state.display_eq.set(state.normal_saved_display_eq.get_untracked());
+                state.display_noise_filter.set(state.normal_saved_display_noise_filter.get_untracked());
+            } else if !was_zc && is_zc {
+                // Entering ZC: save normal settings, restore ZC settings
+                state.normal_saved_display_auto_gain.set(state.display_auto_gain.get_untracked());
+                state.normal_saved_display_eq.set(state.display_eq.get_untracked());
+                state.normal_saved_display_noise_filter.set(state.display_noise_filter.get_untracked());
+
+                state.display_auto_gain.set(state.zc_saved_display_auto_gain.get_untracked());
+                state.display_eq.set(state.zc_saved_display_eq.get_untracked());
+                state.display_noise_filter.set(state.zc_saved_display_noise_filter.get_untracked());
+            }
+        });
+    }
+
     // Effect D (carried over): bandpass_mode + bandpass_range + playback_mode → filter_enabled + filter_freq + filter gains
     Effect::new(move || {
         let bp_mode = state.bandpass_mode.get();

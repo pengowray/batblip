@@ -466,6 +466,19 @@ pub struct AppState {
     pub noise_reduce_strength: RwSignal<f64>,
     pub noise_reduce_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
     pub noise_reduce_learning: RwSignal<bool>,
+
+    // Display-affecting checkboxes (spectrogram intensity settings)
+    pub display_auto_gain: RwSignal<bool>,
+    pub display_eq: RwSignal<bool>,
+    pub display_noise_filter: RwSignal<bool>,
+    // ZC saved display settings (restored when entering ZC; defaults: eq=true, noise=true)
+    pub zc_saved_display_auto_gain: RwSignal<bool>,
+    pub zc_saved_display_eq: RwSignal<bool>,
+    pub zc_saved_display_noise_filter: RwSignal<bool>,
+    // Normal saved display settings (restored when leaving ZC; defaults: all false)
+    pub normal_saved_display_auto_gain: RwSignal<bool>,
+    pub normal_saved_display_eq: RwSignal<bool>,
+    pub normal_saved_display_noise_filter: RwSignal<bool>,
 }
 
 fn detect_tauri() -> bool {
@@ -619,6 +632,16 @@ impl AppState {
             noise_reduce_strength: RwSignal::new(1.0),
             noise_reduce_floor: RwSignal::new(None),
             noise_reduce_learning: RwSignal::new(false),
+
+            display_auto_gain: RwSignal::new(false),
+            display_eq: RwSignal::new(false),
+            display_noise_filter: RwSignal::new(false),
+            zc_saved_display_auto_gain: RwSignal::new(false),
+            zc_saved_display_eq: RwSignal::new(true),
+            zc_saved_display_noise_filter: RwSignal::new(true),
+            normal_saved_display_auto_gain: RwSignal::new(false),
+            normal_saved_display_eq: RwSignal::new(false),
+            normal_saved_display_noise_filter: RwSignal::new(false),
         };
 
         // On mobile, start with sidebar collapsed

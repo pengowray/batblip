@@ -13,7 +13,13 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
             <div class="setting-group">
                 <div class="setting-group-title">"Intensity"</div>
                 <div class="setting-row">
-                    <span class="setting-label">{move || format!("Gain: {:+.0} dB", state.spect_gain_db.get())}</span>
+                    <span class="setting-label">{move || {
+                        if state.display_auto_gain.get() {
+                            "Gain: auto".to_string()
+                        } else {
+                            format!("Gain: {:+.0} dB", state.spect_gain_db.get())
+                        }
+                    }}</span>
                     <input
                         type="range"
                         class="setting-range"
@@ -26,6 +32,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             if let Ok(v) = input.value().parse::<f32>() {
                                 state.spect_gain_db.set(v);
+                                state.display_auto_gain.set(false);
                             }
                         }
                     />
@@ -72,6 +79,48 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     />
                 </div>
                 <div class="setting-row">
+                    <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.display_auto_gain.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.display_auto_gain.set(input.checked());
+                            }
+                        />
+                        "Auto gain"
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.display_eq.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.display_eq.set(input.checked());
+                            }
+                        />
+                        "Show EQ"
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.display_noise_filter.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.display_noise_filter.set(input.checked());
+                            }
+                        />
+                        "Show noise filter"
+                    </label>
+                </div>
+                <div class="setting-row">
                     <button
                         class="setting-button"
                         on:click=move |_| {
@@ -79,6 +128,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             state.spect_floor_db.set(-80.0);
                             state.spect_range_db.set(80.0);
                             state.spect_gamma.set(1.0);
+                            state.display_auto_gain.set(false);
+                            state.display_eq.set(false);
+                            state.display_noise_filter.set(false);
                         }
                     >"Reset"</button>
                 </div>

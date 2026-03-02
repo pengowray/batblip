@@ -763,20 +763,25 @@ fn apply_hfr_colormap_to_tile(
 }
 
 /// Convert dB tile data to RGBA pixels with display settings and colormap applied.
+/// `freq_adjustments` is an optional per-row dB offset array (length == height).
 fn db_tile_to_rgba(
     db_data: &[f32],
     width: u32,
     height: u32,
     settings: &SpectDisplaySettings,
     colormap: ColormapMode,
+    freq_adjustments: Option<&[f32]>,
 ) -> Vec<u8> {
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
+    let w = width as usize;
 
     match colormap {
         ColormapMode::Uniform(cm) => {
             for (i, &db) in db_data.iter().enumerate() {
-                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db);
+                let row = i / w;
+                let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
+                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
                 let [r, g, b] = cm.apply(grey);
                 let pi = i * 4;
                 rgba[pi] = r;
@@ -787,12 +792,12 @@ fn db_tile_to_rgba(
         }
         ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
             let h = height as f64;
-            let w = width as usize;
             let focus_top = (h * (1.0 - ff_hi_frac)).round() as usize;
             let focus_bot = (h * (1.0 - ff_lo_frac)).round() as usize;
             for (i, &db) in db_data.iter().enumerate() {
-                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db);
                 let row = i / w;
+                let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
+                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
                 let [r, g, b] = if row >= focus_top && row < focus_bot {
                     cm.apply(grey)
                 } else {
@@ -824,6 +829,7 @@ pub fn blit_tiles_viewport(
     freq_crop_hi: f64,
     colormap: ColormapMode,
     display_settings: &SpectDisplaySettings,
+    freq_adjustments: Option<&[f32]>,
     // Preview fallback for missing tiles
     preview: Option<&PreviewImage>,
     scroll_offset: f64,    // seconds (for preview mapping)
@@ -918,6 +924,7 @@ pub fn blit_tiles_viewport(
                 &tile.rendered.db_data,
                 tile.rendered.width, tile.rendered.height,
                 display_settings, colormap,
+                freq_adjustments,
             )
         } else {
             let mut px = tile.rendered.pixels.clone();
@@ -1001,6 +1008,7 @@ pub fn blit_tiles_viewport(
 fn db_flow_tile_to_rgba(
     db_data: &[f32],
     flow_shifts: &[f32],
+    width: u32,
     settings: &SpectDisplaySettings,
     intensity_gate: f32,
     flow_gate: f32,
@@ -1009,14 +1017,18 @@ fn db_flow_tile_to_rgba(
     color_gamma: f32,
     algo: FlowAlgo,
     scheme: FlowColorScheme,
+    freq_adjustments: Option<&[f32]>,
 ) -> Vec<u8> {
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
+    let w = width as usize;
 
     for i in 0..total {
+        let row = if w > 0 { i / w } else { 0 };
+        let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
         let grey = db_to_greyscale(
             db_data[i], settings.floor_db, settings.range_db,
-            settings.gamma, settings.gain_db,
+            settings.gamma, settings.gain_db + extra,
         );
         let shift = if i < flow_shifts.len() { flow_shifts[i] } else { 0.0 };
         let [r, g, b] = match algo {
@@ -1044,6 +1056,7 @@ pub fn blit_flow_tiles_viewport(
     freq_crop_lo: f64,
     freq_crop_hi: f64,
     display_settings: &SpectDisplaySettings,
+    freq_adjustments: Option<&[f32]>,
     intensity_gate: f32,
     flow_gate: f32,
     opacity: f32,
@@ -1141,8 +1154,10 @@ pub fn blit_flow_tiles_viewport(
         let rgba = if !tile.rendered.db_data.is_empty() {
             db_flow_tile_to_rgba(
                 &tile.rendered.db_data, &tile.rendered.flow_shifts,
+                tile.rendered.width,
                 display_settings, intensity_gate, flow_gate, opacity,
                 shift_gain, color_gamma, algo, scheme,
+                freq_adjustments,
             )
         } else {
             tile.rendered.pixels.clone()
