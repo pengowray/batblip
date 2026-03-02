@@ -144,11 +144,15 @@ pub fn HfrButton() -> impl IntoView {
                         }
                     }
                     _ => {
-                        // TE/PS/Normal: enable if FF exists, don't override gain values
+                        // TE/PS/Normal AUTO: HQ with -40 dB rolloff
                         state.filter_enabled.set(has_ff);
                         if has_ff {
                             state.filter_freq_low.set(ff_lo);
                             state.filter_freq_high.set(ff_hi);
+                            state.filter_quality.set(FilterQuality::HQ);
+                            state.filter_db_below.set(-40.0);
+                            state.filter_db_selected.set(0.0);
+                            state.filter_db_above.set(-40.0);
                         }
                     }
                 }
