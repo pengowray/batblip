@@ -528,6 +528,16 @@ pub fn Spectrogram() -> impl IntoView {
                 het_cutoff,
             );
 
+            // Time scale along the bottom edge
+            spectrogram_renderer::draw_time_markers(
+                &ctx,
+                scroll,
+                visible_time,
+                display_w as f64,
+                display_h as f64,
+                duration,
+            );
+
             // Notch filter band markers
             if !notch_bands.is_empty() {
                 spectrogram_renderer::draw_notch_bands(
