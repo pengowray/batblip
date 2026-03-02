@@ -302,6 +302,15 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
     let key: CacheKey = (file_idx, lod, tile_idx);
     if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+
+    // Bounds check: reject tiles that are entirely past the audio data.
+    // This prevents futile async work and IN_FLIGHT entries that never resolve.
+    let total_samples = state.files.with_untracked(|files| {
+        files.get(file_idx).map(|f| f.audio.samples.len()).unwrap_or(0)
+    });
+    let max_tiles = tile_count_for_samples(total_samples, lod);
+    if tile_idx >= max_tiles { return; }
+
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
@@ -341,7 +350,12 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         };
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 
-        if cols.is_empty() { return; }
+        if cols.is_empty() {
+            // Still bump the signal so the render effect re-evaluates
+            // (e.g. to schedule tiles at clamped positions after fast scrolling)
+            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            return;
+        }
 
         let rendered = spectrogram_renderer::pre_render_columns(&cols);
         CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
@@ -681,6 +695,13 @@ pub fn schedule_flow_tile(
     let key: CacheKey = (file_idx, lod, tile_idx);
     if FLOW_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
     if FLOW_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+
+    let total_samples = state.files.with_untracked(|files| {
+        files.get(file_idx).map(|f| f.audio.samples.len()).unwrap_or(0)
+    });
+    let max_tiles = tile_count_for_samples(total_samples, lod);
+    if tile_idx >= max_tiles { return; }
+
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
@@ -815,6 +836,13 @@ pub fn schedule_reassign_tile(
     let key: CacheKey = (file_idx, lod, tile_idx);
     if REASSIGN_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
     if REASSIGN_IN_FLIGHT.with(|s| s.borrow().contains(&key)) { return; }
+
+    let total_samples = state.files.with_untracked(|files| {
+        files.get(file_idx).map(|f| f.audio.samples.len()).unwrap_or(0)
+    });
+    let max_tiles = tile_count_for_samples(total_samples, lod);
+    if tile_idx >= max_tiles { return; }
+
     REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().insert(key));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;

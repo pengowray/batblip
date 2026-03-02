@@ -478,8 +478,10 @@ pub fn Spectrogram() -> impl IntoView {
                 let ideal_lod = tile_cache::select_lod(zoom);
                 let ratio = tile_cache::lod_ratio(ideal_lod);
 
-                let vis_start = scroll_col.max(0.0);
+                let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
                 let vis_end = (vis_start + display_w as f64 / zoom).min(total_cols as f64);
+                if vis_end <= vis_start { /* nothing visible */ }
+                else {
 
                 // Convert to ideal-LOD tile space
                 let vis_start_lod = vis_start * ratio;
@@ -500,6 +502,7 @@ pub fn Spectrogram() -> impl IntoView {
                             tile_cache::schedule_flow_tile(state.clone(), file_idx_val, 1, fb_tile, algo);
                         }
                     }
+                }
                 }
             }
 
@@ -530,9 +533,11 @@ pub fn Spectrogram() -> impl IntoView {
                 let ideal_lod = tile_cache::select_lod(zoom);
                 let ratio = tile_cache::lod_ratio(ideal_lod);
 
-                let vis_start = scroll_col.max(0.0);
+                // Clamp vis_start to valid range (must match renderer's clamping)
+                let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
                 let vis_end = (vis_start + display_w as f64 / zoom).min(total_cols as f64);
 
+                if vis_end > vis_start {
                 // Tile range at ideal LOD
                 let vis_start_lod = vis_start * ratio;
                 let vis_end_lod = vis_end * ratio;
@@ -594,6 +599,7 @@ pub fn Spectrogram() -> impl IntoView {
                             }
                         }
                     }
+                }
                 }
             }
 
