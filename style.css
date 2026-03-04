@@ -1476,6 +1476,11 @@ body.sidebar-resizing {
     line-height: 1.2;
 }
 
+.combo-btn-left .layer-btn-value {
+    font-size: 15px;
+    color: #ddd;
+}
+
 /* ── Combo button (split toggle + dropdown) ──────────────────────────── */
 
 .combo-btn-row {
