@@ -277,10 +277,6 @@ pub fn HfrButton() -> impl IntoView {
     };
 
     view! {
-        <div
-            style=move || format!("position: absolute; left: 56px; bottom: 46px; pointer-events: none; z-index: 20; opacity: {}; transition: opacity 0.1s;",
-                if state.mouse_in_label_area.get() { "0" } else { "1" })
-        >
             <ComboButton
                 left_label="HFR"
                 left_value=left_value
@@ -575,6 +571,5 @@ pub fn HfrButton() -> impl IntoView {
                     })
                 }}
             </ComboButton>
-        </div>
     }
 }

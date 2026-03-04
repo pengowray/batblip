@@ -961,6 +961,28 @@ body.sidebar-resizing {
     margin-right: 20px;
 }
 
+/* ── Bottom toolbar ── */
+.bottom-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+    flex-shrink: 0;
+    overflow: visible;
+    position: relative;
+    z-index: 15;
+}
+
+.bottom-toolbar-sep {
+    width: 1px;
+    height: 24px;
+    background: #333;
+    margin: 0 4px;
+    flex-shrink: 0;
+}
+
 /* Toolbar elements */
 .toolbar button {
     background: #333;

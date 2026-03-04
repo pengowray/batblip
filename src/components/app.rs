@@ -11,9 +11,8 @@ use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::overview::OverviewPanel;
-use crate::components::play_controls::{PlayControls, ToastDisplay};
-use crate::components::hfr_button::HfrButton;
-use crate::components::tool_button::ToolButton;
+use crate::components::play_controls::{ToastDisplay, BookmarkPopup};
+use crate::components::bottom_toolbar::BottomToolbar;
 use crate::components::freq_range_button::FreqRangeButton;
 use crate::components::xc_browser::XcBrowser;
 use crate::components::zc_chart::ZcDotChart;
@@ -390,14 +389,13 @@ fn MainArea() -> impl IntoView {
                                         </div>
                                     })
                                 }}
-                                <PlayControls />
+                                <BookmarkPopup />
                                 <MainViewButton />
                                 <FreqRangeButton />
-                                <HfrButton />
-                                <ToolButton />
                             </div>
                         </div>
 
+                        <BottomToolbar />
                         <AnalysisPanel />
                     }.into_any()
                 } else {

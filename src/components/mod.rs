@@ -10,6 +10,7 @@ pub mod overview;
 pub mod play_controls;
 pub mod hfr_button;
 pub mod tool_button;
+pub mod bottom_toolbar;
 pub mod freq_range_button;
 pub mod xc_browser;
 pub mod zc_chart;
