@@ -219,74 +219,33 @@ pub enum OverviewFreqMode {
     MatchMain,  // tracks max_display_freq
 }
 
-// ── Multi-resolution FFT ─────────────────────────────────────────────────────
+// ── FFT mode ─────────────────────────────────────────────────────────────────
 
 /// FFT window mode for spectrogram computation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FftMode {
-    /// Single FFT window size (e.g. 256, 512, 1024, 2048, 4096, 8192).
+    /// Fixed FFT size at all LOD levels (128–8192).
     Single(usize),
-    /// 2-band multi-resolution: 4096 low, 1024 high (crossover at 25% Nyquist).
-    MultiRes2,
-    /// 3-band multi-resolution: 8192 low, 2048 mid, 512 high.
-    MultiRes3,
-}
-
-/// A frequency band within a multi-resolution FFT configuration.
-#[derive(Clone, Copy, Debug)]
-pub struct MultiResBand {
-    pub fft_size: usize,
-    /// First output bin (inclusive) in the merged output grid.
-    pub output_bin_start: usize,
-    /// Last output bin (exclusive) in the merged output grid.
-    pub output_bin_end: usize,
+    /// Adaptive: base FFT 256, scales up per LOD but capped at the given max.
+    /// Formula per LOD: min(max(256, lod_hop_size), max_fft).
+    Adaptive(usize),
 }
 
 impl FftMode {
-    /// The largest FFT size used by this mode.
-    /// Determines the output tile height: `max_fft_size() / 2 + 1` bins.
-    pub fn max_fft_size(&self) -> usize {
+    /// The actual FFT size to use for a given LOD hop size.
+    pub fn fft_for_lod(&self, hop_size: usize) -> usize {
         match self {
             FftMode::Single(sz) => *sz,
-            FftMode::MultiRes2 => 4096,
-            FftMode::MultiRes3 => 8192,
+            FftMode::Adaptive(max_fft) => 256.max(hop_size).min(*max_fft),
         }
     }
 
-    /// Whether this mode uses multiple FFT sizes.
-    pub fn is_multi_res(&self) -> bool {
-        !matches!(self, FftMode::Single(_))
-    }
-
-    /// Band definitions for multi-resolution modes.
-    /// Each band specifies its FFT size and the output bin range it fills.
-    pub fn bands(&self) -> Vec<MultiResBand> {
+    /// The maximum FFT size this mode will ever produce (across all LODs).
+    /// Determines the output tile height: `max_fft() / 2 + 1` bins.
+    pub fn max_fft_size(&self) -> usize {
         match self {
-            FftMode::Single(sz) => vec![MultiResBand {
-                fft_size: *sz,
-                output_bin_start: 0,
-                output_bin_end: sz / 2 + 1,
-            }],
-            FftMode::MultiRes2 => {
-                // Output: 4096/2+1 = 2049 bins total
-                // Low: 0–25% Nyquist → bins 0..512 with 4096 FFT
-                // High: 25–100% Nyquist → bins 512..2049 with 1024 FFT
-                vec![
-                    MultiResBand { fft_size: 4096, output_bin_start: 0, output_bin_end: 512 },
-                    MultiResBand { fft_size: 1024, output_bin_start: 512, output_bin_end: 2049 },
-                ]
-            }
-            FftMode::MultiRes3 => {
-                // Output: 8192/2+1 = 4097 bins total
-                // Low: 0–10% Nyquist → bins 0..410 with ~~8192~~ FFT
-                // Mid: 10–40% Nyquist → bins 410..1639 with ~~2048~~ FFT
-                // High: 40–100% Nyquist → bins 1639..4097 with 512 FFT
-                vec![
-                    MultiResBand { fft_size: 2048, output_bin_start: 0, output_bin_end: 410 },
-                    MultiResBand { fft_size: 1024, output_bin_start: 410, output_bin_end: 1639 },
-                    MultiResBand { fft_size: 512, output_bin_start: 1639, output_bin_end: 4097 },
-                ]
-            }
+            FftMode::Single(sz) => *sz,
+            FftMode::Adaptive(max_fft) => *max_fft,
         }
     }
 }
@@ -748,7 +707,7 @@ impl AppState {
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
-            spect_fft_mode: RwSignal::new(FftMode::Single(1024)),
+            spect_fft_mode: RwSignal::new(FftMode::Single(256)),
             reassign_enabled: RwSignal::new(false),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),

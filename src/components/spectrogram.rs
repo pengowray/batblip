@@ -458,7 +458,7 @@ pub fn Spectrogram() -> impl IntoView {
             ctx.clip();
         }
         // Pre-compute per-frequency dB adjustments for display EQ / noise filter
-        let tile_height = state.spect_fft_mode.get_untracked().max_fft_size().max(2048) / 2 + 1;
+        let tile_height = state.spect_fft_mode.get_untracked().max_fft_size() / 2 + 1;
         let freq_adjustments = compute_freq_adjustments(&state, file_max_freq, tile_height);
 
         // Step 1: Render base spectrogram.

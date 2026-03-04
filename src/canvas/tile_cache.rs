@@ -41,10 +41,10 @@ pub struct LodConfig {
 pub const NUM_LODS: usize = 4;
 
 pub const LOD_CONFIGS: [LodConfig; NUM_LODS] = [
-    LodConfig { fft_size: 2048, hop_size: 2048 }, // LOD 0 — wide, same freq resolution as LOD1
-    LodConfig { fft_size: 2048, hop_size: 512 },  // LOD 1 — normal resolution
-    LodConfig { fft_size: 2048, hop_size: 128 },  // LOD 2 — zoomed in
-    LodConfig { fft_size: 2048, hop_size: 32 },   // LOD 3 — deep zoom
+    LodConfig { fft_size: 256, hop_size: 2048 }, // LOD 0 — wide overview
+    LodConfig { fft_size: 256, hop_size: 512 },  // LOD 1 — normal resolution
+    LodConfig { fft_size: 256, hop_size: 128 },  // LOD 2 — zoomed in
+    LodConfig { fft_size: 256, hop_size: 32 },   // LOD 3 — deep zoom
 ];
 
 /// Select the ideal LOD level for the current zoom.
@@ -343,7 +343,7 @@ pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
 /// For single-FFT mode, the size is clamped to at least the LOD's hop size.
 /// For multi-resolution mode, each band uses its own FFT size.
 pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::fft::{compute_spectrogram_partial, compute_multires_partial};
+    use crate::dsp::fft::compute_spectrogram_partial;
 
     let key: CacheKey = (file_idx, lod, tile_idx);
     if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
@@ -361,6 +361,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let fft_mode = state.spect_fft_mode.get_untracked();
+    let actual_fft = fft_mode.fft_for_lod(config_hop);
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -386,14 +387,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
         // Compute STFT columns for this tile
         let col_start = tile_idx * TILE_COLS;
-        let cols = if fft_mode.is_multi_res() {
-            let bands = fft_mode.bands();
-            let output_bins = fft_mode.max_fft_size() / 2 + 1;
-            compute_multires_partial(&audio, &bands, output_bins, config_hop, col_start, TILE_COLS)
-        } else {
-            let actual_fft = fft_mode.max_fft_size().max(config_hop);
-            compute_spectrogram_partial(&audio, actual_fft, config_hop, col_start, TILE_COLS)
-        };
+        let cols = compute_spectrogram_partial(&audio, actual_fft, config_hop, col_start, TILE_COLS);
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 
         if cols.is_empty() {
@@ -825,8 +819,7 @@ pub fn schedule_flow_tile(
     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let user_fft = state.spect_fft_mode.get_untracked().max_fft_size();
-    let actual_fft = user_fft.max(config_hop);
+    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(config_hop);
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -966,8 +959,7 @@ pub fn schedule_reassign_tile(
     REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let user_fft = state.spect_fft_mode.get_untracked().max_fft_size();
-    let actual_fft = user_fft.max(config_hop);
+    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(config_hop);
 
     spawn_local(async move {
         yield_to_browser().await;

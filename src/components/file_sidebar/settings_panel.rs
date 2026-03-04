@@ -143,8 +143,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let val = select.value();
                             let mode = match val.as_str() {
-                                "multi2" => FftMode::MultiRes2,
-                                "multi3" => FftMode::MultiRes3,
+                                "a512" => FftMode::Adaptive(512),
+                                "a1024" => FftMode::Adaptive(1024),
+                                "a2048" => FftMode::Adaptive(2048),
                                 _ => {
                                     if let Ok(v) = val.parse::<usize>() {
                                         FftMode::Single(v)
@@ -158,7 +159,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     >
                         {move || {
                             let current = state.spect_fft_mode.get();
-                            let options: [(&str, &str); 9] = [
+                            let options: [(&str, &str); 10] = [
                                 ("128", "128"),
                                 ("256", "256"),
                                 ("512", "512"),
@@ -166,13 +167,15 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 ("2048", "2048"),
                                 ("4096", "4096"),
                                 ("8192", "8192"),
-                                ("multi2", "Multi 2\u{00d7}"),
-                                ("multi3", "Multi 3\u{00d7}"),
+                                ("a512", "Adaptive 512"),
+                                ("a1024", "Adaptive 1024"),
+                                ("a2048", "Adaptive 2048"),
                             ];
                             options.into_iter().map(|(value, label)| {
                                 let is_selected = match (value, current) {
-                                    ("multi2", FftMode::MultiRes2) => true,
-                                    ("multi3", FftMode::MultiRes3) => true,
+                                    ("a512", FftMode::Adaptive(512)) => true,
+                                    ("a1024", FftMode::Adaptive(1024)) => true,
+                                    ("a2048", FftMode::Adaptive(2048)) => true,
                                     (v, FftMode::Single(sz)) => v.parse::<usize>().ok() == Some(sz),
                                     _ => false,
                                 };

@@ -48,6 +48,9 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let audio_for_stft = audio.clone();
     let name_check = name.clone();
 
+    const HOP_SIZE: usize = 512; // LOD1 hop
+    let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(HOP_SIZE);
+
     // Check for silent/quiet files (short files only, to avoid perf overhead)
     let silence_check = if audio.duration_secs < 60.0 {
         let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -64,8 +67,8 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         None
     };
 
-    let total_cols = if audio.samples.len() >= FFT_SIZE {
-        (audio.samples.len() - FFT_SIZE) / HOP_SIZE + 1
+    let total_cols = if audio.samples.len() >= fft_size {
+        (audio.samples.len() - fft_size) / HOP_SIZE + 1
     } else {
         0
     };
@@ -73,7 +76,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let placeholder_spec = SpectrogramData {
         columns: Arc::new(Vec::new()),
         total_columns: total_cols,
-        freq_resolution: audio.sample_rate as f64 / FFT_SIZE as f64,
+        freq_resolution: audio.sample_rate as f64 / fft_size as f64,
         time_resolution: HOP_SIZE as f64 / audio.sample_rate as f64,
         max_freq: audio.sample_rate as f64 / 2.0,
         sample_rate: audio.sample_rate,
@@ -131,8 +134,6 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     // Columns are inserted into the spectral store as they are computed,
     // and completed TILE_COLS-wide tiles are scheduled for rendering
     // immediately — so the user sees tiles appearing progressively.
-    const FFT_SIZE: usize = 2048;
-    const HOP_SIZE: usize = 512;
     const CHUNK_COLS: usize = 32; // ~50 ms of work per chunk on typical hardware
 
     // total_cols already computed above for placeholder_spec
@@ -178,7 +179,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
 
         let chunk = compute_spectrogram_partial(
             &audio_for_stft,
-            FFT_SIZE,
+            fft_size,
             HOP_SIZE,
             chunk_start,
             CHUNK_COLS,
@@ -220,7 +221,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     const LARGE_FILE_COLS: usize = 50_000;
     let is_large = total_cols > LARGE_FILE_COLS;
 
-    let freq_resolution = audio_for_stft.sample_rate as f64 / FFT_SIZE as f64;
+    let freq_resolution = audio_for_stft.sample_rate as f64 / fft_size as f64;
     let max_freq = audio_for_stft.sample_rate as f64 / 2.0;
 
     if is_large {
