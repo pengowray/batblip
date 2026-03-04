@@ -635,6 +635,8 @@ pub struct AppState {
     pub bat_book_saved_ff_lo: RwSignal<f64>,
     pub bat_book_saved_ff_hi: RwSignal<f64>,
     pub bat_book_saved_hfr: RwSignal<bool>,
+    /// Last-clicked bat book entry ID, used for shift-click range selection.
+    pub bat_book_last_clicked_id: RwSignal<Option<String>>,
 }
 
 fn detect_tauri() -> bool {
@@ -827,6 +829,7 @@ impl AppState {
             bat_book_saved_ff_lo: RwSignal::new(0.0),
             bat_book_saved_ff_hi: RwSignal::new(0.0),
             bat_book_saved_hfr: RwSignal::new(false),
+            bat_book_last_clicked_id: RwSignal::new(None),
         };
 
         // On mobile, start with sidebar collapsed

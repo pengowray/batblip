@@ -27,7 +27,13 @@ pub fn BatBookRefPanel() -> impl IntoView {
     };
 
     // Scroll wheel: navigate to prev/next entry in the full manifest
+    // Disabled when multiple bats are selected (allow normal scroll instead)
     let on_wheel = move |ev: web_sys::WheelEvent| {
+        let ids = state.bat_book_selected_ids.get_untracked();
+        if ids.len() > 1 {
+            // Multiple selected — let the panel scroll normally
+            return;
+        }
         ev.prevent_default();
         ev.stop_propagation();
         let delta = ev.delta_y();
@@ -103,11 +109,11 @@ pub fn BatBookRefPanel() -> impl IntoView {
             <div class="ref-panel-header">
                 <span class="ref-panel-name">
                     {move || {
-                        let entries = selected_entries.get();
-                        match entries.len() {
-                            0 => String::new(),
-                            1 => entries[0].name.to_string(),
-                            n => format!("{} (+{})", entries[0].name, n - 1),
+                        let n = selected_entries.get().len();
+                        if n > 1 {
+                            format!("{n} selections")
+                        } else {
+                            String::new()
                         }
                     }}
                 </span>
@@ -131,7 +137,7 @@ pub fn BatBookRefPanel() -> impl IntoView {
                     }).collect_view()
                 }}
                 <div class="ref-panel-draft-notice">
-                    "Draft \u{2014} not verified. Ranges are approximate."
+                    "Draft Only. Details are approximate at best."
                 </div>
             </div>
         </div>

@@ -176,15 +176,17 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
 
     let on_click = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
-        let multi = ev.ctrl_key() || ev.meta_key();
+        let ctrl = ev.ctrl_key() || ev.meta_key();
+        let shift = ev.shift_key();
         let eid = entry_id_for_click.clone();
 
         let was_selected = state.bat_book_selected_ids.get_untracked().iter().any(|id| id == &eid);
 
-        if was_selected && !multi {
+        if was_selected && !ctrl && !shift {
             // Click selected bat again: deselect and restore previous FF
             state.bat_book_selected_ids.set(Vec::new());
             state.bat_book_ref_open.set(false);
+            state.bat_book_last_clicked_id.set(None);
             // Restore saved FF state
             if state.current_file_index.get_untracked().is_some() {
                 let saved_lo = state.bat_book_saved_ff_lo.get_untracked();
@@ -197,11 +199,12 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
             return;
         }
 
-        if multi && was_selected {
-            // Shift-click an already-selected bat: remove from selection
+        if ctrl && was_selected {
+            // Ctrl/Cmd-click an already-selected bat: remove from selection
             state.bat_book_selected_ids.update(|ids| ids.retain(|id| id != &eid));
             if state.bat_book_selected_ids.get_untracked().is_empty() {
                 state.bat_book_ref_open.set(false);
+                state.bat_book_last_clicked_id.set(None);
                 // Restore saved FF state
                 if state.current_file_index.get_untracked().is_some() {
                     state.ff_freq_lo.set(state.bat_book_saved_ff_lo.get_untracked());
@@ -212,6 +215,7 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
                 // Recalculate combined range
                 apply_bat_book_ff(&state);
             }
+            state.bat_book_last_clicked_id.set(Some(eid));
             return;
         }
 
@@ -223,18 +227,52 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
             state.bat_book_saved_hfr.set(state.hfr_enabled.get_untracked());
         }
 
-        if multi {
+        if shift {
+            // Shift-click: range select from last clicked to this entry
+            let region = state.bat_book_region.get_untracked();
+            let manifest = get_manifest(region);
+            let last_id = state.bat_book_last_clicked_id.get_untracked();
+            let anchor = last_id.as_deref().unwrap_or("");
+            let anchor_idx = manifest.entries.iter().position(|e| e.id == anchor);
+            let click_idx = manifest.entries.iter().position(|e| e.id == eid.as_str());
+
+            if let (Some(a), Some(b)) = (anchor_idx, click_idx) {
+                let lo = a.min(b);
+                let hi = a.max(b);
+                let range_ids: Vec<String> = manifest.entries[lo..=hi]
+                    .iter()
+                    .map(|e| e.id.to_string())
+                    .collect();
+                if ctrl {
+                    // Shift+Ctrl: add range to existing selection
+                    state.bat_book_selected_ids.update(|ids| {
+                        for rid in &range_ids {
+                            if !ids.iter().any(|id| id == rid) {
+                                ids.push(rid.clone());
+                            }
+                        }
+                    });
+                } else {
+                    // Shift only: replace selection with range
+                    state.bat_book_selected_ids.set(range_ids);
+                }
+            } else {
+                // No anchor or entry not found — treat as normal click
+                state.bat_book_selected_ids.set(vec![eid.clone()]);
+            }
+        } else if ctrl {
             // Ctrl/Cmd-click: add to selection
             state.bat_book_selected_ids.update(|ids| {
                 if !ids.iter().any(|id| id == &eid) {
-                    ids.push(eid);
+                    ids.push(eid.clone());
                 }
             });
         } else {
             // Normal click: replace selection
-            state.bat_book_selected_ids.set(vec![eid]);
+            state.bat_book_selected_ids.set(vec![eid.clone()]);
         }
 
+        state.bat_book_last_clicked_id.set(Some(eid));
         state.bat_book_ref_open.set(true);
         apply_bat_book_ff(&state);
     };
