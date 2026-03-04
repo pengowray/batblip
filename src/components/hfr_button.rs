@@ -243,6 +243,7 @@ pub fn HfrButton() -> impl IntoView {
     // ── Dropdown closures (from hfr_mode_button) ──
     let set_mode = |state: AppState, mode: PlaybackMode| {
         move |_: web_sys::MouseEvent| {
+            state.hfr_enabled.set(true);
             state.playback_mode.set(mode);
         }
     };
@@ -291,20 +292,28 @@ pub fn HfrButton() -> impl IntoView {
                 menu_direction="above"
                 panel_style="min-width: 210px;"
             >
+                // ── OFF option ──
+                <button class=move || layer_opt_class(!state.hfr_enabled.get())
+                    on:click=move |_: web_sys::MouseEvent| {
+                        state.hfr_enabled.set(false);
+                        state.layer_panel_open.set(None);
+                    }
+                >"OFF"</button>
+                <hr />
                 // ── Mode selection ──
-                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::Normal)
+                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::Normal)
                     on:click=set_mode(state, PlaybackMode::Normal)
                 >"1:1 \u{2014} Normal"</button>
-                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::Heterodyne)
+                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::Heterodyne)
                     on:click=set_mode(state, PlaybackMode::Heterodyne)
                 >"HET \u{2014} Heterodyne"</button>
-                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::TimeExpansion)
+                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::TimeExpansion)
                     on:click=set_mode(state, PlaybackMode::TimeExpansion)
                 >"TE \u{2014} Time Expansion"</button>
-                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::PitchShift)
+                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::PitchShift)
                     on:click=set_mode(state, PlaybackMode::PitchShift)
                 >"PS \u{2014} Pitch Shift"</button>
-                <button class=move || layer_opt_class(state.playback_mode.get() == PlaybackMode::ZeroCrossing)
+                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::ZeroCrossing)
                     on:click=set_mode(state, PlaybackMode::ZeroCrossing)
                 >"ZC \u{2014} Zero Crossing"</button>
 

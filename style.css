@@ -1535,6 +1535,12 @@ body.sidebar-resizing {
     50% { border-color: rgba(220, 60, 60, 1.0); }
 }
 
+.layer-btn.disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
+}
+
 /* Toolbar listen/record controls */
 .toolbar-listen-group {
     display: flex;
@@ -1732,6 +1738,12 @@ body.sidebar-resizing {
 .layer-panel-opt.sel {
     color: #6da;
     font-weight: 600;
+}
+
+.layer-panel-opt.disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
 }
 
 .layer-panel-slider-row {

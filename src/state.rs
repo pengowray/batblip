@@ -136,6 +136,23 @@ pub enum AutoFactorMode {
     Fixed10x,    // factor = 10
 }
 
+/// How the Play button initiates playback.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum PlayStartMode {
+    #[default]
+    All,       // play from start of file
+    FromHere,  // play from current scroll position
+    Selected,  // play selection (falls back to All if no selection)
+}
+
+/// What happens when the Record button is pressed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RecordMode {
+    ToFile,      // save to filesystem (Tauri only)
+    ToMemory,    // keep in browser memory
+    ListenOnly,  // grey out record, user can only listen
+}
+
 /// Active interaction tool for the main spectrogram canvas.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum CanvasTool {
@@ -282,6 +299,8 @@ pub enum LayerPanel {
     Tool,
     FreqRange,
     MainView,
+    PlayMode,
+    RecordMode,
 }
 
 /// A navigation history entry (for overview back/forward buttons).
@@ -436,6 +455,12 @@ pub struct AppState {
     // Bookmarks
     pub bookmarks: RwSignal<Vec<Bookmark>>,
     pub show_bookmark_popup: RwSignal<bool>,
+
+    // Play start mode (All / FromHere / Selected)
+    pub play_start_mode: RwSignal<PlayStartMode>,
+
+    // Record mode (ToFile / ToMemory / ListenOnly)
+    pub record_mode: RwSignal<RecordMode>,
 
     // Play-from-here time (updated by Spectrogram on scroll/zoom change)
     pub play_from_here_time: RwSignal<f64>,
@@ -694,6 +719,8 @@ impl AppState {
             nav_index: RwSignal::new(0),
             bookmarks: RwSignal::new(Vec::new()),
             show_bookmark_popup: RwSignal::new(false),
+            play_start_mode: RwSignal::new(PlayStartMode::All),
+            record_mode: RwSignal::new(if detect_tauri() { RecordMode::ToFile } else { RecordMode::ToMemory }),
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             bg_preload_gen: RwSignal::new(0),
