@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
 use crate::state::{AppState, RightSidebarTab};
 use crate::dsp::bit_analysis::{self, BitAnalysis, BitCaution};
 use crate::dsp::wsnr;
@@ -37,20 +37,20 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         compute_gen.update(|g| *g += 1);
         let generation = compute_gen.get_untracked();
 
-        let all_samples = file.audio.samples.clone(); // Arc clone, O(1)
         let sample_rate = file.audio.sample_rate;
         let bits_per_sample = file.audio.metadata.bits_per_sample;
         let is_float = file.audio.metadata.is_float;
+        let total = file.audio.source.total_samples() as usize;
 
         let max_samples = (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as usize;
-        let is_long = all_samples.len() > max_samples;
+        let is_long = total > max_samples;
         file_is_long.set(is_long);
 
         let samples: Arc<Vec<f32>> = if full_file || !is_long {
             analysis_is_full.set(true);
-            all_samples
+            Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, total))
         } else {
-            Arc::new(all_samples[..max_samples].to_vec())
+            Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, max_samples))
         };
         let duration_secs = samples.len() as f64 / sample_rate as f64;
 
@@ -140,7 +140,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             } else {
                 format!("{}-bit", meta.bits_per_sample)
             };
-            let total_samples = f.audio.samples.len();
+            let total_samples = f.audio.source.total_samples() as usize;
             let dur_text = format!("{:.3} s", f.audio.duration_secs);
             report.push_str(&format!(
                 "\nFile\n  Sample rate: {}\n  Channels: {}\n  Bit depth: {}\n  Duration: {}\n  Samples: {}\n",
@@ -149,8 +149,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
             // Signal stats — scan first 30s only for large files
             let max_scan = (DEFAULT_ANALYSIS_WINDOW_SECS * f.audio.sample_rate as f64) as usize;
-            let scan_len = f.audio.samples.len().min(max_scan);
-            let smp = &f.audio.samples[..scan_len];
+            let scan_len = total_samples.min(max_scan);
+            let smp = f.audio.source.read_region(ChannelView::MonoMix, 0, scan_len);
             let len = smp.len();
             if len > 0 {
                 let mut smin = f32::INFINITY;
@@ -314,14 +314,14 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         } else {
                             format!("{}-bit", meta.bits_per_sample)
                         };
-                        let total_samples = f.audio.samples.len();
+                        let total_samples = f.audio.source.total_samples() as usize;
                         let dur_text = format!("{:.3} s", f.audio.duration_secs);
                         let samples_text = format!("{}", total_samples);
 
                         // Signal stats — scan first 30s only for large files
                         let max_scan = (DEFAULT_ANALYSIS_WINDOW_SECS * f.audio.sample_rate as f64) as usize;
-                        let scan_len = f.audio.samples.len().min(max_scan);
-                        let samples = &f.audio.samples[..scan_len];
+                        let scan_len = total_samples.min(max_scan);
+                        let samples = f.audio.source.read_region(ChannelView::MonoMix, 0, scan_len);
                         let len = samples.len();
                         let (sig_min, sig_max, dc_bias, rms) = if len > 0 {
                             let mut smin = f32::INFINITY;

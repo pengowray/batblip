@@ -287,6 +287,20 @@ fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Read a byte range from a file — for streaming large files without loading entirely.
+#[tauri::command]
+fn read_file_range(path: String, offset: u64, length: u64) -> Result<tauri::ipc::Response, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(&path)
+        .map_err(|e| format!("Failed to open '{}': {}", path, e))?;
+    f.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Seek failed: {}", e))?;
+    let mut buf = vec![0u8; length as usize];
+    f.read_exact(&mut buf)
+        .map_err(|e| format!("Read failed: {}", e))?;
+    Ok(tauri::ipc::Response::new(buf))
+}
+
 // ── USB audio streaming commands ────────────────────────────────────
 
 #[tauri::command]
@@ -502,6 +516,7 @@ pub fn run() {
             audio_file_info,
             audio_decode_full,
             read_file_bytes,
+            read_file_range,
             native_play,
             native_stop,
             native_playback_status,

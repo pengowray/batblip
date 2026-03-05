@@ -79,6 +79,9 @@ pub trait AudioSource: Send + Sync {
     /// For backward compatibility: get a direct reference to in-memory mono samples.
     /// Returns `None` for streaming sources.
     fn as_contiguous(&self) -> Option<&[f32]>;
+
+    /// Downcast support for accessing implementation-specific methods (e.g. prefetch).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// In-memory audio source wrapping `Arc<Vec<f32>>`.
@@ -208,6 +211,10 @@ impl AudioSource for InMemorySource {
 
     fn as_contiguous(&self) -> Option<&[f32]> {
         Some(&self.samples)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

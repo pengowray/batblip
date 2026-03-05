@@ -1,5 +1,6 @@
 use realfft::num_complex::Complex;
 use realfft::RealFftPlanner;
+use crate::audio::source::ChannelView;
 use crate::types::{AudioData, SpectrogramData, SpectrogramColumn};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -110,7 +111,7 @@ pub fn analyze_harmonics(audio: &AudioData, spectrogram: &SpectrogramData) -> Ha
         };
 
     // Phase coherence (requires a new STFT pass to keep complex output).
-    let (phase_coherence, _) = if audio.samples.len() >= fft_size {
+    let (phase_coherence, _) = if audio.source.total_samples() as usize >= fft_size {
         let frames = compute_complex_stft(audio, fft_size, hop_size);
         compute_phase_coherence_summary(&frames, fft_size, hop_size)
     } else {
@@ -190,7 +191,7 @@ pub fn compute_coherence_frames(
 ) -> Vec<Vec<f32>> {
     let fft_size = derive_fft_size(audio.sample_rate, spectrogram.freq_resolution);
     let hop_size = derive_hop_size(audio.sample_rate, spectrogram.time_resolution);
-    if audio.samples.len() < fft_size {
+    if (audio.source.total_samples() as usize) < fft_size {
         return Vec::new();
     }
     let frames = compute_complex_stft(audio, fft_size, hop_size);
@@ -217,16 +218,18 @@ fn compute_complex_stft(
     fft_size: usize,
     hop_size: usize,
 ) -> Vec<Vec<Complex32>> {
+    let total = audio.source.total_samples() as usize;
+    let samples = audio.source.read_region(ChannelView::MonoMix, 0, total);
     let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
     let window = hann_window(fft_size);
     let mut frames = Vec::new();
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
     let mut pos = 0;
-    while pos + fft_size <= audio.samples.len() {
+    while pos + fft_size <= samples.len() {
         for (inp, (&s, &w)) in input
             .iter_mut()
-            .zip(audio.samples[pos..pos + fft_size].iter().zip(window.iter()))
+            .zip(samples[pos..pos + fft_size].iter().zip(window.iter()))
         {
             *inp = s * w;
         }

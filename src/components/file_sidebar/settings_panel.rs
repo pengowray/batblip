@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
+use crate::audio::source::ChannelView;
 use crate::state::{AppState, FftMode, FlowColorScheme, MainView, SpectrogramDisplay};
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
@@ -478,8 +479,9 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
         let file = files.get(idx)?;
 
         let sr = file.audio.sample_rate;
-        let start = ((selection.time_start * sr as f64) as usize).min(file.audio.samples.len());
-        let end = ((selection.time_end * sr as f64) as usize).min(file.audio.samples.len());
+        let total = file.audio.source.total_samples() as usize;
+        let start = ((selection.time_start * sr as f64) as usize).min(total);
+        let end = ((selection.time_end * sr as f64) as usize).min(total);
 
         if end <= start {
             return None;
@@ -491,8 +493,8 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
         let (crossing_count, estimated_freq) = if dragging {
             (None, None)
         } else {
-            let slice = &file.audio.samples[start..end];
-            let zc = zero_crossing_frequency(slice, sr);
+            let slice = file.audio.source.read_region(ChannelView::MonoMix, start as u64, end - start);
+            let zc = zero_crossing_frequency(&slice, sr);
             (Some(zc.crossing_count), Some(zc.estimated_frequency_hz))
         };
 

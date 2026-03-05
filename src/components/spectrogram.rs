@@ -974,7 +974,7 @@ pub fn Spectrogram() -> impl IntoView {
                 let Some(file_idx) = state.current_file_index.get_untracked() else { return };
                 let (total_samples, sample_rate, time_res) = state.files.with_untracked(|files| {
                     files.get(file_idx).map(|f| {
-                        (f.audio.samples.len(), f.audio.sample_rate, f.spectrogram.time_resolution)
+                        (f.audio.source.total_samples() as usize, f.audio.sample_rate, f.spectrogram.time_resolution)
                     })
                 }).unwrap_or((0, 44100, 0.01));
                 if total_samples == 0 { return; }
@@ -1063,7 +1063,7 @@ pub fn Spectrogram() -> impl IntoView {
         };
 
         let total_samples = state.files.with_untracked(|files| {
-            files.get(file_idx).map(|f| f.audio.samples.len()).unwrap_or(0)
+            files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
         });
         if total_samples == 0 {
             tile_cache::stop_background_preload();

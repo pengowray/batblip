@@ -4,10 +4,11 @@ use wasm_bindgen::JsCast;
 use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileReader};
-use crate::audio::loader::load_audio;
+use crate::audio::loader::{load_audio, parse_wav_header};
+use crate::audio::streaming_source::{FileHandle, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::{compute_overview_from_spectrogram, compute_preview, compute_spectrogram_partial};
 use crate::state::{AppState, LoadedFile};
-use crate::types::SpectrogramData;
+use crate::types::{AudioData, SpectrogramData};
 use std::sync::Arc;
 
 enum SilenceCheck {
@@ -15,12 +16,30 @@ enum SilenceCheck {
     HighGain(f64),
 }
 
-/// Maximum file size the browser can handle (~2 GB).
+/// Maximum file size the browser can handle for full-decode path (~2 GB).
 const MAX_FILE_SIZE: f64 = 2_000_000_000.0;
+
+/// Raw file size above which we attempt the streaming WAV path.
+const STREAMING_CHECK_SIZE: f64 = 128.0 * 1024.0 * 1024.0; // 128 MB
+
+/// Decoded size threshold for streaming (512 MB of f32 samples).
+const STREAMING_DECODED_THRESHOLD: u64 = 512 * 1024 * 1024;
 
 pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
     let name = file.name();
     let size = file.size();
+
+    // For large files, attempt streaming WAV path
+    if size > STREAMING_CHECK_SIZE {
+        match try_streaming_wav(&file, &name, state).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                log::info!("Streaming path not applicable for {}: {}", name, e);
+                // Fall through to normal full-decode path
+            }
+        }
+    }
+
     if size > MAX_FILE_SIZE {
         let msg = format!(
             "File too large ({:.0} MB) \u{2014} browser limit is ~2 GB",
@@ -33,12 +52,287 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
     load_named_bytes(name, &bytes, None, state).await
 }
 
+/// Attempt to open a large WAV file using the streaming path.
+/// Returns Ok(()) if successful, Err if the file is not suitable for streaming
+/// (not WAV, decoded size below threshold, unsupported format).
+async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(), String> {
+    // Read first 64KB for header parsing
+    let header_size = 65536.0f64.min(file.size());
+    let header_bytes = read_blob_range(file, 0.0, header_size).await?;
+
+    if header_bytes.len() < 12 || &header_bytes[0..4] != b"RIFF" {
+        return Err("Not a RIFF file".into());
+    }
+
+    let header = parse_wav_header(&header_bytes)?;
+
+    // Check if decoded size warrants streaming
+    let decoded_bytes = header.total_frames * header.channels as u64 * 4; // f32 per sample
+    if decoded_bytes < STREAMING_DECODED_THRESHOLD {
+        return Err(format!(
+            "Decoded size {:.0} MB below streaming threshold",
+            decoded_bytes as f64 / 1_048_576.0
+        ));
+    }
+
+    log::info!(
+        "Streaming WAV: {} — {} frames, {} ch, {} Hz, {:.1}s, decoded {:.0} MB",
+        name,
+        header.total_frames,
+        header.channels,
+        header.sample_rate,
+        header.total_frames as f64 / header.sample_rate as f64,
+        decoded_bytes as f64 / 1_048_576.0,
+    );
+
+    state.show_info_toast(format!(
+        "Streaming large file ({:.0} MB)",
+        file.size() / 1_000_000.0
+    ));
+
+    // Decode first 30s for head samples
+    use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+    let head_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * header.sample_rate as f64) as u64)
+        .min(header.total_frames);
+    let bytes_per_frame = header.channels as u64 * (header.bits_per_sample as u64 / 8);
+    let head_byte_len = head_frames * bytes_per_frame;
+    let head_byte_start = header.data_offset;
+    let head_byte_end = head_byte_start + head_byte_len;
+
+    let head_pcm_bytes = read_blob_range(file, head_byte_start as f64, head_byte_end as f64).await?;
+
+    // Decode PCM to f32
+    let head_interleaved = decode_head_pcm(
+        &head_pcm_bytes,
+        header.bits_per_sample,
+        header.is_float,
+        header.channels,
+    );
+
+    let channels = header.channels as usize;
+    let (head_mono, head_raw) = if channels == 1 {
+        (head_interleaved, None)
+    } else {
+        let mono: Vec<f32> = head_interleaved
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+            .collect();
+        (mono, Some(head_interleaved))
+    };
+
+    // Try to get GUANO metadata if not already in header
+    let mut guano = header.guano.clone();
+    if guano.is_none() {
+        // GUANO might be after the data chunk — read tail of file
+        let file_size = file.size();
+        let data_end = header.data_offset + header.data_size;
+        if (data_end as f64) < file_size {
+            let tail_start = data_end as f64;
+            // Read up to 64KB from after the data chunk
+            let tail_end = file_size.min(tail_start + 65536.0);
+            if let Ok(tail_bytes) = read_blob_range(file, tail_start, tail_end).await {
+                guano = scan_tail_for_guano(&tail_bytes);
+            }
+        }
+    }
+
+    // Create StreamingWavSource
+    let source = Arc::new(StreamingWavSource::new(
+        FileHandle::WebFile(file.clone()),
+        &header,
+        head_mono.clone(),
+        head_raw,
+    ));
+
+    let sample_rate = header.sample_rate;
+    let total_frames = header.total_frames;
+    let duration_secs = total_frames as f64 / sample_rate as f64;
+
+    // For backward compat: audio.samples = head_mono
+    let samples = Arc::new(head_mono);
+
+    let audio = AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels: header.channels as u32,
+        duration_secs,
+        metadata: crate::types::FileMetadata {
+            file_size: file.size() as usize,
+            format: "WAV",
+            bits_per_sample: header.bits_per_sample,
+            is_float: header.is_float,
+            guano,
+        },
+    };
+
+    // Compute preview from head samples (fast)
+    let preview = compute_preview(&audio, 256, 128);
+
+    // Check for silence/quiet in head
+    let silence_check = {
+        use crate::audio::source::ChannelView;
+        let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
+            (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
+        ) as usize);
+        let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        if peak < 0.002 {
+            Some(SilenceCheck::Silent)
+        } else if peak > 1e-10 {
+            let peak_db = 20.0 * (peak as f64).log10();
+            let auto_db = -3.0 - peak_db;
+            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+        } else {
+            None
+        }
+    };
+
+    // Build placeholder spectrogram metadata (tiles computed on demand)
+    const HOP_SIZE: usize = 512;
+    let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(HOP_SIZE);
+    let total_len = total_frames as usize;
+    let total_cols = if total_len >= fft_size {
+        (total_len - fft_size) / HOP_SIZE + 1
+    } else {
+        0
+    };
+
+    let spectrogram = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: total_cols,
+        freq_resolution: sample_rate as f64 / fft_size as f64,
+        time_resolution: HOP_SIZE as f64 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
+    let name_owned = name.to_string();
+    let file_index;
+    {
+        let mut idx = 0;
+        state.files.update(|files| {
+            idx = files.len();
+            files.push(LoadedFile {
+                name: name_owned.clone(),
+                audio,
+                spectrogram,
+                preview: Some(preview),
+                overview_image: None,
+                xc_metadata: None,
+                is_recording: false,
+            });
+            if files.len() == 1 {
+                state.current_file_index.set(Some(0));
+            }
+        });
+        file_index = idx;
+    }
+
+    // Notify user about silent/quiet files
+    if let Some(check) = silence_check {
+        match check {
+            SilenceCheck::Silent => {
+                state.auto_gain.set(false);
+                state.gain_db.set(0.0);
+                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
+            }
+            SilenceCheck::HighGain(db) => {
+                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
+            }
+        }
+    }
+
+    // For streaming files, tiles are computed on-demand by tile_cache.
+    // Schedule visible tiles to kick off the initial view.
+    use crate::canvas::{spectral_store, tile_cache};
+    spectral_store::init(file_index, total_cols);
+
+    // Prefetch first viewport worth of audio, then schedule tiles
+    let audio_ref = state.files.get_untracked().get(file_index).cloned();
+    if let Some(f) = audio_ref {
+        if let Some(streaming) = f.audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+            // Prefetch the head region — already loaded, but schedule visible tiles
+            let scroll = state.scroll_offset.get_untracked();
+            let zoom = state.zoom_level.get_untracked();
+            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let time_res = HOP_SIZE as f64 / sample_rate as f64;
+            let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
+            let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
+            let visible_samples = (visible_time * sample_rate as f64) as usize;
+            streaming.prefetch_region(start_sample, visible_samples + fft_size).await;
+        }
+
+        tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
+    }
+
+    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
+    Ok(())
+}
+
+/// Decode raw PCM bytes to f32 samples (used for head region during streaming load).
+fn decode_head_pcm(bytes: &[u8], bits_per_sample: u16, is_float: bool, _channels: u16) -> Vec<f32> {
+    match (is_float, bits_per_sample) {
+        (true, 32) => {
+            bytes.chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect()
+        }
+        (false, 16) => {
+            let max = 32768.0f32;
+            bytes.chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / max)
+                .collect()
+        }
+        (false, 24) => {
+            let max = 8388608.0f32;
+            bytes.chunks_exact(3)
+                .map(|b| {
+                    let val = (b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16);
+                    let val = if val & 0x800000 != 0 { val | !0xFFFFFF } else { val };
+                    val as f32 / max
+                })
+                .collect()
+        }
+        (false, 32) => {
+            let max = 2147483648.0f32;
+            bytes.chunks_exact(4)
+                .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / max)
+                .collect()
+        }
+        _ => {
+            log::warn!("Unsupported PCM format for streaming: {}-bit {}", bits_per_sample, if is_float { "float" } else { "int" });
+            vec![0.0; bytes.len() / (bits_per_sample as usize / 8)]
+        }
+    }
+}
+
+/// Scan raw bytes (from after the data chunk) for a GUANO "guan" chunk.
+fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMetadata> {
+    let mut pos = 0usize;
+    while pos + 8 <= tail_bytes.len() {
+        let chunk_id = &tail_bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            tail_bytes[pos + 4..pos + 8].try_into().ok()?,
+        ) as usize;
+        let body_start = pos + 8;
+        let body_end = body_start + chunk_size;
+
+        if chunk_id == b"guan" && body_end <= tail_bytes.len() {
+            return crate::audio::guano::parse_guano_chunk(&tail_bytes[body_start..body_end]);
+        }
+
+        pos = body_start + ((chunk_size + 1) & !1);
+    }
+    None
+}
+
 pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState) -> Result<(), String> {
     let audio = load_audio(bytes)?;
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
         name,
-        audio.samples.len(),
+        audio.source.total_samples(),
         audio.sample_rate,
         audio.duration_secs
     );
@@ -53,11 +347,13 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
 
     // Check for silent/quiet files — scan first 30s only
     let silence_check = {
-        use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
-        let scan_end = audio.samples.len().min(
+        use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
+        let total_len = audio.source.total_samples() as usize;
+        let scan_end = total_len.min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * audio.sample_rate as f64) as usize,
         );
-        let peak = audio.samples[..scan_end].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let scan_samples = audio.source.read_region(ChannelView::MonoMix, 0, scan_end);
+        let peak = scan_samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
             Some(SilenceCheck::Silent)
         } else if peak > 1e-10 {
@@ -69,8 +365,9 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         }
     };
 
-    let total_cols = if audio.samples.len() >= fft_size {
-        (audio.samples.len() - fft_size) / HOP_SIZE + 1
+    let total_len = audio.source.total_samples() as usize;
+    let total_cols = if total_len >= fft_size {
+        (total_len - fft_size) / HOP_SIZE + 1
     } else {
         0
     };

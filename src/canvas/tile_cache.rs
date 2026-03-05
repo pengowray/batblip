@@ -21,8 +21,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use crate::canvas::spectrogram_renderer::{self, PreRendered, FlowAlgo};
 use crate::state::{AppState, LoadedFile};
-use crate::audio::source::ChannelView;
-use crate::types::AudioData;
+use crate::audio::streaming_source::StreamingWavSource;
 
 /// Number of spectrogram columns per tile (constant across all LODs).
 pub const TILE_COLS: usize = 256;
@@ -72,16 +71,6 @@ pub fn tile_count_for_samples(total_samples: usize, lod: u8) -> usize {
     (total_cols + TILE_COLS - 1) / TILE_COLS
 }
 
-/// Get channel-aware samples from AudioData. For MonoMix, borrows directly
-/// from the pre-computed mono buffer (zero-cost). Other channels extract from source.
-fn channel_samples<'a>(audio: &'a AudioData, cv: ChannelView) -> std::borrow::Cow<'a, [f32]> {
-    match cv {
-        ChannelView::MonoMix => std::borrow::Cow::Borrowed(&audio.samples),
-        _ => std::borrow::Cow::Owned(
-            audio.source.read_region(cv, 0, audio.source.total_samples() as usize)
-        ),
-    }
-}
 
 /// Map a tile index from one LOD to the corresponding tile at a lower (coarser) LOD.
 /// Returns (fallback_tile_idx, sub_col_start, sub_col_end) — the sub-region within
@@ -409,9 +398,19 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
         // Compute STFT columns for this tile using channel-aware samples
         let cv = state.channel_view.get_untracked();
-        let samples = channel_samples(&audio, cv);
         let col_start = tile_idx * TILE_COLS;
-        let cols = compute_stft_columns(&samples, audio.sample_rate, actual_fft, config_hop, col_start, TILE_COLS);
+
+        // Read only the sample region needed for this tile
+        let sample_start = col_start * config_hop;
+        let sample_len = TILE_COLS * config_hop + actual_fft;
+
+        // Prefetch for streaming sources
+        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(sample_start as u64, sample_len).await;
+        }
+
+        let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
+        let cols = compute_stft_columns(&samples, audio.sample_rate, actual_fft, config_hop, 0, TILE_COLS);
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 
         if cols.is_empty() {
@@ -765,10 +764,21 @@ pub fn schedule_tile_on_demand(
         };
 
         let cv = state.channel_view.get_untracked();
-        let samples = channel_samples(&audio, cv);
         let col_start = tile_idx * TILE_COLS;
+        let hop_size = 512usize;
+        let fft_size = 2048usize;
 
-        let cols = compute_stft_columns(&samples, audio.sample_rate, 2048, 512, col_start, TILE_COLS);
+        // Read only the sample region needed for this tile
+        let sample_start = col_start * hop_size;
+        let sample_len = TILE_COLS * hop_size + fft_size;
+
+        // Prefetch for streaming sources
+        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(sample_start as u64, sample_len).await;
+        }
+
+        let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
+        let cols = compute_stft_columns(&samples, audio.sample_rate, fft_size, hop_size, 0, TILE_COLS);
         if cols.is_empty() {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             // Bump signal so render effect retries (e.g. after fast scroll clamping)
@@ -868,7 +878,6 @@ pub fn schedule_flow_tile(
         };
 
         let cv = state.channel_view.get_untracked();
-        let ch_samples = channel_samples(&audio, cv);
         let col_start = tile_idx * TILE_COLS;
 
         let rendered = match algo {
@@ -877,13 +886,22 @@ pub fn schedule_flow_tile(
 
                 let sample_start = col_start * config_hop;
                 let extra = if algo == FlowAlgo::PhaseCoherence { TILE_COLS + 1 } else { TILE_COLS };
-                let sample_end = (sample_start + extra * config_hop + actual_fft).min(ch_samples.len());
-                if sample_start >= ch_samples.len() || sample_start >= sample_end {
+                let sample_len = extra * config_hop + actual_fft;
+
+                // Prefetch for streaming sources
+                if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+                    streaming.prefetch_region(sample_start as u64, sample_len).await;
+                }
+
+                let total = audio.source.total_samples() as usize;
+                let sample_end = (sample_start + sample_len).min(total);
+                if sample_start >= total || sample_start >= sample_end {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
                 }
 
-                let samples = &ch_samples[sample_start..sample_end];
+                let ch_samples = audio.source.read_region(cv, sample_start as u64, sample_end - sample_start);
+                let samples = &ch_samples[..];
 
                 yield_to_browser().await;
 
@@ -898,10 +916,22 @@ pub fn schedule_flow_tile(
                 }
             }
             FlowAlgo::Optical | FlowAlgo::Centroid | FlowAlgo::Gradient => {
-                // Compute STFT from raw audio at the LOD's hop size and user FFT size
-                let prev_col = if tile_idx > 0 {
+                // Read the sample region needed (including one previous column for flow diff)
+                let extra_cols = if tile_idx > 0 { 1 } else { 0 };
+                let region_col_start = col_start.saturating_sub(extra_cols);
+                let region_sample_start = region_col_start * config_hop;
+                let region_cols = TILE_COLS + extra_cols;
+                let region_sample_len = region_cols * config_hop + actual_fft;
+
+                if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+                    streaming.prefetch_region(region_sample_start as u64, region_sample_len).await;
+                }
+
+                let region_samples = audio.source.read_region(cv, region_sample_start as u64, region_sample_len);
+
+                let prev_col = if extra_cols > 0 {
                     let prev_cols = compute_stft_columns(
-                        &ch_samples, audio.sample_rate, actual_fft, config_hop, col_start.saturating_sub(1), 1,
+                        &region_samples, audio.sample_rate, actual_fft, config_hop, 0, 1,
                     );
                     prev_cols.first().map(|c| c.magnitudes.clone())
                 } else {
@@ -911,7 +941,7 @@ pub fn schedule_flow_tile(
                 yield_to_browser().await;
 
                 let cols = compute_stft_columns(
-                    &ch_samples, audio.sample_rate, actual_fft, config_hop, col_start, TILE_COLS,
+                    &region_samples, audio.sample_rate, actual_fft, config_hop, extra_cols, TILE_COLS,
                 );
                 if cols.is_empty() {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
@@ -1010,16 +1040,23 @@ pub fn schedule_reassign_tile(
         };
 
         let cv = state.channel_view.get_untracked();
-        let ch_samples = channel_samples(&audio, cv);
         let sample_start = tile_idx * TILE_COLS * config_hop;
-        let sample_end = (sample_start + TILE_COLS * config_hop + actual_fft)
-            .min(ch_samples.len());
-        if sample_start >= ch_samples.len() || sample_start >= sample_end {
+        let sample_len = TILE_COLS * config_hop + actual_fft;
+
+        // Prefetch for streaming sources
+        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(sample_start as u64, sample_len).await;
+        }
+
+        let total = audio.source.total_samples() as usize;
+        let sample_end = (sample_start + sample_len).min(total);
+        if sample_start >= total || sample_start >= sample_end {
             REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
 
-        let samples = &ch_samples[sample_start..sample_end];
+        let ch_samples = audio.source.read_region(cv, sample_start as u64, sample_end - sample_start);
+        let samples = &ch_samples[..];
 
         yield_to_browser().await;
 

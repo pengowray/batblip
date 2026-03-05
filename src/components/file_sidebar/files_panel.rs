@@ -223,7 +223,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             ev.stop_propagation();
                             let files = state.files.get_untracked();
                             if let Some(f) = files.get(i) {
-                                microphone::download_wav(&f.audio.samples, f.audio.sample_rate, &name_dl);
+                                let total = f.audio.source.total_samples() as usize;
+                                let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
+                                microphone::download_wav(&samples, f.audio.sample_rate, &name_dl);
                             }
                         };
                         let on_mark_saved = move |ev: MouseEvent| {

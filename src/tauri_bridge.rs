@@ -37,3 +37,25 @@ pub async fn tauri_invoke(cmd: &str, args: &JsValue) -> Result<JsValue, String> 
 pub async fn tauri_invoke_no_args(cmd: &str) -> Result<JsValue, String> {
     tauri_invoke(cmd, &js_sys::Object::new().into()).await
 }
+
+/// Read a byte range from a native file via Tauri IPC.
+///
+/// Returns the raw bytes for the range `[offset, offset + length)`.
+pub async fn read_file_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    let args = js_sys::Object::new();
+    js_sys::Reflect::set(&args, &JsValue::from_str("path"), &JsValue::from_str(path))
+        .map_err(|e| format!("set path: {:?}", e))?;
+    js_sys::Reflect::set(&args, &JsValue::from_str("offset"), &JsValue::from_f64(offset as f64))
+        .map_err(|e| format!("set offset: {:?}", e))?;
+    js_sys::Reflect::set(&args, &JsValue::from_str("length"), &JsValue::from_f64(length as f64))
+        .map_err(|e| format!("set length: {:?}", e))?;
+
+    let result = tauri_invoke("read_file_range", &args.into()).await?;
+
+    // Tauri IPC returns binary data as ArrayBuffer
+    let array_buffer = result
+        .dyn_into::<js_sys::ArrayBuffer>()
+        .map_err(|_| "Expected ArrayBuffer from read_file_range".to_string())?;
+    let uint8 = js_sys::Uint8Array::new(&array_buffer);
+    Ok(uint8.to_vec())
+}

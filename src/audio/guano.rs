@@ -89,6 +89,12 @@ pub fn parse_guano(bytes: &[u8]) -> Option<GuanoMetadata> {
     None
 }
 
+/// Parse GUANO metadata from raw chunk body bytes (without the "guan" chunk header).
+pub fn parse_guano_chunk(chunk_body: &[u8]) -> Option<GuanoMetadata> {
+    let text = std::str::from_utf8(chunk_body).ok()?;
+    Some(parse_guano_text(text))
+}
+
 fn parse_guano_text(text: &str) -> GuanoMetadata {
     let mut fields = Vec::new();
     for line in text.lines() {

@@ -1,5 +1,6 @@
 use crate::canvas::colors::magnitude_to_greyscale;
 use crate::canvas::spectrogram_renderer::PreRendered;
+use crate::audio::source::ChannelView;
 use crate::types::{AudioData, PreviewImage, SpectrogramColumn, SpectrogramData};
 use realfft::RealFftPlanner;
 use std::cell::RefCell;
@@ -206,6 +207,9 @@ pub fn compute_spectrogram(
 ) -> SpectrogramData {
     let fft = FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
 
+    let total = audio.source.total_samples() as usize;
+    let samples = audio.source.read_region(ChannelView::MonoMix, 0, total);
+
     let mut columns = Vec::new();
 
     let window = hann_window(fft_size);
@@ -215,11 +219,11 @@ pub fn compute_spectrogram(
     let mut spectrum = fft.make_output_vec();
 
     let mut pos = 0;
-    while pos + fft_size <= audio.samples.len() {
+    while pos + fft_size <= samples.len() {
         // Fill input in-place (no allocation per frame)
         for (inp, (&s, &w)) in input
             .iter_mut()
-            .zip(audio.samples[pos..pos + fft_size].iter().zip(window.iter()))
+            .zip(samples[pos..pos + fft_size].iter().zip(window.iter()))
         {
             *inp = s * w;
         }
@@ -263,7 +267,9 @@ pub fn compute_spectrogram_partial(
     col_start: usize,
     col_count: usize,
 ) -> Vec<SpectrogramColumn> {
-    compute_stft_columns(&audio.samples, audio.sample_rate, fft_size, hop_size, col_start, col_count)
+    let total = audio.source.total_samples() as usize;
+    let samples = audio.source.read_region(ChannelView::MonoMix, 0, total);
+    compute_stft_columns(&samples, audio.sample_rate, fft_size, hop_size, col_start, col_count)
 }
 
 /// Compute STFT columns directly from a sample slice.
@@ -313,7 +319,8 @@ pub fn compute_stft_columns(
 /// Compute a fast low-resolution preview spectrogram as an RGBA pixel buffer.
 /// Uses FFT=256 with a dynamic hop to produce roughly `target_width` columns.
 pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32) -> PreviewImage {
-    if audio.samples.len() < 256 {
+    let total = audio.source.total_samples() as usize;
+    if total < 256 {
         // Too short for even one FFT frame
         return PreviewImage {
             width: 1,
@@ -323,7 +330,7 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
     }
 
     let fft_size = 256;
-    let hop = (audio.samples.len() / target_width as usize).max(fft_size);
+    let hop = (total / target_width as usize).max(fft_size);
     let spec = compute_spectrogram(audio, fft_size, hop);
 
     if spec.columns.is_empty() {

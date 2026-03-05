@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::audio::source::{AudioSource, ChannelView};
+use crate::audio::streaming_source::StreamingWavSource;
 use crate::state::{PlaybackMode, FilterQuality};
 use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
@@ -209,7 +210,11 @@ async fn chunk_loop(
     let cached_gain: Option<f64> = if params.auto_gain {
         let max_scan = (source_rate as usize) * 15; // ~15 seconds
         let scan_end = end_sample.min(start_sample + max_scan);
-        let scan_samples = source.read_region(channel_view, start_sample as u64, scan_end - start_sample);
+        let scan_len = scan_end - start_sample;
+        if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(start_sample as u64, scan_len).await;
+        }
+        let scan_samples = source.read_region(channel_view, start_sample as u64, scan_len);
         let peak = scan_samples.iter().fold(0.0f32, |mx, s| mx.max(s.abs()));
         if peak < 1e-10 {
             Some(0.0)
@@ -245,6 +250,11 @@ async fn chunk_loop(
             chunk_end
         };
         let trailing_len = trailing_end - chunk_end;
+
+        // Prefetch for streaming sources (ensure chunk is in cache before sync read)
+        if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(warmup_start as u64, trailing_end - warmup_start).await;
+        }
 
         // Read chunk from source (mono view for DSP processing)
         let chunk_with_warmup = source.read_region(channel_view, warmup_start as u64, trailing_end - warmup_start);

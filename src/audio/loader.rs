@@ -1,8 +1,114 @@
-use crate::audio::guano::parse_guano;
+use crate::audio::guano::{self, parse_guano, GuanoMetadata};
 use crate::audio::source::InMemorySource;
 use crate::types::{AudioData, FileMetadata};
 use std::io::Cursor;
 use std::sync::Arc;
+
+/// Parsed WAV header — enough info to stream from disk without loading all samples.
+#[derive(Clone, Debug)]
+pub struct WavHeader {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub bits_per_sample: u16,
+    pub is_float: bool,
+    pub data_offset: u64,       // byte offset of PCM "data" chunk body within file
+    pub data_size: u64,         // byte length of PCM data
+    pub total_frames: u64,      // data_size / (channels * bytes_per_sample / 8)
+    pub guano: Option<GuanoMetadata>,
+}
+
+/// Parse only the WAV header from the given bytes (typically first 8-64KB of file).
+/// Returns enough metadata to open the file for streaming without decoding all samples.
+///
+/// If the GUANO chunk is before the data chunk, it will be included. If GUANO is after
+/// the data chunk (common), the caller must provide tail bytes separately via
+/// `parse_guano_from_tail()`.
+pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
+    if header_bytes.len() < 12 {
+        return Err("File too small for WAV header".into());
+    }
+    if &header_bytes[0..4] != b"RIFF" || &header_bytes[8..12] != b"WAVE" {
+        return Err("Not a RIFF/WAVE file".into());
+    }
+
+    let mut pos = 12usize;
+    let mut fmt_chunk: Option<(u16, u32, u16, u16)> = None; // (format_tag, sample_rate, channels, bits)
+    let mut data_offset: Option<u64> = None;
+    let mut data_size: Option<u64> = None;
+    let mut guano: Option<GuanoMetadata> = None;
+
+    while pos + 8 <= header_bytes.len() {
+        let chunk_id = &header_bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            header_bytes[pos + 4..pos + 8].try_into().map_err(|_| "Invalid chunk size")?,
+        ) as u64;
+        let body_start = pos + 8;
+        let body_end = body_start + chunk_size as usize;
+
+        match chunk_id {
+            b"fmt " => {
+                if chunk_size < 16 || body_end > header_bytes.len() {
+                    return Err("fmt chunk too small or truncated".into());
+                }
+                let fmt = &header_bytes[body_start..body_end];
+                let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+                let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+                let sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+                let bits_per_sample = u16::from_le_bytes([fmt[14], fmt[15]]);
+                fmt_chunk = Some((format_tag, sample_rate, channels, bits_per_sample));
+            }
+            b"data" => {
+                data_offset = Some(body_start as u64);
+                data_size = Some(chunk_size);
+                // Don't break — there might be GUANO after, but we record offset+size
+                // For streaming, we have what we need once we see data
+                if guano.is_some() || body_end > header_bytes.len() {
+                    break; // GUANO already found, or data extends past our header bytes
+                }
+                // Skip past the data chunk to look for GUANO after it
+                pos = body_start + ((chunk_size as usize + 1) & !1);
+                continue;
+            }
+            b"guan" => {
+                if body_end <= header_bytes.len() {
+                    let guan_bytes = &header_bytes[body_start..body_end];
+                    guano = guano::parse_guano_chunk(guan_bytes);
+                }
+            }
+            _ => {}
+        }
+
+        pos = body_start + ((chunk_size as usize + 1) & !1);
+    }
+
+    let (format_tag, sample_rate, channels, bits_per_sample) =
+        fmt_chunk.ok_or("No fmt chunk found in WAV header")?;
+    let data_offset = data_offset.ok_or("No data chunk found in WAV header")?;
+    let data_size = data_size.ok_or("No data chunk found in WAV header")?;
+
+    // format_tag: 1 = PCM integer, 3 = IEEE float
+    let is_float = format_tag == 3;
+    if format_tag != 1 && format_tag != 3 {
+        return Err(format!("Unsupported WAV format tag: {}", format_tag));
+    }
+
+    let bytes_per_frame = channels as u64 * (bits_per_sample as u64 / 8);
+    if bytes_per_frame == 0 {
+        return Err("Invalid WAV: zero bytes per frame".into());
+    }
+    let total_frames = data_size / bytes_per_frame;
+
+    Ok(WavHeader {
+        sample_rate,
+        channels,
+        bits_per_sample,
+        is_float,
+        data_offset,
+        data_size,
+        total_frames,
+        guano,
+    })
+}
 
 /// Load audio from raw file bytes. Detects WAV, FLAC, OGG, or MP3 by header magic bytes.
 pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {

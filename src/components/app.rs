@@ -401,7 +401,9 @@ fn MainArea() -> impl IntoView {
                                                 let idx = state.current_file_index.get_untracked();
                                                 if let Some(i) = idx {
                                                     if let Some(f) = files.get(i) {
-                                                        microphone::download_wav(&f.audio.samples, f.audio.sample_rate, &name);
+                                                        let total = f.audio.source.total_samples() as usize;
+                                                        let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
+                                                        microphone::download_wav(&samples, f.audio.sample_rate, &name);
                                                     }
                                                 }
                                             }

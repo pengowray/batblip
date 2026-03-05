@@ -853,15 +853,17 @@ impl AppState {
     }
 
     pub fn compute_auto_gain(&self) -> f64 {
-        use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+        use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
 
         let files = self.files.get();
         let idx = self.current_file_index.get();
         let Some(file) = idx.and_then(|i| files.get(i)) else { return 0.0 };
-        let scan_end = file.audio.samples.len().min(
+        let total = file.audio.source.total_samples() as usize;
+        let scan_end = total.min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * file.audio.sample_rate as f64) as usize,
         );
-        let peak = file.audio.samples[..scan_end].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let scan = file.audio.source.read_region(ChannelView::MonoMix, 0, scan_end);
+        let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 1e-10 { return 0.0; }
         let peak_db = 20.0 * (peak as f64).log10();
         // Cap at +30 dB to avoid extreme amplification of very quiet recordings

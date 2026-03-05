@@ -1,3 +1,4 @@
+use crate::audio::source::ChannelView;
 use crate::types::{AudioData, SpectrogramData};
 use crate::dsp::zc_divide::{cascaded_lp, smooth_envelope};
 
@@ -53,14 +54,15 @@ pub fn detect_pulses(
     spectrogram: &SpectrogramData,
     params: &PulseDetectionParams,
 ) -> Vec<DetectedPulse> {
-    let samples = &audio.samples;
+    let total = audio.source.total_samples() as usize;
+    let samples = audio.source.read_region(ChannelView::MonoMix, 0, total);
     let sr = audio.sample_rate;
     if samples.len() < 2 {
         return Vec::new();
     }
 
     // Step 1: Bandpass filter to focus frequency range
-    let filtered = bandpass(samples, sr, params.bandpass_low_hz, params.bandpass_high_hz);
+    let filtered = bandpass(&samples, sr, params.bandpass_low_hz, params.bandpass_high_hz);
 
     // Step 2: Compute energy envelope (~0.25ms window for bat calls)
     let env_window = ((sr as f64 * 0.00025) as usize).max(1);

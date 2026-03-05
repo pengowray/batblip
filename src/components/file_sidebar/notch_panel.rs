@@ -2,6 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
+use std::sync::Arc;
+use crate::audio::source::ChannelView;
 use crate::state::AppState;
 use crate::dsp::notch::{self, NoiseProfile, DetectionConfig};
 
@@ -131,7 +133,8 @@ pub(crate) fn NotchPanel() -> impl IntoView {
 
         state.notch_detecting.set(true);
         let threshold = sensitivity.get_untracked();
-        let samples = file.audio.samples.clone();
+        let total = file.audio.source.total_samples() as usize;
+        let samples = Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, total));
         let sample_rate = file.audio.sample_rate;
         let duration = file.audio.duration_secs;
 
@@ -269,7 +272,8 @@ pub(crate) fn NotchPanel() -> impl IntoView {
         };
 
         state.noise_reduce_learning.set(true);
-        let samples = file.audio.samples.clone();
+        let total = file.audio.source.total_samples() as usize;
+        let samples = Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, total));
         let sample_rate = file.audio.sample_rate;
         let duration = file.audio.duration_secs;
 
