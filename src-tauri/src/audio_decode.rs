@@ -156,12 +156,14 @@ fn flac_info(bytes: &[u8], file_size: usize) -> Result<AudioFileInfo, String> {
     let cursor = Cursor::new(bytes);
     let reader = claxon::FlacReader::new(cursor).map_err(|e| format!("FLAC error: {e}"))?;
     let info = reader.streaminfo();
-    let total_samples = info.samples.unwrap_or(0) as usize;
-    let mono_samples = total_samples / info.channels as usize;
+    // info.samples is Option<u64> — total inter-channel frames. Use u64 arithmetic
+    // to avoid overflow on 32-bit targets for files with > 2^32 frames.
+    let total_frames = info.samples.unwrap_or(0);
+    let mono_samples = total_frames as usize; // safe on 64-bit Tauri targets
     Ok(AudioFileInfo {
         sample_rate: info.sample_rate,
         channels: info.channels,
-        duration_secs: mono_samples as f64 / info.sample_rate as f64,
+        duration_secs: total_frames as f64 / info.sample_rate as f64,
         total_mono_samples: mono_samples,
         bits_per_sample: info.bits_per_sample as u16,
         is_float: false,

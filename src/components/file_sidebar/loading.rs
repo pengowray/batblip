@@ -4,8 +4,8 @@ use wasm_bindgen::JsCast;
 use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileReader};
-use crate::audio::loader::{load_audio, parse_wav_header_with_file_size};
-use crate::audio::streaming_source::{FileHandle, StreamingWavSource, read_blob_range};
+use crate::audio::loader::{load_audio, parse_flac_header, parse_wav_header_with_file_size};
+use crate::audio::streaming_source::{FileHandle, StreamingFlacSource, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::{compute_overview_from_spectrogram, compute_preview, compute_spectrogram_partial};
 use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::{AudioData, SpectrogramData};
@@ -30,20 +30,25 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
     let name = file.name();
     let size = file.size();
 
-    // For large files, attempt streaming WAV path
+    // For large files, attempt streaming path (WAV or FLAC)
     if size > STREAMING_CHECK_SIZE {
         match try_streaming_wav(&file, &name, state).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                log::info!("Streaming path not applicable for {}: {}", name, e);
-                // Fall through to normal full-decode path
+                log::info!("WAV streaming not applicable for {}: {}", name, e);
+            }
+        }
+        match try_streaming_flac(&file, &name, state).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                log::info!("FLAC streaming not applicable for {}: {}", name, e);
             }
         }
     }
 
     if size > MAX_FILE_SIZE {
         let msg = format!(
-            "File too large ({:.1} GB) — only WAV files can be streamed above 2 GB",
+            "File too large ({:.1} GB) — only WAV and FLAC files can be streamed above 2 GB",
             size / 1_000_000_000.0
         );
         state.show_error_toast(&msg);
@@ -285,6 +290,324 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
     }
 
     Ok(())
+}
+
+/// Attempt to open a large FLAC file using the streaming path.
+/// Returns Ok(()) if successful, Err if the file is not suitable for streaming.
+async fn try_streaming_flac(file: &File, name: &str, state: AppState) -> Result<(), String> {
+    // Read first 64KB for header parsing
+    let header_size = 65536.0f64.min(file.size());
+    let header_bytes = read_blob_range(file, 0.0, header_size).await?;
+
+    if header_bytes.len() < 42 {
+        return Err("Header too small".into());
+    }
+    if &header_bytes[0..4] != b"fLaC" {
+        return Err("Not a FLAC file".into());
+    }
+
+    let header = parse_flac_header(&header_bytes)?;
+
+    // Check if decoded size warrants streaming
+    let decoded_bytes = header.total_frames * header.channels as u64 * 4; // f32 per sample
+    if decoded_bytes < STREAMING_DECODED_THRESHOLD {
+        return Err(format!(
+            "Decoded size {:.0} MB below streaming threshold",
+            decoded_bytes as f64 / 1_048_576.0
+        ));
+    }
+
+    log::info!(
+        "Streaming FLAC: {} — {} frames, {} ch, {} Hz, {:.1}s, decoded {:.0} MB",
+        name,
+        header.total_frames,
+        header.channels,
+        header.sample_rate,
+        header.total_frames as f64 / header.sample_rate as f64,
+        decoded_bytes as f64 / 1_048_576.0,
+    );
+
+    state.show_info_toast(format!(
+        "Streaming large FLAC ({:.0} MB)",
+        file.size() / 1_000_000.0
+    ));
+
+    // Decode first 30s by reading a generous initial chunk.
+    // Estimate: at 1411 kbps (CD quality) FLAC compresses ~50-70%, so 30s ≈ ~3 MB.
+    // At 384 kHz 24-bit stereo, 30s uncompressed ≈ 66 MB, compressed ≈ ~40 MB.
+    // Read 48 MB to be safe for high sample-rate files.
+    use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+    let head_target_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * header.sample_rate as f64) as u64)
+        .min(header.total_frames);
+    let initial_read_size = (48 * 1024 * 1024u64).min(file.size() as u64);
+    let initial_bytes = read_blob_range(file, 0.0, initial_read_size as f64).await?;
+
+    // Decode using FlacReader (which parses the STREAMINFO from the beginning)
+    let cursor = std::io::Cursor::new(&initial_bytes[..]);
+    let mut reader = claxon::FlacReader::new(cursor)
+        .map_err(|e| format!("FLAC reader error: {}", e))?;
+
+    let channels = header.channels as usize;
+    let max_val = (1u32 << (header.bits_per_sample - 1)) as f32;
+    let mut head_interleaved: Vec<f32> = Vec::new();
+    let mut head_frame_count: u64 = 0;
+
+    {
+        let mut blocks = reader.blocks();
+        let mut block_buf = Vec::new();
+        loop {
+            match blocks.read_next_or_eof(block_buf) {
+                Ok(Some(block)) => {
+                    let n_frames = block.duration() as usize;
+                    for frame_idx in 0..n_frames {
+                        for ch in 0..channels {
+                            let sample = block.sample(ch as u32, frame_idx as u32);
+                            head_interleaved.push(sample as f32 / max_val);
+                        }
+                    }
+                    head_frame_count += n_frames as u64;
+                    block_buf = block.into_buffer();
+
+                    if head_frame_count >= head_target_frames {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    if head_frame_count == 0 {
+                        return Err(format!("FLAC decode error: {}", e));
+                    }
+                    // Partial decode — we have some head samples, proceed
+                    break;
+                }
+            }
+        }
+    }
+
+    if head_frame_count == 0 {
+        return Err("No FLAC frames decoded".into());
+    }
+
+    // Truncate to exact head target
+    let actual_head_frames = head_frame_count.min(head_target_frames) as usize;
+    head_interleaved.truncate(actual_head_frames * channels);
+
+    let (head_mono, head_raw) = if channels == 1 {
+        (head_interleaved, None)
+    } else {
+        let mono: Vec<f32> = head_interleaved
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+            .collect();
+        (mono, Some(head_interleaved))
+    };
+
+    // Estimate byte cursor position after head decode.
+    // We can't get the exact position from claxon, so estimate from compression ratio.
+    // Use the ratio of frames decoded vs total, applied to file size.
+    let file_size = file.size() as u64;
+    let ratio = head_frame_count as f64 / header.total_frames.max(1) as f64;
+    let estimated_byte_cursor = ((file_size as f64 * ratio) as u64)
+        .max(header.first_frame_offset)
+        .min(file_size);
+
+    // Create StreamingFlacSource
+    let source = Arc::new(StreamingFlacSource::new(
+        FileHandle::WebFile(file.clone()),
+        &header,
+        head_mono.clone(),
+        head_raw,
+        estimated_byte_cursor,
+        head_frame_count,
+    ));
+
+    let sample_rate = header.sample_rate;
+    let total_frames = header.total_frames;
+    let duration_secs = total_frames as f64 / sample_rate as f64;
+
+    let samples = Arc::new(head_mono);
+
+    let audio = AudioData {
+        samples,
+        source: source.clone(),
+        sample_rate,
+        channels: header.channels as u32,
+        duration_secs,
+        metadata: crate::types::FileMetadata {
+            file_size: file.size() as usize,
+            format: "FLAC",
+            bits_per_sample: header.bits_per_sample,
+            is_float: false,
+            guano: None,
+        },
+    };
+
+    // Compute preview from head samples
+    let preview = compute_preview(&audio, 256, 128);
+
+    // Check for silence/quiet in head
+    let silence_check = {
+        use crate::audio::source::ChannelView;
+        let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
+            (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
+        ) as usize);
+        let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        if peak < 0.002 {
+            Some(SilenceCheck::Silent)
+        } else if peak > 1e-10 {
+            let peak_db = 20.0 * (peak as f64).log10();
+            let auto_db = -3.0 - peak_db;
+            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+        } else {
+            None
+        }
+    };
+
+    // Build placeholder spectrogram metadata
+    const HOP_SIZE: usize = 512;
+    let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(HOP_SIZE);
+    let total_len = total_frames as usize;
+    let total_cols = if total_len >= fft_size {
+        (total_len - fft_size) / HOP_SIZE + 1
+    } else {
+        0
+    };
+
+    let spectrogram = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: total_cols,
+        freq_resolution: sample_rate as f64 / fft_size as f64,
+        time_resolution: HOP_SIZE as f64 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
+    let name_owned = name.to_string();
+    let file_index;
+    {
+        let mut idx = 0;
+        state.files.update(|files| {
+            idx = files.len();
+            files.push(LoadedFile {
+                name: name_owned.clone(),
+                audio,
+                spectrogram,
+                preview: Some(preview),
+                overview_image: None,
+                xc_metadata: None,
+                is_recording: false,
+                settings: FileSettings::default(),
+            });
+            if files.len() == 1 {
+                state.current_file_index.set(Some(0));
+            }
+        });
+        file_index = idx;
+    }
+
+    if let Some(check) = silence_check {
+        match check {
+            SilenceCheck::Silent => {
+                state.auto_gain.set(false);
+                state.gain_db.set(0.0);
+                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
+            }
+            SilenceCheck::HighGain(db) => {
+                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
+            }
+        }
+    }
+
+    use crate::canvas::{spectral_store, tile_cache};
+    spectral_store::init(file_index, total_cols);
+
+    // Prefetch first viewport and schedule tiles
+    {
+        let scroll = state.scroll_offset.get_untracked();
+        let zoom = state.zoom_level.get_untracked();
+        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let time_res = HOP_SIZE as f64 / sample_rate as f64;
+        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
+        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
+        let visible_samples = (visible_time * sample_rate as f64) as usize;
+        source.prefetch_region(start_sample, visible_samples + fft_size).await;
+    }
+
+    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
+    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
+    // Spawn background progressive decode
+    {
+        let source_bg = source.clone();
+        let name_bg = name.to_string();
+        wasm_bindgen_futures::spawn_local(background_flac_decode(
+            state,
+            file_index,
+            name_bg.clone(),
+            source_bg,
+        ));
+    }
+
+    // Spawn background overview
+    {
+        let name_for_overview = name.to_string();
+        wasm_bindgen_futures::spawn_local(build_streaming_overview(
+            state,
+            file_index,
+            name_for_overview,
+        ));
+    }
+
+    Ok(())
+}
+
+/// Progressively decode the rest of a streaming FLAC file in the background.
+async fn background_flac_decode(
+    state: AppState,
+    file_index: usize,
+    expected_name: String,
+    source: Arc<StreamingFlacSource>,
+) {
+    // Initial delay — let the UI settle
+    let p = js_sys::Promise::new(&mut |resolve, _| {
+        web_sys::window().unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
+    });
+    JsFuture::from(p).await.ok();
+
+    while !source.is_fully_decoded() {
+        // Check file still loaded
+        let still_valid = state.files.get_untracked()
+            .get(file_index)
+            .map(|f| f.name == expected_name)
+            .unwrap_or(false);
+        if !still_valid { return; }
+
+        // Defer while playing or loading
+        let is_busy = state.is_playing.get_untracked()
+            || state.loading_count.get_untracked() > 0;
+        if is_busy {
+            let p = js_sys::Promise::new(&mut |resolve, _| {
+                web_sys::window().unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
+            });
+            JsFuture::from(p).await.ok();
+            continue;
+        }
+
+        // Decode one window worth of frames
+        let cursor = source.decode_frame_cursor_value();
+        source.prefetch_region(cursor, 262_144).await;
+
+        // Yield to browser
+        let p = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window().unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
+        });
+        JsFuture::from(p).await.ok();
+    }
+
+    log::info!("Background FLAC decode complete for {}", expected_name);
 }
 
 /// Build a high-res overview spectrogram image for a streaming file in the background.

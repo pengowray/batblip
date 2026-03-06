@@ -172,6 +172,89 @@ pub fn parse_wav_header_with_file_size(header_bytes: &[u8], file_size: Option<u6
     })
 }
 
+/// Parsed FLAC header — enough info to stream without loading all samples.
+#[derive(Clone, Debug)]
+pub struct FlacHeader {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub bits_per_sample: u16,
+    pub total_frames: u64,       // total per-channel sample frames
+    pub first_frame_offset: u64, // byte offset where audio frames begin (after all metadata blocks)
+    pub max_frame_size: u32,     // from STREAMINFO, 0 if unknown
+}
+
+/// Parse FLAC header from the given bytes (typically first 64KB of file).
+/// Returns format metadata and the byte offset where audio frames begin.
+pub fn parse_flac_header(header_bytes: &[u8]) -> Result<FlacHeader, String> {
+    if header_bytes.len() < 42 {
+        return Err("File too small for FLAC header".into());
+    }
+    if &header_bytes[0..4] != b"fLaC" {
+        return Err("Not a FLAC file".into());
+    }
+
+    // First metadata block must be STREAMINFO
+    let block_header = header_bytes[4];
+    let is_last = (block_header & 0x80) != 0;
+    let block_type = block_header & 0x7F;
+    if block_type != 0 {
+        return Err("First FLAC metadata block is not STREAMINFO".into());
+    }
+    let block_len = ((header_bytes[5] as u32) << 16)
+        | ((header_bytes[6] as u32) << 8)
+        | (header_bytes[7] as u32);
+    if block_len < 34 || header_bytes.len() < 8 + block_len as usize {
+        return Err("STREAMINFO block too small or truncated".into());
+    }
+
+    let si = &header_bytes[8..8 + 34]; // STREAMINFO is exactly 34 bytes
+
+    // min/max block size: si[0..2], si[2..4]
+    // min/max frame size: si[4..7], si[7..10]
+    let max_frame_size = ((si[7] as u32) << 16) | ((si[8] as u32) << 8) | (si[9] as u32);
+
+    // Bytes 10-17 contain packed fields:
+    // sample_rate: 20 bits, channels-1: 3 bits, bps-1: 5 bits, total_samples: 36 bits
+    let sr = ((si[10] as u32) << 12) | ((si[11] as u32) << 4) | ((si[12] as u32) >> 4);
+    let ch = ((si[12] >> 1) & 0x07) + 1;
+    let bps = (((si[12] & 0x01) as u16) << 4) | ((si[13] >> 4) as u16);
+    let bps = bps + 1;
+    let total_samples = ((si[13] as u64 & 0x0F) << 32)
+        | ((si[14] as u64) << 24)
+        | ((si[15] as u64) << 16)
+        | ((si[16] as u64) << 8)
+        | (si[17] as u64);
+
+    if sr == 0 {
+        return Err("FLAC: sample rate is 0".into());
+    }
+
+    // Walk metadata blocks to find first_frame_offset
+    let mut pos = 4u64; // after "fLaC"
+    let mut last = is_last;
+    while !last {
+        let p = pos as usize;
+        if p + 4 > header_bytes.len() {
+            break;
+        }
+        let hdr = header_bytes[p];
+        last = (hdr & 0x80) != 0;
+        let len = ((header_bytes[p + 1] as u32) << 16)
+            | ((header_bytes[p + 2] as u32) << 8)
+            | (header_bytes[p + 3] as u32);
+        pos += 4 + len as u64;
+    }
+
+    Ok(FlacHeader {
+        sample_rate: sr,
+        channels: ch as u16,
+        bits_per_sample: bps,
+        total_frames: total_samples,
+        first_frame_offset: pos,
+        max_frame_size,
+    })
+}
+
 /// Load audio from raw file bytes. Detects WAV, FLAC, OGG, or MP3 by header magic bytes.
 pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     if bytes.len() < 4 {

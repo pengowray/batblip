@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::audio::source::{AudioSource, ChannelView};
-use crate::audio::streaming_source::StreamingWavSource;
+use crate::audio::streaming_source;
 use crate::state::{PlaybackMode, FilterQuality, GainMode};
 use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
@@ -196,7 +196,7 @@ async fn chunk_loop(
     let manual_boost = params.gain_db; // slider value, additive for all modes
 
     let auto_peak_gain: f64 = if params.gain_mode == GainMode::AutoPeak {
-        let is_streaming = source.as_any().downcast_ref::<StreamingWavSource>().is_some();
+        let is_streaming = streaming_source::is_streaming(source.as_ref());
         let max_scan = if is_streaming {
             (source_rate as usize) * 5
         } else {
@@ -348,9 +348,7 @@ async fn process_one_chunk(
     let trailing_len = trailing_end - chunk_end;
 
     // Prefetch for streaming sources
-    if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
-        streaming.prefetch_region(warmup_start as u64, trailing_end - warmup_start).await;
-    }
+    streaming_source::prefetch_streaming(source.as_ref(), warmup_start as u64, trailing_end - warmup_start).await;
 
     let chunk_with_warmup = source.read_region(channel_view, warmup_start as u64, trailing_end - warmup_start);
     let filtered = apply_filters(&chunk_with_warmup, source_rate, params);

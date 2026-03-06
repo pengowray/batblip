@@ -4,7 +4,7 @@ use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlInputElement, ImageData, MouseEvent};
 use crate::audio::playback;
 use crate::audio::microphone;
-use crate::audio::streaming_source::StreamingWavSource;
+use crate::audio::streaming_source;
 use crate::canvas::tile_cache;
 use crate::state::AppState;
 use crate::types::PreviewImage;
@@ -217,9 +217,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         let is_group_highlighted = track_badge.as_ref()
                             .map(|ti| Some(&ti.group_key) == active_group_key.as_ref())
                             .unwrap_or(false);
-                        let is_streaming = f.audio.source.as_any()
-                            .downcast_ref::<StreamingWavSource>()
-                            .is_some();
+                        let is_streaming = streaming_source::is_streaming(f.audio.source.as_ref());
                         let is_active = move || current_idx.get() == Some(i);
                         let on_click = move |_| {
                             // Clear navigation history and bookmarks when switching files

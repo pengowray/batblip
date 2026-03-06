@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use crate::canvas::spectrogram_renderer::{self, PreRendered, FlowAlgo};
 use crate::state::{AppState, LoadedFile};
-use crate::audio::streaming_source::StreamingWavSource;
+use crate::audio::streaming_source;
 
 /// Number of spectrogram columns per tile (constant across all LODs).
 pub const TILE_COLS: usize = 256;
@@ -405,9 +405,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let sample_len = TILE_COLS * config_hop + actual_fft;
 
         // Prefetch for streaming sources
-        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-            streaming.prefetch_region(sample_start as u64, sample_len).await;
-        }
+        streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
         let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
         let cols = compute_stft_columns(&samples, audio.sample_rate, actual_fft, config_hop, 0, TILE_COLS);
@@ -786,9 +784,7 @@ pub fn schedule_tile_on_demand(
         let sample_len = TILE_COLS * hop_size + fft_size;
 
         // Prefetch for streaming sources
-        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-            streaming.prefetch_region(sample_start as u64, sample_len).await;
-        }
+        streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
         let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
         let cols = compute_stft_columns(&samples, audio.sample_rate, fft_size, hop_size, 0, TILE_COLS);
@@ -902,9 +898,7 @@ pub fn schedule_flow_tile(
                 let sample_len = extra * config_hop + actual_fft;
 
                 // Prefetch for streaming sources
-                if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-                    streaming.prefetch_region(sample_start as u64, sample_len).await;
-                }
+                streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
                 let total = audio.source.total_samples() as usize;
                 let sample_end = (sample_start + sample_len).min(total);
@@ -936,9 +930,7 @@ pub fn schedule_flow_tile(
                 let region_cols = TILE_COLS + extra_cols;
                 let region_sample_len = region_cols * config_hop + actual_fft;
 
-                if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-                    streaming.prefetch_region(region_sample_start as u64, region_sample_len).await;
-                }
+                streaming_source::prefetch_streaming(audio.source.as_ref(), region_sample_start as u64, region_sample_len).await;
 
                 let region_samples = audio.source.read_region(cv, region_sample_start as u64, region_sample_len);
 
@@ -1057,9 +1049,7 @@ pub fn schedule_reassign_tile(
         let sample_len = TILE_COLS * config_hop + actual_fft;
 
         // Prefetch for streaming sources
-        if let Some(streaming) = audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-            streaming.prefetch_region(sample_start as u64, sample_len).await;
-        }
+        streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
         let total = audio.source.total_samples() as usize;
         let sample_end = (sample_start + sample_len).min(total);
