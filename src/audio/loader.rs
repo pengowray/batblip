@@ -20,15 +20,27 @@ pub struct WavHeader {
 /// Parse only the WAV header from the given bytes (typically first 8-64KB of file).
 /// Returns enough metadata to open the file for streaming without decoding all samples.
 ///
+/// Supports both standard RIFF/WAVE and RF64/WAVE (used by recorders for files >4 GB).
+///
 /// If the GUANO chunk is before the data chunk, it will be included. If GUANO is after
 /// the data chunk (common), the caller must provide tail bytes separately via
 /// `parse_guano_from_tail()`.
 pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
+    parse_wav_header_with_file_size(header_bytes, None)
+}
+
+/// Like `parse_wav_header`, but accepts an optional actual file size to correct
+/// u32 overflow in the `data` chunk size field for files >4 GB.
+pub fn parse_wav_header_with_file_size(header_bytes: &[u8], file_size: Option<u64>) -> Result<WavHeader, String> {
     if header_bytes.len() < 12 {
         return Err("File too small for WAV header".into());
     }
-    if &header_bytes[0..4] != b"RIFF" || &header_bytes[8..12] != b"WAVE" {
-        return Err("Not a RIFF/WAVE file".into());
+
+    let is_rf64 = &header_bytes[0..4] == b"RF64" && &header_bytes[8..12] == b"WAVE";
+    let is_riff = &header_bytes[0..4] == b"RIFF" && &header_bytes[8..12] == b"WAVE";
+
+    if !is_riff && !is_rf64 {
+        return Err("Not a RIFF/WAVE or RF64/WAVE file".into());
     }
 
     let mut pos = 12usize;
@@ -36,6 +48,9 @@ pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
     let mut data_offset: Option<u64> = None;
     let mut data_size: Option<u64> = None;
     let mut guano: Option<GuanoMetadata> = None;
+
+    // RF64: 64-bit sizes from the ds64 chunk (must appear before fmt/data)
+    let mut ds64_data_size: Option<u64> = None;
 
     while pos + 8 <= header_bytes.len() {
         let chunk_id = &header_bytes[pos..pos + 4];
@@ -46,6 +61,18 @@ pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
         let body_end = body_start + chunk_size as usize;
 
         match chunk_id {
+            b"ds64" => {
+                // RF64 Data Size 64 chunk: provides 64-bit sizes
+                // Layout: riffSize(8) + dataSize(8) + sampleCount(8) + ...
+                if body_start + 24 <= header_bytes.len() {
+                    let ds = &header_bytes[body_start..];
+                    // bytes 0..8: RIFF size (not needed)
+                    // bytes 8..16: data chunk size (64-bit)
+                    ds64_data_size = Some(u64::from_le_bytes([
+                        ds[8], ds[9], ds[10], ds[11], ds[12], ds[13], ds[14], ds[15],
+                    ]));
+                }
+            }
             b"fmt " => {
                 if chunk_size < 16 || body_end > header_bytes.len() {
                     return Err("fmt chunk too small or truncated".into());
@@ -59,7 +86,12 @@ pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
             }
             b"data" => {
                 data_offset = Some(body_start as u64);
-                data_size = Some(chunk_size);
+                // For RF64, the data chunk size field is 0xFFFFFFFF; use ds64 value
+                if is_rf64 && chunk_size == 0xFFFFFFFF {
+                    data_size = ds64_data_size;
+                } else {
+                    data_size = Some(chunk_size);
+                }
                 // Don't break — there might be GUANO after, but we record offset+size
                 // For streaming, we have what we need once we see data
                 if guano.is_some() || body_end > header_bytes.len() {
@@ -84,7 +116,7 @@ pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
     let (format_tag, sample_rate, channels, bits_per_sample) =
         fmt_chunk.ok_or("No fmt chunk found in WAV header")?;
     let data_offset = data_offset.ok_or("No data chunk found in WAV header")?;
-    let data_size = data_size.ok_or("No data chunk found in WAV header")?;
+    let mut data_size = data_size.ok_or("No data chunk found in WAV header")?;
 
     // format_tag: 1 = PCM integer, 3 = IEEE float
     let is_float = format_tag == 3;
@@ -96,6 +128,27 @@ pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
     if bytes_per_frame == 0 {
         return Err("Invalid WAV: zero bytes per frame".into());
     }
+
+    // Fix u32 overflow: if we know the actual file size and the data_size looks
+    // suspiciously small (data extends to end of file but chunk says otherwise),
+    // recalculate from file size. This handles:
+    // - Standard RIFF files >4GB where the u32 data size wrapped
+    // - Recorders that write 0xFFFFFFFF as data size without using RF64
+    if let Some(fs) = file_size {
+        let expected_data = fs.saturating_sub(data_offset);
+        // If the stored data_size is much smaller than what the file contains,
+        // or if it's exactly 0xFFFFFFFF (sentinel used by some writers), fix it.
+        if data_size == 0xFFFFFFFF || (expected_data > data_size + 1024 && expected_data > 1_000_000) {
+            // Align to whole frames
+            let corrected = (expected_data / bytes_per_frame) * bytes_per_frame;
+            log::info!(
+                "Correcting data_size: header says {} bytes, file suggests {} bytes",
+                data_size, corrected
+            );
+            data_size = corrected;
+        }
+    }
+
     let total_frames = data_size / bytes_per_frame;
 
     Ok(WavHeader {
@@ -117,7 +170,7 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     }
 
     match &bytes[0..4] {
-        b"RIFF" => load_wav(bytes),
+        b"RIFF" | b"RF64" => load_wav(bytes),
         b"fLaC" => load_flac(bytes),
         b"OggS" => load_ogg(bytes),
         _ if is_mp3(bytes) => load_mp3(bytes),
@@ -142,7 +195,11 @@ fn is_mp3(bytes: &[u8]) -> bool {
 /// (e.g. a 651-byte `bext` chunk), so we strip extraneous chunks and produce
 /// a clean WAV that hound can always parse.
 fn normalize_riff(bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let magic = &bytes[0..4];
+    if magic != b"RIFF" && magic != b"RF64" {
         return None;
     }
 

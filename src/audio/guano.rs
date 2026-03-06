@@ -59,8 +59,12 @@ pub fn append_guano_chunk(wav_bytes: &mut Vec<u8>, guano_text: &str) {
 
 /// Search raw WAV bytes for a "guan" RIFF subchunk and parse GUANO metadata.
 pub fn parse_guano(bytes: &[u8]) -> Option<GuanoMetadata> {
-    // Must be RIFF/WAVE
-    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+    // Must be RIFF/WAVE or RF64/WAVE
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let magic = &bytes[0..4];
+    if magic != b"RIFF" && magic != b"RF64" {
         return None;
     }
 

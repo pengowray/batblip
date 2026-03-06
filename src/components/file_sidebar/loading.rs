@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileReader};
-use crate::audio::loader::{load_audio, parse_wav_header};
+use crate::audio::loader::{load_audio, parse_wav_header_with_file_size};
 use crate::audio::streaming_source::{FileHandle, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::{compute_overview_from_spectrogram, compute_preview, compute_spectrogram_partial};
 use crate::state::{AppState, LoadedFile};
@@ -16,7 +16,8 @@ enum SilenceCheck {
     HighGain(f64),
 }
 
-/// Maximum file size the browser can handle for full-decode path (~2 GB).
+/// Maximum file size the browser can handle for full in-memory decode (~2 GB).
+/// Files above this MUST use the streaming path; if streaming fails, they're rejected.
 const MAX_FILE_SIZE: f64 = 2_000_000_000.0;
 
 /// Raw file size above which we attempt the streaming WAV path.
@@ -42,8 +43,8 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
 
     if size > MAX_FILE_SIZE {
         let msg = format!(
-            "File too large ({:.0} MB) \u{2014} browser limit is ~2 GB",
-            size / 1_000_000.0
+            "File too large ({:.1} GB) — only WAV files can be streamed above 2 GB",
+            size / 1_000_000_000.0
         );
         state.show_error_toast(&msg);
         return Err(msg);
@@ -60,11 +61,15 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
     let header_size = 65536.0f64.min(file.size());
     let header_bytes = read_blob_range(file, 0.0, header_size).await?;
 
-    if header_bytes.len() < 12 || &header_bytes[0..4] != b"RIFF" {
-        return Err("Not a RIFF file".into());
+    if header_bytes.len() < 12 {
+        return Err("Header too small".into());
+    }
+    let magic = &header_bytes[0..4];
+    if magic != b"RIFF" && magic != b"RF64" {
+        return Err("Not a RIFF/RF64 file".into());
     }
 
-    let header = parse_wav_header(&header_bytes)?;
+    let header = parse_wav_header_with_file_size(&header_bytes, Some(file.size() as u64))?;
 
     // Check if decoded size warrants streaming
     let decoded_bytes = header.total_frames * header.channels as u64 * 4; // f32 per sample
