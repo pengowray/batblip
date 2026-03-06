@@ -13,6 +13,7 @@ pub struct TrackInfo {
 /// - `recording_Ch1.flac` → group_key="recording", label="Ch1"
 /// - `260227_0055_3 my recording.wav` → group_key="260227_0055", label="3"
 /// - `site_004.wav` → group_key="site", label="004"
+/// - `260305_0057_MIX.wav` → group_key="260305_0057", label="MIX"
 pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
     // Strip extension
     let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
@@ -54,7 +55,15 @@ pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
         });
     }
 
-    // Pattern 3: bare number like "3", "004"
+    // Pattern 3: "MIX" (Tascam mixdown track, case-insensitive)
+    if lower == "mix" {
+        return Some(TrackInfo {
+            group_key: prefix.to_string(),
+            label: track_part.to_string(),
+        });
+    }
+
+    // Pattern 4: bare number like "3", "004"
     if track_part.chars().all(|c| c.is_ascii_digit()) {
         return Some(TrackInfo {
             group_key: prefix.to_string(),
