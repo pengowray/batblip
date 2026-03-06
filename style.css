@@ -739,7 +739,7 @@ body.sidebar-resizing {
 .setting-value {
     font-size: 11px;
     color: #888;
-    min-width: 28px;
+    min-width: 42px;
     text-align: right;
     font-variant-numeric: tabular-nums;
 }

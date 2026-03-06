@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::audio::source::ChannelView;
 use crate::state::{AppState, FftMode, FlowColorScheme, MainView, SpectrogramDisplay};
+use crate::components::slider_row::SliderRow;
 use crate::dsp::zero_crossing::zero_crossing_frequency;
 
 #[component]
@@ -13,72 +14,48 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
             // Gain/Range/Contrast — always shown (applies to all tile modes)
             <div class="setting-group">
                 <div class="setting-group-title">"Intensity"</div>
-                <div class="setting-row">
-                    <span class="setting-label">{move || {
+                <SliderRow
+                    label="Gain"
+                    signal=state.spect_gain_db
+                    min=-40.0
+                    max=40.0
+                    step=1.0
+                    default=0.0
+                    format_value=Callback::new(move |v: f32| {
                         if state.display_auto_gain.get() {
-                            "Gain: auto".to_string()
+                            "auto".to_string()
                         } else {
-                            format!("Gain: {:+.0} dB", state.spect_gain_db.get())
+                            format!("{:+.0} dB", v)
                         }
-                    }}</span>
-                    <input
-                        type="range"
-                        class="setting-range"
-                        min="-40"
-                        max="40"
-                        step="1"
-                        prop:value=move || state.spect_gain_db.get().to_string()
-                        on:input=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            if let Ok(v) = input.value().parse::<f32>() {
-                                state.spect_gain_db.set(v);
-                                state.display_auto_gain.set(false);
-                            }
-                        }
-                    />
-                </div>
-                <div class="setting-row">
-                    <span class="setting-label">{move || format!("Range: {:.0} dB", state.spect_range_db.get())}</span>
-                    <input
-                        type="range"
-                        class="setting-range"
-                        min="20"
-                        max="120"
-                        step="5"
-                        prop:value=move || state.spect_range_db.get().to_string()
-                        on:input=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            if let Ok(v) = input.value().parse::<f32>() {
-                                state.spect_range_db.set(v);
-                                state.spect_floor_db.set(-v);
-                            }
-                        }
-                    />
-                </div>
-                <div class="setting-row">
-                    <span class="setting-label">{move || {
-                        let g = state.spect_gamma.get();
-                        if g == 1.0 { "Contrast: linear".to_string() }
-                        else { format!("Contrast: {:.2}", g) }
-                    }}</span>
-                    <input
-                        type="range"
-                        class="setting-range"
-                        min="0.2"
-                        max="3.0"
-                        step="0.05"
-                        prop:value=move || state.spect_gamma.get().to_string()
-                        on:input=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            if let Ok(v) = input.value().parse::<f32>() {
-                                state.spect_gamma.set(v);
-                            }
-                        }
-                    />
-                </div>
+                    })
+                    on_change=Callback::new(move |_: f32| {
+                        state.display_auto_gain.set(false);
+                    })
+                />
+                <SliderRow
+                    label="Range"
+                    signal=state.spect_range_db
+                    min=20.0
+                    max=120.0
+                    step=5.0
+                    default=120.0
+                    format_value=Callback::new(|v: f32| format!("{:.0} dB", v))
+                    on_change=Callback::new(move |v: f32| {
+                        state.spect_floor_db.set(-v);
+                    })
+                />
+                <SliderRow
+                    label="Contrast"
+                    signal=state.spect_gamma
+                    min=0.2
+                    max=3.0
+                    step=0.05
+                    default=1.0
+                    format_value=Callback::new(|g: f32| {
+                        if g == 1.0 { "linear".to_string() }
+                        else { format!("{:.2}", g) }
+                    })
+                />
                 <div class="setting-row">
                     <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input
@@ -126,8 +103,8 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                         class="setting-button"
                         on:click=move |_| {
                             state.spect_gain_db.set(0.0);
-                            state.spect_floor_db.set(-80.0);
-                            state.spect_range_db.set(80.0);
+                            state.spect_floor_db.set(-120.0);
+                            state.spect_range_db.set(120.0);
                             state.spect_gamma.set(1.0);
                             state.display_auto_gain.set(false);
                             state.display_eq.set(false);

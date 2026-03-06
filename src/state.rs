@@ -689,7 +689,7 @@ impl AppState {
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
-            auto_gain: RwSignal::new(true),
+            auto_gain: RwSignal::new(false),
 
             channel_view: RwSignal::new(ChannelView::MonoMix),
 
@@ -709,8 +709,8 @@ impl AppState {
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             bg_preload_gen: RwSignal::new(0),
-            spect_floor_db: RwSignal::new(-80.0),
-            spect_range_db: RwSignal::new(80.0),
+            spect_floor_db: RwSignal::new(-120.0),
+            spect_range_db: RwSignal::new(120.0),
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
