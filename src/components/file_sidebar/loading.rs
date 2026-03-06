@@ -347,8 +347,9 @@ async fn build_streaming_overview(
             .unwrap_or(false);
         if !still_valid { return; }
 
-        // Defer while playing or if this isn't the current file
+        // Defer while playing, loading new files, or if this isn't the current file
         let is_busy = state.is_playing.get_untracked()
+            || state.loading_count.get_untracked() > 0
             || state.current_file_index.get_untracked() != Some(file_index);
         if is_busy {
             // Sleep 500ms and retry

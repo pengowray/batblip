@@ -314,6 +314,12 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             </div>
                         }
                     }).collect();
+                    let on_add_click = move |_: web_sys::MouseEvent| {
+                        if let Some(input) = file_input_ref.get() {
+                            let el: &HtmlInputElement = input.as_ref();
+                            el.click();
+                        }
+                    };
                     view! {
                         <div class="file-list">
                             {items}
@@ -330,6 +336,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
+                            <button class="upload-btn add-files-btn" on:click=on_add_click>"+ Open files"</button>
                         </div>
                     }.into_any()
                 }
