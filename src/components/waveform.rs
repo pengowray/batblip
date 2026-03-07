@@ -51,7 +51,10 @@ pub fn Waveform() -> impl IntoView {
         })
     });
 
-    // HFR highpass-filtered samples for waveform overlay
+    // HFR highpass-filtered samples for waveform overlay.
+    // For streaming files, this only filters the head samples (first ~30s).
+    // The waveform Effect windows into this buffer, so regions beyond the head
+    // will simply have no HFR overlay (acceptable for large files).
     let hfr_filtered = Memo::new(move |_| {
         let hfr = state.hfr_enabled.get();
         if !hfr { return None; }
@@ -116,16 +119,19 @@ pub fn Waveform() -> impl IntoView {
         if let Some(file) = idx.and_then(|i| files.get(i)) {
             let sel_time = selection.map(|s| (s.time_start, s.time_end));
             let max_freq_khz = file.spectrogram.max_freq / 1000.0;
+            let total_duration = file.audio.duration_secs;
+            let sr = file.audio.sample_rate;
 
-            // Get channel-aware samples for waveform rendering
-            let ch_buf;
-            let waveform_samples: &[f32] = match cv {
-                ChannelView::MonoMix => &file.audio.samples,
-                _ => {
-                    ch_buf = file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize);
-                    &ch_buf
-                }
-            };
+            // Calculate visible sample range and read from source
+            let visible_time = (display_w as f64 / zoom) * file.spectrogram.time_resolution;
+            let vis_start_time = scroll.max(0.0).min((total_duration - visible_time).max(0.0));
+            let vis_end_time = (vis_start_time + visible_time).min(total_duration);
+            // Add a small margin for edge rendering
+            let margin_samples = 64usize;
+            let region_start = ((vis_start_time * sr as f64) as usize).saturating_sub(margin_samples);
+            let region_end = ((vis_end_time * sr as f64) as usize) + margin_samples;
+            let region_len = region_end.saturating_sub(region_start);
+            let waveform_buf = file.audio.source.read_region(cv, region_start as u64, region_len);
 
             if mode == PlaybackMode::ZeroCrossing {
                 if let Some(bins) = zc_bins.get().as_ref() {
@@ -145,11 +151,18 @@ pub fn Waveform() -> impl IntoView {
                 }
             } else if hfr {
                 if let Some(filtered) = hfr_filtered.get().as_ref() {
+                    // For HFR overlay, also window the filtered samples to the visible region
+                    let filtered_region: Vec<f32> = if region_start < filtered.len() {
+                        let end = (region_start + region_len).min(filtered.len());
+                        filtered[region_start..end].to_vec()
+                    } else {
+                        Vec::new()
+                    };
                     waveform_renderer::draw_waveform_hfr(
                         &ctx,
-                        waveform_samples,
-                        filtered,
-                        file.audio.sample_rate,
+                        &waveform_buf,
+                        &filtered_region,
+                        sr,
                         scroll,
                         zoom,
                         file.spectrogram.time_resolution,
@@ -157,12 +170,14 @@ pub fn Waveform() -> impl IntoView {
                         display_h as f64,
                         sel_time,
                         gain_db,
+                        total_duration,
+                        region_start,
                     );
                 } else {
                     waveform_renderer::draw_waveform(
                         &ctx,
-                        waveform_samples,
-                        file.audio.sample_rate,
+                        &waveform_buf,
+                        sr,
                         scroll,
                         zoom,
                         file.spectrogram.time_resolution,
@@ -170,13 +185,15 @@ pub fn Waveform() -> impl IntoView {
                         display_h as f64,
                         sel_time,
                         gain_db,
+                        total_duration,
+                        region_start,
                     );
                 }
             } else {
                 waveform_renderer::draw_waveform(
                     &ctx,
-                    waveform_samples,
-                    file.audio.sample_rate,
+                    &waveform_buf,
+                    sr,
                     scroll,
                     zoom,
                     file.spectrogram.time_resolution,
@@ -184,6 +201,8 @@ pub fn Waveform() -> impl IntoView {
                     display_h as f64,
                     sel_time,
                     gain_db,
+                    total_duration,
+                    region_start,
                 );
             }
 

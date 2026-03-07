@@ -206,7 +206,8 @@ fn draw_overview_waveform(
     let ch = canvas.height() as f64;
 
     // Draw full file at zoom = 1 column per pixel
-    let total_cols = (samples.len() as f64 / sample_rate as f64) / time_resolution;
+    let total_duration = samples.len() as f64 / sample_rate as f64;
+    let total_cols = total_duration / time_resolution;
     let wv_zoom = cw / total_cols;
     waveform_renderer::draw_waveform(
         ctx, samples, sample_rate,
@@ -216,10 +217,9 @@ fn draw_overview_waveform(
         cw, ch,
         None,
         gain_db,
+        total_duration,
+        0,
     );
-
-    // Viewport highlight (full height — no freq axis on waveform)
-    let total_duration = samples.len() as f64 / sample_rate as f64;
     let px_per_sec = cw / total_duration;
     let visible_cols = main_canvas_width / zoom.max(0.001);
     let visible_time = visible_cols * time_resolution;

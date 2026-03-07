@@ -6,24 +6,26 @@ struct WaveViewport {
     px_per_sec: f64,
     samples_per_pixel: f64,
     mid_y: f64,
+    /// Sample index corresponding to the first element of the provided buffer.
+    region_start_sample: usize,
 }
 
 fn compute_viewport(
-    samples: &[f32],
+    total_duration: f64,
     sample_rate: u32,
     scroll_offset: f64,
     zoom: f64,
     time_resolution: f64,
     canvas_width: f64,
     canvas_height: f64,
+    region_start_sample: usize,
 ) -> WaveViewport {
-    let duration = samples.len() as f64 / sample_rate as f64;
     let mid_y = canvas_height / 2.0;
     let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset.max(0.0).min((duration - visible_time).max(0.0));
+    let start_time = scroll_offset.max(0.0).min((total_duration - visible_time).max(0.0));
     let px_per_sec = canvas_width / visible_time;
     let samples_per_pixel = (visible_time * sample_rate as f64) / canvas_width;
-    WaveViewport { start_time, px_per_sec, samples_per_pixel, mid_y }
+    WaveViewport { start_time, px_per_sec, samples_per_pixel, mid_y, region_start_sample }
 }
 
 /// Draw a single waveform layer with the given color.
@@ -39,12 +41,18 @@ fn draw_waveform_layer(
     ctx.set_stroke_style_str(color);
     ctx.set_line_width(1.0);
 
+    let off = vp.region_start_sample;
+
     if vp.samples_per_pixel <= 2.0 {
         ctx.begin_path();
         let mut first = true;
         for px in 0..(canvas_width as usize) {
             let t = vp.start_time + (px as f64 / vp.px_per_sec);
-            let idx = (t * sample_rate as f64) as usize;
+            let abs_idx = (t * sample_rate as f64) as usize;
+            if abs_idx < off {
+                continue;
+            }
+            let idx = abs_idx - off;
             if idx >= samples.len() {
                 break;
             }
@@ -61,11 +69,16 @@ fn draw_waveform_layer(
         for px in 0..(canvas_width as usize) {
             let t0 = vp.start_time + (px as f64 / vp.px_per_sec);
             let t1 = vp.start_time + ((px as f64 + 1.0) / vp.px_per_sec);
-            let i0 = ((t0 * sample_rate as f64) as usize).min(samples.len());
-            let i1 = ((t1 * sample_rate as f64) as usize).min(samples.len());
+            let abs_i0 = (t0 * sample_rate as f64) as usize;
+            let abs_i1 = (t1 * sample_rate as f64) as usize;
+            if abs_i1 <= off {
+                continue;
+            }
+            let i0 = abs_i0.saturating_sub(off).min(samples.len());
+            let i1 = abs_i1.saturating_sub(off).min(samples.len());
 
             if i0 >= i1 || i0 >= samples.len() {
-                break;
+                continue;
             }
 
             let mut min_val = f32::MAX;
@@ -127,6 +140,8 @@ pub fn draw_waveform(
     canvas_height: f64,
     selection: Option<(f64, f64)>,
     gain_db: f64,
+    total_duration: f64,
+    region_start_sample: usize,
 ) {
     ctx.set_fill_style_str("#0a0a0a");
     ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
@@ -136,7 +151,7 @@ pub fn draw_waveform(
     }
 
     let gain_linear = 10.0_f64.powf(gain_db / 20.0);
-    let vp = compute_viewport(samples, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height);
+    let vp = compute_viewport(total_duration, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height, region_start_sample);
     draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
     draw_center_line(ctx, vp.mid_y, canvas_width);
     draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, "#6a6", gain_linear);
@@ -155,6 +170,8 @@ pub fn draw_waveform_hfr(
     canvas_height: f64,
     selection: Option<(f64, f64)>,
     gain_db: f64,
+    total_duration: f64,
+    region_start_sample: usize,
 ) {
     ctx.set_fill_style_str("#0a0a0a");
     ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
@@ -164,7 +181,7 @@ pub fn draw_waveform_hfr(
     }
 
     let gain_linear = 10.0_f64.powf(gain_db / 20.0);
-    let vp = compute_viewport(samples, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height);
+    let vp = compute_viewport(total_duration, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height, region_start_sample);
     draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
     draw_center_line(ctx, vp.mid_y, canvas_width);
 
