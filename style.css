@@ -875,6 +875,41 @@ body.sidebar-resizing {
     background: #2a2a2a;
 }
 
+.file-sort-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 8px 4px;
+    border-bottom: 1px solid #222;
+}
+
+.file-sort-label {
+    font-size: 10px;
+    color: #666;
+    margin-right: 2px;
+}
+
+.file-sort-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: #777;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.file-sort-btn:hover {
+    color: #bbb;
+    background: #333;
+}
+
+.file-sort-btn.active {
+    color: #ddd;
+    background: #335;
+    border-color: #557;
+}
+
 .demo-picker {
     display: flex;
     flex-direction: column;

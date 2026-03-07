@@ -46,6 +46,10 @@ pub struct LoadedFile {
     pub is_recording: bool,  // true = unsaved recording (show indicator on web)
     /// Per-file gain and noise filter settings.
     pub settings: FileSettings,
+    /// Insertion order (index at time of push).
+    pub add_order: usize,
+    /// File.lastModified timestamp from the File API (ms since epoch), if available.
+    pub last_modified_ms: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -385,6 +389,36 @@ impl ChromaColormap {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum FileSortMode {
+    #[default]
+    AddOrder,
+    ByName,
+    ByDate,
+    ByMetadataDate,
+    Grouped,
+}
+
+impl FileSortMode {
+    pub const ALL: &[FileSortMode] = &[
+        Self::AddOrder,
+        Self::ByName,
+        Self::ByDate,
+        Self::ByMetadataDate,
+        Self::Grouped,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AddOrder => "Added",
+            Self::ByName => "Name",
+            Self::ByDate => "Date",
+            Self::ByMetadataDate => "Meta date",
+            Self::Grouped => "Grouped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum StatusLevel {
     #[default]
     Error,
@@ -405,6 +439,7 @@ pub enum MicMode {
 pub struct AppState {
     pub files: RwSignal<Vec<LoadedFile>>,
     pub current_file_index: RwSignal<Option<usize>>,
+    pub file_sort_mode: RwSignal<FileSortMode>,
     pub selection: RwSignal<Option<Selection>>,
     pub playback_mode: RwSignal<PlaybackMode>,
     pub het_frequency: RwSignal<f64>,
@@ -708,6 +743,7 @@ impl AppState {
         let s = Self {
             files: RwSignal::new(Vec::new()),
             current_file_index: RwSignal::new(None),
+            file_sort_mode: RwSignal::new(FileSortMode::AddOrder),
             selection: RwSignal::new(None),
             playback_mode: RwSignal::new(PlaybackMode::Normal),
             het_frequency: RwSignal::new(45_000.0),

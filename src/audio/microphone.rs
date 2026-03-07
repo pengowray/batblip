@@ -1103,6 +1103,8 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
                 xc_metadata: None,
                 is_recording: false, // Already saved by backend
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
         });
         file_index = idx;
@@ -1829,6 +1831,8 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
             xc_metadata: None,
             is_recording: true,
             settings: FileSettings::default(),
+            add_order: file_index,
+            last_modified_ms: None,
         });
     });
 
@@ -2262,6 +2266,8 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
                 xc_metadata: None,
                 is_recording: true,
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
         });
         file_index = idx;

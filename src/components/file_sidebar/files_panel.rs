@@ -6,7 +6,7 @@ use crate::audio::playback;
 use crate::audio::microphone;
 use crate::audio::streaming_source;
 use crate::canvas::tile_cache;
-use crate::state::AppState;
+use crate::state::{AppState, FileSortMode, LoadedFile};
 use crate::types::PreviewImage;
 
 use super::file_groups;
@@ -207,7 +207,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         .and_then(|idx| groups.get(idx))
                         .and_then(|g| g.as_ref())
                         .map(|ti| ti.group_key.clone());
-                    let items: Vec<_> = file_vec.iter().enumerate().map(|(i, f)| {
+
+                    // Compute sorted display order
+                    let sort_mode = state.file_sort_mode.get();
+                    let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &groups);
+
+                    let items: Vec<_> = sorted_indices.iter().map(|&i| {
+                        let f = &file_vec[i];
                         let name = f.name.clone();
                         let dur = f.audio.duration_secs;
                         let sr = f.audio.sample_rate;
@@ -318,8 +324,14 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             el.click();
                         }
                     };
+                    let show_sort = file_vec.len() > 1;
                     view! {
                         <div class="file-list">
+                            {if show_sort {
+                                Some(view! { <SortBar sort_mode=sort_mode /> })
+                            } else {
+                                None
+                            }}
                             {items}
                             {move || {
                                 let lc = loading_count.get();
@@ -371,4 +383,88 @@ fn PreviewCanvas(preview: PreviewImage) -> impl IntoView {
             class="file-preview-canvas"
         />
     }
+}
+
+#[component]
+fn SortBar(sort_mode: FileSortMode) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let sort_signal = state.file_sort_mode;
+
+    let buttons: Vec<_> = FileSortMode::ALL.iter().map(|&mode| {
+        let label = mode.label();
+        let is_active = mode == sort_mode;
+        let cls = if is_active { "file-sort-btn active" } else { "file-sort-btn" };
+        view! {
+            <button
+                class=cls
+                on:click=move |_| { sort_signal.set(mode); }
+            >
+                {label}
+            </button>
+        }
+    }).collect();
+
+    view! {
+        <div class="file-sort-bar">
+            <span class="file-sort-label">"Sort:"</span>
+            {buttons}
+        </div>
+    }
+}
+
+/// Extract a GUANO timestamp string from a file's metadata, if present.
+fn guano_timestamp(f: &LoadedFile) -> Option<String> {
+    let guano = f.audio.metadata.guano.as_ref()?;
+    guano.fields.iter()
+        .find(|(k, _)| k == "Timestamp")
+        .map(|(_, v)| v.clone())
+}
+
+/// Compute display indices sorted according to the selected mode.
+fn compute_sorted_indices(
+    files: &[LoadedFile],
+    mode: FileSortMode,
+    names: &[String],
+    groups: &[Option<file_groups::TrackInfo>],
+) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..files.len()).collect();
+    match mode {
+        FileSortMode::AddOrder => {
+            indices.sort_by_key(|&i| files[i].add_order);
+        }
+        FileSortMode::ByName => {
+            indices.sort_by(|&a, &b| {
+                names[a].to_lowercase().cmp(&names[b].to_lowercase())
+            });
+        }
+        FileSortMode::ByDate => {
+            indices.sort_by(|&a, &b| {
+                let da = files[a].last_modified_ms.unwrap_or(f64::MAX);
+                let db = files[b].last_modified_ms.unwrap_or(f64::MAX);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        FileSortMode::ByMetadataDate => {
+            indices.sort_by(|&a, &b| {
+                let ta = guano_timestamp(&files[a]).unwrap_or_default();
+                let tb = guano_timestamp(&files[b]).unwrap_or_default();
+                ta.cmp(&tb)
+            });
+        }
+        FileSortMode::Grouped => {
+            indices.sort_by(|&a, &b| {
+                let ga = groups[a].as_ref().map(|ti| (&ti.group_key, &ti.label));
+                let gb = groups[b].as_ref().map(|ti| (&ti.group_key, &ti.label));
+                match (ga, gb) {
+                    (Some((gk_a, l_a)), Some((gk_b, l_b))) => {
+                        gk_a.cmp(gk_b).then_with(|| l_a.cmp(l_b))
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => names[a].to_lowercase().cmp(&names[b].to_lowercase()),
+                }
+            });
+        }
+    }
+    indices
 }

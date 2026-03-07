@@ -29,23 +29,33 @@ const STREAMING_DECODED_THRESHOLD: u64 = 512 * 1024 * 1024;
 pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
     let name = file.name();
     let size = file.size();
+    let last_modified_ms = Some(file.last_modified());
+
+    // Helper: set last_modified_ms on the most recently added file
+    let set_last_modified = |state: AppState, lm: Option<f64>| {
+        state.files.update(|files| {
+            if let Some(f) = files.last_mut() {
+                f.last_modified_ms = lm;
+            }
+        });
+    };
 
     // For large files, attempt streaming path (WAV or FLAC)
     if size > STREAMING_CHECK_SIZE {
         match try_streaming_wav(&file, &name, state).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("WAV streaming not applicable for {}: {}", name, e);
             }
         }
         match try_streaming_flac(&file, &name, state).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("FLAC streaming not applicable for {}: {}", name, e);
             }
         }
         match try_streaming_mp3(&file, &name, state).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("MP3 streaming not applicable for {}: {}", name, e);
             }
@@ -61,7 +71,11 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
         return Err(msg);
     }
     let bytes = read_file_bytes(&file).await?;
-    load_named_bytes(name, &bytes, None, state).await
+    let result = load_named_bytes(name, &bytes, None, state).await;
+    if result.is_ok() {
+        set_last_modified(state, last_modified_ms);
+    }
+    result
 }
 
 /// Attempt to open a large WAV file using the streaming path.
@@ -237,6 +251,8 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
                 xc_metadata: None,
                 is_recording: false,
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -503,6 +519,8 @@ async fn try_streaming_flac(file: &File, name: &str, state: AppState) -> Result<
                 xc_metadata: None,
                 is_recording: false,
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -847,6 +865,8 @@ async fn try_streaming_mp3(file: &File, name: &str, state: AppState) -> Result<(
                 xc_metadata: None,
                 is_recording: false,
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -1238,6 +1258,8 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 xc_metadata,
                 is_recording: false,
                 settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
