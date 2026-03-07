@@ -14,7 +14,7 @@ pub struct NoiseBand {
     pub strength_db: f64,
 }
 
-/// A complete noise profile (importable/exportable as JSON).
+/// A complete noise profile (importable/exportable as .batm YAML).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoiseProfile {
     pub name: String,

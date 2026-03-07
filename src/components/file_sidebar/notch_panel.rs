@@ -200,13 +200,13 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             return;
         };
 
-        let Ok(json) = serde_json::to_string_pretty(&profile) else {
+        let Ok(yaml) = yaml_serde::to_string(&profile) else {
             state.show_error_toast("Failed to serialize profile");
             return;
         };
 
         // Trigger browser download via JS interop
-        let arr = js_sys::Array::of1(&JsValue::from_str(&json));
+        let arr = js_sys::Array::of1(&JsValue::from_str(&yaml));
         let Ok(blob) = web_sys::Blob::new_with_str_sequence(&arr) else {
             return;
         };
@@ -220,7 +220,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             .unwrap()
             .unchecked_into();
         a.set_href(&url);
-        let filename = format!("{}.json", profile_name.replace(' ', "_").to_lowercase());
+        let filename = format!("{}.batm", profile_name.replace(' ', "_").to_lowercase());
         a.set_download(&filename);
         a.click();
         let _ = web_sys::Url::revoke_object_url(&url);
@@ -234,7 +234,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             .unwrap()
             .unchecked_into();
         input.set_type("file");
-        input.set_attribute("accept", ".json").unwrap();
+        input.set_attribute("accept", ".batm,.yaml,.yml,.json").unwrap();
 
         let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |ev: web_sys::Event| {
             let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -243,10 +243,17 @@ pub(crate) fn NotchPanel() -> impl IntoView {
 
             let reader = web_sys::FileReader::new().unwrap();
             let reader_clone = reader.clone();
+            let filename = file.name();
             let on_load = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
                 let result = reader_clone.result().unwrap();
                 let text = result.as_string().unwrap_or_default();
-                match serde_json::from_str::<NoiseProfile>(&text) {
+                // Try YAML first, fall back to JSON for legacy .json files
+                let parsed = if filename.ends_with(".json") {
+                    serde_json::from_str::<NoiseProfile>(&text).map_err(|e| e.to_string())
+                } else {
+                    yaml_serde::from_str::<NoiseProfile>(&text).map_err(|e| e.to_string())
+                };
+                match parsed {
                     Ok(profile) => apply_noise_profile(state, profile),
                     Err(e) => {
                         state.show_error_toast(format!("Invalid profile: {e}"));
@@ -331,7 +338,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             return;
         };
 
-        let Ok(json) = serde_json::to_string_pretty(&profile) else {
+        let Ok(yaml) = yaml_serde::to_string(&profile) else {
             state.show_error_toast("Failed to serialize profile");
             return;
         };
@@ -339,7 +346,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
         spawn_local(async move {
             let args = js_sys::Object::new();
             let _ = js_sys::Reflect::set(&args, &JsValue::from_str("name"), &JsValue::from_str(&profile_name));
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("json"), &JsValue::from_str(&json));
+            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("json"), &JsValue::from_str(&yaml));
             match crate::tauri_bridge::tauri_invoke("save_noise_preset", &args.into()).await {
                 Ok(_) => {
                     state.show_info_toast(format!("Saved preset: {}", profile_name));
@@ -366,7 +373,13 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             match crate::tauri_bridge::tauri_invoke("load_noise_preset", &args.into()).await {
                 Ok(result) => {
                     let text = result.as_string().unwrap_or_default();
-                    match serde_json::from_str::<NoiseProfile>(&text) {
+                    // Try YAML first, fall back to JSON for legacy .json presets
+                    let parsed = if filename.ends_with(".json") {
+                        serde_json::from_str::<NoiseProfile>(&text).map_err(|e| e.to_string())
+                    } else {
+                        yaml_serde::from_str::<NoiseProfile>(&text).map_err(|e| e.to_string())
+                    };
+                    match parsed {
                         Ok(profile) => apply_noise_profile(state, profile),
                         Err(e) => state.show_error_toast(format!("Invalid preset: {e}")),
                     }
@@ -722,7 +735,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                                 let items: Vec<_> = presets.iter().map(|p| {
                                     let filename_load = p.clone();
                                     let filename_del = p.clone();
-                                    let display = p.trim_end_matches(".json").replace('_', " ");
+                                    let display = p.trim_end_matches(".batm").trim_end_matches(".json").replace('_', " ");
                                     let display_title = display.clone();
                                     view! {
                                         <div style="display: flex; align-items: center; gap: 4px; padding: 1px 0; font-size: 11px;">

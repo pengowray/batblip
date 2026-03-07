@@ -210,9 +210,9 @@ fn save_noise_preset(app: tauri::AppHandle, name: String, json: String) -> Resul
         .collect();
     let sanitized = sanitized.trim().to_string();
     let filename = if sanitized.is_empty() {
-        "noise_profile.json".to_string()
+        "noise_profile.batm".to_string()
     } else {
-        format!("{}.json", sanitized.replace(' ', "_").to_lowercase())
+        format!("{}.batm", sanitized.replace(' ', "_").to_lowercase())
     };
     let path = dir.join(&filename);
     std::fs::write(&path, &json).map_err(|e| e.to_string())?;
@@ -246,7 +246,7 @@ fn list_noise_presets(app: tauri::AppHandle) -> Result<Vec<String>, String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".json") { Some(name) } else { None }
+            if name.ends_with(".batm") || name.ends_with(".json") { Some(name) } else { None }
         })
         .collect();
     presets.sort();
