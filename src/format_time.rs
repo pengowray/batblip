@@ -48,7 +48,7 @@ pub fn format_relative_label(offset: f64, interval: f64) -> String {
     }
     let sign = if offset >= 0.0 { "+" } else { "\u{2212}" }; // − (Unicode minus)
 
-    if abs < 1.0 {
+    if abs < 1.0 && interval < 0.1 {
         let ms = abs * 1000.0;
         if interval < 0.01 {
             format!("{}{:.1}ms", sign, ms)
@@ -112,7 +112,13 @@ fn format_seconds_adaptive(seconds: f64, interval: f64) -> String {
     if interval >= 1.0 {
         format!("{:.0}s", seconds)
     } else if interval >= 0.1 {
-        format!("{:.1}s", seconds)
+        // Drop ".0" when seconds are whole
+        let rounded = (seconds * 10.0).round() / 10.0;
+        if (rounded - rounded.round()).abs() < 0.01 {
+            format!("{:.0}s", rounded)
+        } else {
+            format!("{:.1}s", seconds)
+        }
     } else if interval >= 0.01 {
         format!("{:.2}s", seconds)
     } else {
@@ -128,7 +134,13 @@ fn format_minutes_seconds_adaptive(seconds: f64, interval: f64) -> String {
     if interval >= 1.0 {
         format!("{}{}m{:02.0}s", sign, mins, secs)
     } else if interval >= 0.1 {
-        format!("{}{}m{:04.1}s", sign, mins, secs)
+        // Drop ".0" when seconds are whole
+        let rounded = (secs * 10.0).round() / 10.0;
+        if (rounded - rounded.round()).abs() < 0.01 {
+            format!("{}{}m{:02.0}s", sign, mins, rounded)
+        } else {
+            format!("{}{}m{:04.1}s", sign, mins, secs)
+        }
     } else {
         format!("{}{}m{:06.3}s", sign, mins, secs)
     }

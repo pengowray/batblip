@@ -201,7 +201,7 @@ pub fn draw_time_markers(
                 let clk = clock.unwrap();
                 format_clock_time(clk.recording_start_epoch_ms, t, interval)
             } else if use_relative && !is_key {
-                let nearest_key = (t / key_interval).round() * key_interval;
+                let nearest_key = (t / key_interval).floor() * key_interval;
                 format_time::format_relative_label(t - nearest_key, interval)
             } else {
                 format_time::format_time_label(t, interval, use_ms)
