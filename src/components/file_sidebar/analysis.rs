@@ -141,7 +141,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 format!("{}-bit", meta.bits_per_sample)
             };
             let total_samples = f.audio.source.total_samples() as usize;
-            let dur_text = format!("{:.3} s", f.audio.duration_secs);
+            let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
             report.push_str(&format!(
                 "\nFile\n  Sample rate: {}\n  Channels: {}\n  Bit depth: {}\n  Duration: {}\n  Samples: {}\n",
                 sr_text, ch_text, bit_text, dur_text, total_samples
@@ -315,7 +315,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                             format!("{}-bit", meta.bits_per_sample)
                         };
                         let total_samples = f.audio.source.total_samples() as usize;
-                        let dur_text = format!("{:.3} s", f.audio.duration_secs);
+                        let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
                         let samples_text = format!("{}", total_samples);
 
                         // Signal stats — scan first 30s only for large files

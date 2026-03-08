@@ -65,7 +65,7 @@ pub fn BookmarkPopup() -> impl IntoView {
                                     state2.scroll_offset.set(new_scroll);
                                     state2.show_bookmark_popup.set(false);
                                 }
-                            >{format!("{:.2}s", t)}</button>
+                            >{crate::format_time::format_time_display(t, 2)}</button>
                         }
                     }).collect_view()}
                     <button class="bookmark-popup-close"

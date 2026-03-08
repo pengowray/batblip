@@ -1,3 +1,4 @@
+use crate::format_time;
 use web_sys::CanvasRenderingContext2d;
 
 // ── Time scale ────────────────────────────────────────────────────────────
@@ -18,116 +19,6 @@ const TICK_INTERVALS: &[f64] = &[
 pub struct ClockTimeConfig {
     /// Recording start time as milliseconds since Unix epoch.
     pub recording_start_epoch_ms: f64,
-}
-
-// ── Formatting helpers ───────────────────────────────────────────────────
-
-/// Format a time value as a compact, human-readable label.
-///
-/// The format is chosen based on the absolute time value, not just the tick
-/// interval, so we never produce unreadable labels like "50050ms".
-///
-/// `use_ms` controls whether sub-second values use "500ms" (true) or "0.5s"
-/// (false). Should be true only when the max visible time is ≤ 100 ms.
-fn format_time_label(seconds: f64, interval: f64, use_ms: bool) -> String {
-    let abs = seconds.abs();
-
-    // Sub-second values
-    if abs < 1.0 {
-        if use_ms {
-            let ms = seconds * 1000.0;
-            if interval < 0.001 {
-                return format!("{:.1}ms", ms);
-            } else if interval < 0.01 {
-                return format!("{:.1}ms", ms);
-            } else {
-                return format!("{:.0}ms", ms);
-            }
-        }
-        // Prefer seconds notation: "0.5s" over "500ms"
-        return format_seconds(seconds, interval);
-    }
-
-    // 1s to 60s: show as seconds with precision matching the interval
-    if abs < 60.0 {
-        return format_seconds(seconds, interval);
-    }
-
-    // 60s to 3600s: m:ss notation
-    if abs < 3600.0 {
-        return format_minutes_seconds(seconds, interval);
-    }
-
-    // 3600s+: h:mm:ss
-    format_hours_minutes_seconds(seconds, interval)
-}
-
-fn format_seconds(seconds: f64, interval: f64) -> String {
-    if interval >= 1.0 {
-        format!("{:.0}s", seconds)
-    } else if interval >= 0.1 {
-        format!("{:.1}s", seconds)
-    } else if interval >= 0.01 {
-        format!("{:.2}s", seconds)
-    } else {
-        format!("{:.3}s", seconds)
-    }
-}
-
-fn format_minutes_seconds(seconds: f64, interval: f64) -> String {
-    let sign = if seconds < 0.0 { "-" } else { "" };
-    let abs = seconds.abs();
-    let mins = (abs / 60.0).floor() as u32;
-    let secs = abs - mins as f64 * 60.0;
-    if interval >= 1.0 {
-        if secs.round() as u32 == 0 {
-            format!("{}{}m", sign, mins)
-        } else {
-            format!("{}{}:{:02.0}", sign, mins, secs)
-        }
-    } else if interval >= 0.1 {
-        format!("{}{}:{:04.1}", sign, mins, secs)
-    } else {
-        format!("{}{}:{:06.3}", sign, mins, secs)
-    }
-}
-
-fn format_hours_minutes_seconds(seconds: f64, interval: f64) -> String {
-    let sign = if seconds < 0.0 { "-" } else { "" };
-    let abs = seconds.abs();
-    let hours = (abs / 3600.0).floor() as u32;
-    let rem = abs - hours as f64 * 3600.0;
-    let mins = (rem / 60.0).floor() as u32;
-    let secs = rem - mins as f64 * 60.0;
-    if interval >= 1.0 {
-        format!("{}{}:{:02}:{:02.0}", sign, hours, mins, secs)
-    } else {
-        format!("{}{}:{:02}:{:04.1}", sign, hours, mins, secs)
-    }
-}
-
-/// Format a relative time offset as "+50ms", "+0.2s", etc.
-fn format_relative_label(offset: f64, interval: f64) -> String {
-    let abs = offset.abs();
-    if abs < 0.0005 {
-        return String::new();
-    }
-    let sign = if offset >= 0.0 { "+" } else { "\u{2212}" }; // − (minus sign)
-
-    if abs < 1.0 {
-        let ms = abs * 1000.0;
-        if interval < 0.01 {
-            format!("{}{:.1}ms", sign, ms)
-        } else {
-            format!("{}{:.0}ms", sign, ms)
-        }
-    } else if interval >= 1.0 {
-        format!("{}{:.0}s", sign, abs)
-    } else if interval >= 0.1 {
-        format!("{}{:.1}s", sign, abs)
-    } else {
-        format!("{}{:.2}s", sign, abs)
-    }
 }
 
 /// Format a clock time (epoch ms + file offset) as HH:MM:SS with sub-second precision.
@@ -311,9 +202,9 @@ pub fn draw_time_markers(
                 format_clock_time(clk.recording_start_epoch_ms, t, interval)
             } else if use_relative && !is_key {
                 let nearest_key = (t / key_interval).round() * key_interval;
-                format_relative_label(t - nearest_key, interval)
+                format_time::format_relative_label(t - nearest_key, interval)
             } else {
-                format_time_label(t, interval, use_ms)
+                format_time::format_time_label(t, interval, use_ms)
             };
 
             if label.is_empty() {
@@ -356,7 +247,7 @@ pub fn draw_time_markers(
     if use_relative && !key_drawn && !use_clock {
         let preceding_key = (scroll_offset / key_interval).floor() * key_interval;
         if preceding_key >= 0.0 {
-            let label = format_time_label(preceding_key, key_interval.max(interval), use_ms);
+            let label = format_time::format_time_label(preceding_key, key_interval.max(interval), use_ms);
             ctx.set_font("bold 10px sans-serif");
             if let Ok(metrics) = ctx.measure_text(&label) {
                 let tw = metrics.width();

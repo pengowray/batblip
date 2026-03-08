@@ -541,7 +541,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                                 <div class="setting-group-title">"Selection"</div>
                                 <div class="setting-row">
                                     <span class="setting-label">"Duration"</span>
-                                    <span class="setting-value">{format!("{:.3} s", duration)}</span>
+                                    <span class="setting-value">{crate::format_time::format_duration(duration, 3)}</span>
                                 </div>
                                 <div class="setting-row">
                                     <span class="setting-label">"Frames"</span>
@@ -580,16 +580,16 @@ fn annotation_display(a: &Annotation) -> (String, Option<String>) {
     match &a.kind {
         AnnotationKind::Region(reg) => {
             let auto_label = match (reg.freq_low, reg.freq_high) {
-                (Some(fl), Some(fh)) => format!("{:.3}–{:.3}s, {:.0}–{:.0} kHz",
-                    reg.time_start, reg.time_end,
+                (Some(fl), Some(fh)) => format!("{}, {:.0}–{:.0} kHz",
+                    crate::format_time::format_time_range(reg.time_start, reg.time_end, 3),
                     fl / 1000.0, fh / 1000.0),
-                _ => format!("{:.3}–{:.3}s", reg.time_start, reg.time_end),
+                _ => crate::format_time::format_time_range(reg.time_start, reg.time_end, 3),
             };
             let display = reg.label.clone().unwrap_or_else(|| auto_label);
             (display, reg.label.clone())
         }
         AnnotationKind::Marker(m) => {
-            let auto_label = format!("{:.3}s", m.time);
+            let auto_label = crate::format_time::format_time_display(m.time, 3);
             let display = m.label.clone().unwrap_or_else(|| auto_label);
             (display, m.label.clone())
         }
@@ -599,7 +599,7 @@ fn annotation_display(a: &Annotation) -> (String, Option<String>) {
         }
         AnnotationKind::Measurement(m) => {
             let display = m.label.clone().unwrap_or_else(|| {
-                format!("{:.3}–{:.3}s", m.start_time, m.end_time)
+                crate::format_time::format_time_range(m.start_time, m.end_time, 3)
             });
             (display, m.label.clone())
         }

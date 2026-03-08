@@ -223,7 +223,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                     let item_class = if is_selected { "pulse-item selected" } else { "pulse-item" };
                     let dur_ms = p.duration_ms();
                     let freq_khz = p.peak_freq / 1000.0;
-                    let time_text = format_time(p.start_time);
+                    let time_text = crate::format_time::format_time_display(p.start_time, 3);
                     let dur_text = format!("{:.1}ms", dur_ms);
                     let freq_text = format!("{:.1}kHz", freq_khz);
                     let snr_text = format!("{:.0}dB", p.snr_db);
@@ -260,17 +260,6 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     }
 }
 
-fn format_time(secs: f64) -> String {
-    if secs < 1.0 {
-        format!("{:.1}ms", secs * 1000.0)
-    } else if secs < 60.0 {
-        format!("{:.3}s", secs)
-    } else {
-        let mins = (secs / 60.0) as u32;
-        let s = secs - mins as f64 * 60.0;
-        format!("{}:{:05.2}", mins, s)
-    }
-}
 
 fn event_target_value(ev: &web_sys::Event) -> String {
     use wasm_bindgen::JsCast;

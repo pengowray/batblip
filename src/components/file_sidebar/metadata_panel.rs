@@ -87,7 +87,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 <div class="setting-group-title">"File"</div>
                                 {metadata_row("Name".into(), f.name.clone(), None)}
                                 {metadata_row("Format".into(), meta.format.to_string(), None)}
-                                {metadata_row("Duration".into(), format!("{:.3} s", f.audio.duration_secs), None)}
+                                {metadata_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
                                 {metadata_row("Sample rate".into(), format!("{} kHz", f.audio.sample_rate / 1000), None)}
                                 {metadata_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {metadata_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}

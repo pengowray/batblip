@@ -25,7 +25,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 // Selection duration takes priority
                 if let Some(d) = duration() {
                     return view! {
-                        <span>{format!("{:.3}s", d)}</span>
+                        <span>{crate::format_time::format_duration(d, 3)}</span>
                     }.into_any();
                 }
 
