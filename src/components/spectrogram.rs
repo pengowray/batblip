@@ -1467,6 +1467,13 @@ pub fn Spectrogram() -> impl IntoView {
             };
             if sel.time_end - sel.time_start > 0.0001 {
                 state.selection.set(Some(sel));
+                // Update frequency focus to match selection's frequency range
+                if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                    if hi - lo > 100.0 {
+                        state.ff_freq_lo.set(lo);
+                        state.ff_freq_hi.set(hi);
+                    }
+                }
             } else {
                 state.selection.set(None);
             }
@@ -1771,6 +1778,18 @@ pub fn Spectrogram() -> impl IntoView {
                 return;
             }
             state.is_dragging.set(false);
+
+            // Update frequency focus from selection (touch equivalent of mouseup logic)
+            if state.canvas_tool.get_untracked() == CanvasTool::Selection {
+                if let Some(sel) = state.selection.get_untracked() {
+                    if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                        if hi - lo > 100.0 {
+                            state.ff_freq_lo.set(lo);
+                            state.ff_freq_hi.set(hi);
+                        }
+                    }
+                }
+            }
 
             // Double-tap detection: if two taps within 400ms in label area → remove range
             if let Some(touch) = _ev.changed_touches().get(0) {
