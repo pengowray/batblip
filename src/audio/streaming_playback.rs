@@ -362,7 +362,7 @@ async fn process_one_chunk(
     let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
     let warmup_len = pos - warmup_start;
 
-    let trailing_end = if matches!(params.mode, PlaybackMode::PitchShift) {
+    let trailing_end = if matches!(params.mode, PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder) {
         (chunk_end + FILTER_WARMUP).min(end_sample)
     } else {
         chunk_end

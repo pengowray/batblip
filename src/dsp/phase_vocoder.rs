@@ -6,9 +6,10 @@ const HOP: usize = 1024; // 75% overlap
 
 /// Phase-vocoder pitch shift via direct spectral bin shifting.
 ///
-/// Shifts frequency content by remapping STFT bins each frame, with phase-locked
-/// accumulation for smooth resynthesis. Output is same length as input — no
-/// time-stretching or resampling needed.
+/// Shifts frequency content by remapping STFT bins each frame. Uses the source
+/// bin's analysis phase (scaled by pitch_factor) directly rather than accumulating
+/// — this makes each frame stateless, eliminating phase discontinuities at
+/// streaming chunk boundaries.
 ///
 /// - `factor > 1.0`: shift DOWN (divide frequencies). E.g. factor=10 shifts 50 kHz → 5 kHz.
 /// - `factor < -1.0`: shift UP (multiply frequencies). E.g. factor=-10 shifts 5 Hz → 50 Hz.
@@ -33,12 +34,30 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
     }
 
     let n_bins = FFT_SIZE / 2 + 1;
-    let hop_f = HOP as f32;
     let fft_f = FFT_SIZE as f32;
+    let original_len = samples.len();
+
+    // Pad input so the STFT frames fully cover every sample.
+    // Without padding, the last (samples.len() % HOP) samples get no STFT frame,
+    // producing a brief silence/click at streaming chunk boundaries.
+    let padded_len = if (samples.len() - FFT_SIZE) % HOP != 0 {
+        let n = (samples.len() - FFT_SIZE) / HOP + 2; // one extra frame
+        (n - 1) * HOP + FFT_SIZE
+    } else {
+        samples.len()
+    };
+    let samples = if padded_len > samples.len() {
+        let mut padded = samples.to_vec();
+        padded.resize(padded_len, 0.0);
+        padded
+    } else {
+        samples.to_vec()
+    };
+    let samples = &samples[..];
 
     let n_frames = (samples.len().saturating_sub(FFT_SIZE)) / HOP + 1;
     if n_frames == 0 {
-        return samples.to_vec();
+        return vec![0.0; original_len];
     }
 
     let out_len = (n_frames - 1) * HOP + FFT_SIZE;
@@ -56,8 +75,6 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
     let fft_forward = planner.plan_fft_forward(FFT_SIZE);
     let fft_inverse = planner.plan_fft_inverse(FFT_SIZE);
 
-    let mut prev_phase = vec![0.0f32; n_bins];
-    let mut synth_phase = vec![0.0f32; n_bins];
     let mut output = vec![0.0f32; out_len];
     let mut window_sum = vec![0.0f32; out_len];
 
@@ -67,7 +84,7 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
 
     // Per-frame scratch for analysis
     let mut mag = vec![0.0f32; n_bins];
-    let mut inst_freq = vec![0.0f32; n_bins];
+    let mut phase = vec![0.0f32; n_bins];
 
     for frame in 0..n_frames {
         let offset = frame * HOP;
@@ -83,53 +100,42 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         // Forward FFT
         fft_forward.process(&mut fft_in, &mut spectrum).unwrap();
 
-        // Analyze: extract magnitude and instantaneous frequency per bin
+        // Extract magnitude and phase per bin
         for k in 0..n_bins {
             let re = spectrum[k].re;
             let im = spectrum[k].im;
             mag[k] = (re * re + im * im).sqrt();
-            let phase = im.atan2(re);
-
-            // Expected phase advance for this hop
-            let expected = 2.0 * PI * k as f32 * hop_f / fft_f;
-            let delta = phase - prev_phase[k] - expected;
-
-            // Wrap to [-pi, pi]
-            let wrapped = delta - (2.0 * PI) * ((delta + PI) / (2.0 * PI)).floor();
-
-            // Instantaneous frequency as phase advance per hop
-            inst_freq[k] = expected + wrapped;
-
-            prev_phase[k] = phase;
+            phase[k] = im.atan2(re);
         }
 
-        // Shift bins: for each output bin j, read from source bin j / pitch_factor
-        // and scale the instantaneous frequency by pitch_factor
+        // Shift bins: for each output bin j, read from source bin j / pitch_factor.
+        // Use source phase scaled by pitch_factor — this preserves the phase
+        // relationship proportional to the frequency shift and is stateless
+        // (no accumulator that drifts across streaming chunks).
         for j in 0..n_bins {
             let source = j as f32 / pitch_factor;
             let s_idx = source as usize;
             let s_frac = source - s_idx as f32;
 
-            let (m, freq) = if s_idx + 1 < n_bins {
-                // Linear interpolation between adjacent source bins
+            let (m, src_phase) = if s_idx + 1 < n_bins {
+                // Interpolate magnitude; take nearest bin phase (avoids wrapping issues)
                 (
                     mag[s_idx] * (1.0 - s_frac) + mag[s_idx + 1] * s_frac,
-                    (inst_freq[s_idx] * (1.0 - s_frac) + inst_freq[s_idx + 1] * s_frac)
-                        * pitch_factor,
+                    if s_frac < 0.5 { phase[s_idx] } else { phase[s_idx + 1] },
                 )
             } else if s_idx < n_bins {
-                (mag[s_idx] * (1.0 - s_frac), inst_freq[s_idx] * pitch_factor)
+                (mag[s_idx] * (1.0 - s_frac), phase[s_idx])
             } else {
-                // Source beyond Nyquist — zero
                 (0.0, 0.0)
             };
 
-            // Accumulate synthesis phase
-            synth_phase[j] += freq;
+            // Scale source phase by pitch_factor: a tone at bin s with phase φ
+            // maps to bin j = s * pitch_factor with phase φ * pitch_factor,
+            // preserving the phase-frequency relationship.
+            let out_phase = src_phase * pitch_factor;
 
-            // Reconstruct bin with shifted magnitude and accumulated phase
-            spectrum[j].re = m * synth_phase[j].cos();
-            spectrum[j].im = m * synth_phase[j].sin();
+            spectrum[j].re = m * out_phase.cos();
+            spectrum[j].im = m * out_phase.sin();
         }
 
         // DC and Nyquist bins must be real for realfft inverse
@@ -158,9 +164,16 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         }
     }
 
-    // Truncate to input length
-    output.truncate(samples.len());
-    while output.len() < samples.len() {
+    // Fade in over the first HOP samples to avoid onset click from incomplete
+    // window overlap at the start of each chunk
+    let fade_len = HOP.min(out_len);
+    for i in 0..fade_len {
+        output[i] *= i as f32 / fade_len as f32;
+    }
+
+    // Truncate to original input length
+    output.truncate(original_len);
+    while output.len() < original_len {
         output.push(0.0);
     }
     output
