@@ -1,12 +1,14 @@
 use realfft::RealFftPlanner;
-use std::f64::consts::PI;
-
-use super::pitch_shift::{resample_compress, resample_stretch};
+use std::f32::consts::PI;
 
 const FFT_SIZE: usize = 4096;
 const HOP: usize = 1024; // 75% overlap
 
-/// Phase-vocoder pitch shift: time-stretch via STFT then resample to restore duration.
+/// Phase-vocoder pitch shift via direct spectral bin shifting.
+///
+/// Shifts frequency content by remapping STFT bins each frame, with phase-locked
+/// accumulation for smooth resynthesis. Output is same length as input — no
+/// time-stretching or resampling needed.
 ///
 /// - `factor > 1.0`: shift DOWN (divide frequencies). E.g. factor=10 shifts 50 kHz → 5 kHz.
 /// - `factor < -1.0`: shift UP (multiply frequencies). E.g. factor=-10 shifts 5 Hz → 50 Hz.
@@ -16,157 +18,152 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         return Vec::new();
     }
 
-    let abs_factor = factor.abs();
+    let abs_factor = factor.abs() as f32;
     if abs_factor <= 1.0 {
         return samples.to_vec();
     }
 
-    let shift_up = factor < 0.0;
+    // pitch_factor: multiply frequencies by this amount
+    // shift_down factor=10 → pitch_factor = 0.1 (divide freq by 10)
+    // shift_up factor=-10 → pitch_factor = 10 (multiply freq by 10)
+    let pitch_factor = if factor < 0.0 { abs_factor } else { 1.0 / abs_factor };
 
-    // Pitch ratio: how much to multiply frequencies by.
-    // shift_down factor=10 → pitch_ratio = 1/10 (lower pitch)
-    // shift_up factor=-10 → pitch_ratio = 10 (higher pitch)
-    let pitch_ratio = if shift_up { abs_factor } else { 1.0 / abs_factor };
-
-    // Time-stretch ratio: stretch duration by 1/pitch_ratio so that
-    // resampling back to original length achieves the desired pitch shift.
-    let stretch_ratio = 1.0 / pitch_ratio;
-
-    // Step 1: time-stretch using phase vocoder STFT
-    let stretched = phase_vocoder_stretch(samples, stretch_ratio);
-
-    // Step 2: resample back to original length
-    let target_len = samples.len();
-    let resample_ratio = target_len as f64 / stretched.len() as f64;
-
-    let resampled = if resample_ratio > 1.0 {
-        // stretched is shorter → stretch it
-        resample_stretch(&stretched, resample_ratio)
-    } else if resample_ratio < 1.0 {
-        // stretched is longer → compress it
-        resample_compress(&stretched, 1.0 / resample_ratio)
-    } else {
-        stretched
-    };
-
-    // Trim or pad to exact target length
-    let mut output = resampled;
-    output.truncate(target_len);
-    while output.len() < target_len {
-        output.push(0.0);
-    }
-    output
-}
-
-/// Time-stretch audio by `ratio` using phase vocoder STFT.
-/// ratio > 1.0 = longer output (slower), ratio < 1.0 = shorter output (faster).
-fn phase_vocoder_stretch(samples: &[f32], ratio: f64) -> Vec<f32> {
     if samples.len() < FFT_SIZE {
-        // Too short for STFT — just repeat/truncate
-        let out_len = (samples.len() as f64 * ratio).round() as usize;
-        return resample_stretch(samples, ratio).into_iter().take(out_len.max(1)).collect();
+        return samples.to_vec();
     }
 
     let n_bins = FFT_SIZE / 2 + 1;
-    let synthesis_hop = (HOP as f64 * ratio).round() as usize;
-    let synthesis_hop = synthesis_hop.max(1);
+    let hop_f = HOP as f32;
+    let fft_f = FFT_SIZE as f32;
 
-    // Count analysis frames
     let n_frames = (samples.len().saturating_sub(FFT_SIZE)) / HOP + 1;
     if n_frames == 0 {
         return samples.to_vec();
     }
 
-    let out_len = (n_frames - 1) * synthesis_hop + FFT_SIZE;
+    let out_len = (n_frames - 1) * HOP + FFT_SIZE;
 
     // Hann window
-    let hann: Vec<f64> = (0..FFT_SIZE)
+    let hann: Vec<f32> = (0..FFT_SIZE)
         .map(|i| {
-            let x = PI * i as f64 / FFT_SIZE as f64;
+            let x = PI * i as f32 / fft_f;
             x.sin().powi(2)
         })
         .collect();
 
     // Set up FFT
-    let mut planner = RealFftPlanner::<f64>::new();
+    let mut planner = RealFftPlanner::<f32>::new();
     let fft_forward = planner.plan_fft_forward(FFT_SIZE);
     let fft_inverse = planner.plan_fft_inverse(FFT_SIZE);
 
-    let mut prev_phase = vec![0.0f64; n_bins];
-    let mut synth_phase = vec![0.0f64; n_bins];
-    let mut output = vec![0.0f64; out_len];
-    let mut window_sum = vec![0.0f64; out_len];
+    let mut prev_phase = vec![0.0f32; n_bins];
+    let mut synth_phase = vec![0.0f32; n_bins];
+    let mut output = vec![0.0f32; out_len];
+    let mut window_sum = vec![0.0f32; out_len];
 
-    let mut fft_in = vec![0.0f64; FFT_SIZE];
+    let mut fft_in = vec![0.0f32; FFT_SIZE];
     let mut spectrum = fft_forward.make_output_vec();
-    let mut ifft_out = vec![0.0f64; FFT_SIZE];
+    let mut ifft_out = vec![0.0f32; FFT_SIZE];
+
+    // Per-frame scratch for analysis
+    let mut mag = vec![0.0f32; n_bins];
+    let mut inst_freq = vec![0.0f32; n_bins];
 
     for frame in 0..n_frames {
         let offset = frame * HOP;
+        if offset + FFT_SIZE > samples.len() {
+            break;
+        }
 
         // Window the input frame
         for i in 0..FFT_SIZE {
-            fft_in[i] = samples[offset + i] as f64 * hann[i];
+            fft_in[i] = samples[offset + i] * hann[i];
         }
 
         // Forward FFT
         fft_forward.process(&mut fft_in, &mut spectrum).unwrap();
 
-        // Phase processing
+        // Analyze: extract magnitude and instantaneous frequency per bin
         for k in 0..n_bins {
             let re = spectrum[k].re;
             let im = spectrum[k].im;
-            let mag = (re * re + im * im).sqrt();
+            mag[k] = (re * re + im * im).sqrt();
             let phase = im.atan2(re);
 
-            // Phase difference from previous frame
-            let expected_phase_advance = 2.0 * PI * k as f64 * HOP as f64 / FFT_SIZE as f64;
-            let delta_phase = phase - prev_phase[k] - expected_phase_advance;
+            // Expected phase advance for this hop
+            let expected = 2.0 * PI * k as f32 * hop_f / fft_f;
+            let delta = phase - prev_phase[k] - expected;
 
             // Wrap to [-pi, pi]
-            let wrapped = delta_phase - (2.0 * PI) * ((delta_phase + PI) / (2.0 * PI)).floor();
+            let wrapped = delta - (2.0 * PI) * ((delta + PI) / (2.0 * PI)).floor();
 
-            // True frequency deviation
-            let true_freq = expected_phase_advance + wrapped;
-
-            // Accumulate synthesis phase at the new hop rate
-            synth_phase[k] += true_freq * (synthesis_hop as f64 / HOP as f64);
-
-            // Reconstruct bin
-            spectrum[k].re = mag * synth_phase[k].cos();
-            spectrum[k].im = mag * synth_phase[k].sin();
+            // Instantaneous frequency as phase advance per hop
+            inst_freq[k] = expected + wrapped;
 
             prev_phase[k] = phase;
         }
 
+        // Shift bins: for each output bin j, read from source bin j / pitch_factor
+        // and scale the instantaneous frequency by pitch_factor
+        for j in 0..n_bins {
+            let source = j as f32 / pitch_factor;
+            let s_idx = source as usize;
+            let s_frac = source - s_idx as f32;
+
+            let (m, freq) = if s_idx + 1 < n_bins {
+                // Linear interpolation between adjacent source bins
+                (
+                    mag[s_idx] * (1.0 - s_frac) + mag[s_idx + 1] * s_frac,
+                    (inst_freq[s_idx] * (1.0 - s_frac) + inst_freq[s_idx + 1] * s_frac)
+                        * pitch_factor,
+                )
+            } else if s_idx < n_bins {
+                (mag[s_idx] * (1.0 - s_frac), inst_freq[s_idx] * pitch_factor)
+            } else {
+                // Source beyond Nyquist — zero
+                (0.0, 0.0)
+            };
+
+            // Accumulate synthesis phase
+            synth_phase[j] += freq;
+
+            // Reconstruct bin with shifted magnitude and accumulated phase
+            spectrum[j].re = m * synth_phase[j].cos();
+            spectrum[j].im = m * synth_phase[j].sin();
+        }
+
+        // DC and Nyquist bins must be real for realfft inverse
+        spectrum[0].im = 0.0;
+        spectrum[n_bins - 1].im = 0.0;
+
         // Inverse FFT
         fft_inverse.process(&mut spectrum, &mut ifft_out).unwrap();
 
-        // Normalize inverse FFT (realfft doesn't normalize)
-        let norm = 1.0 / FFT_SIZE as f64;
-
-        // Overlap-add at synthesis position
-        let out_offset = frame * synthesis_hop;
+        // Normalize + overlap-add
+        let norm = 1.0 / fft_f;
+        let out_offset = frame * HOP;
         for i in 0..FFT_SIZE {
-            if out_offset + i < out_len {
-                output[out_offset + i] += ifft_out[i] * norm * hann[i];
-                window_sum[out_offset + i] += hann[i] * hann[i];
+            let j = out_offset + i;
+            if j < out_len {
+                output[j] += ifft_out[i] * norm * hann[i];
+                window_sum[j] += hann[i] * hann[i];
             }
         }
     }
 
     // Normalize by window overlap sum
+    for i in 0..out_len {
+        if window_sum[i] > 1e-6 {
+            output[i] /= window_sum[i];
+        }
+    }
+
+    // Truncate to input length
+    output.truncate(samples.len());
+    while output.len() < samples.len() {
+        output.push(0.0);
+    }
     output
-        .iter()
-        .zip(window_sum.iter())
-        .map(|(&s, &w)| {
-            if w > 1e-6 {
-                (s / w) as f32
-            } else {
-                0.0f32
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -201,10 +198,24 @@ mod tests {
     }
 
     #[test]
-    fn test_stretch_longer() {
-        let input: Vec<f32> = (0..8192).map(|i| (i as f32 * 0.01).sin()).collect();
-        let stretched = phase_vocoder_stretch(&input, 2.0);
-        // Should be roughly 2x as long
-        assert!(stretched.len() > input.len());
+    fn test_nonzero_output_down() {
+        // 40 kHz tone at 192 kHz sample rate, shifted down by 10
+        let sr = 192000.0f32;
+        let freq = 40000.0f32;
+        let n = 16384;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * PI * freq * i as f32 / sr).sin())
+            .collect();
+        let output = phase_vocoder_pitch_shift(&input, 10.0);
+        let peak = output.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.01, "Output should not be silent, peak={}", peak);
+    }
+
+    #[test]
+    fn test_nonzero_output_up() {
+        let input: Vec<f32> = (0..16384).map(|i| (i as f32 * 0.01).sin()).collect();
+        let output = phase_vocoder_pitch_shift(&input, -5.0);
+        let peak = output.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.01, "Output should not be silent, peak={}", peak);
     }
 }
