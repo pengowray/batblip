@@ -53,8 +53,22 @@ fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_height: u
 
     // Noise filtering: notch bands + spectral subtraction
     if show_noise {
-        // Notch bands
-        if state.notch_enabled.get_untracked() {
+        // Notch bands: check DSP filter state to determine if notch should show
+        let show_notch = {
+            let dsp_on = state.display_filter_enabled.get_untracked();
+            if dsp_on {
+                // DSP panel controls notch display
+                match state.display_filter_notch.get_untracked() {
+                    DisplayFilterMode::Off => false,
+                    DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch_enabled.get_untracked(),
+                    DisplayFilterMode::Custom => false,
+                }
+            } else {
+                // Legacy: notch shows when playback notch is on
+                state.notch_enabled.get_untracked()
+            }
+        };
+        if show_notch {
             let bands = state.notch_bands.get_untracked();
             let harm_supp = state.notch_harmonic_suppression.get_untracked();
             for row in 0..tile_height {
@@ -371,6 +385,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _dsp_nr_strength = state.display_nr_strength.get();
         let _dsp_gain_db = state.display_custom_gain_db.get();
         let _dsp_auto_floor = state.display_auto_noise_floor.get();
+        let _dsp_transform = state.display_transform.get();
         let annotation_store = state.annotation_store.get();
         let selected_annotation = state.selected_annotation_id.get();
         let _pre = pre_rendered.track();

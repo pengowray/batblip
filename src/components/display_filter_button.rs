@@ -230,14 +230,24 @@ pub fn DisplayFilterButton() -> impl IntoView {
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             if let Ok(v) = input.value().parse::<f32>() {
                                 state.spect_gain_db.set(v);
+                                // Switch to Custom gain when user touches the slider
+                                if state.display_filter_enabled.get_untracked() {
+                                    state.display_filter_gain.set(DisplayFilterMode::Custom);
+                                }
                                 state.display_auto_gain.set(false);
                             }
                         }
                         on:dblclick=move |_| state.spect_gain_db.set(0.0)
                     />
                     <span class="dsp-custom-value">{move || {
-                        if state.display_auto_gain.get() {
+                        let dsp_on = state.display_filter_enabled.get();
+                        let gain_mode = state.display_filter_gain.get();
+                        if dsp_on && gain_mode == DisplayFilterMode::Off {
+                            "off".to_string()
+                        } else if state.display_auto_gain.get() {
                             "auto".to_string()
+                        } else if dsp_on && gain_mode == DisplayFilterMode::Same {
+                            "same".to_string()
                         } else {
                             format!("{:+.0} dB", state.spect_gain_db.get())
                         }
@@ -298,6 +308,14 @@ pub fn DisplayFilterButton() -> impl IntoView {
                             state.display_auto_gain.set(false);
                             state.display_eq.set(false);
                             state.display_noise_filter.set(false);
+                            // Reset DSP filter modes to defaults
+                            state.display_filter_eq.set(DisplayFilterMode::Off);
+                            state.display_filter_notch.set(DisplayFilterMode::Off);
+                            state.display_filter_nr.set(DisplayFilterMode::Auto);
+                            state.display_filter_transform.set(DisplayFilterMode::Off);
+                            state.display_filter_gain.set(DisplayFilterMode::Auto);
+                            state.display_nr_strength.set(0.8);
+                            state.display_custom_gain_db.set(0.0);
                         }
                     >"Reset"</button>
                 </div>

@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, DisplayFilterMode, FileSettings, GainMode, LayerPanel, MainView, MicMode, PlayStartMode, SpectrogramDisplay};
+use crate::state::{AppState, DisplayFilterMode, FileSettings, GainMode, LayerPanel, MainView, MicMode, PlayStartMode, PlaybackMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -224,7 +224,7 @@ pub fn App() -> impl IntoView {
         // EQ
         let eq_on = match state.display_filter_eq.get() {
             DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => true,
+            DisplayFilterMode::Auto => state.filter_enabled.get(), // auto = show if playback EQ is on
             DisplayFilterMode::Same => state.filter_enabled.get(),
             DisplayFilterMode::Custom => false, // not yet implemented
         };
@@ -239,20 +239,34 @@ pub fn App() -> impl IntoView {
         // Also consider notch
         let notch_on = match state.display_filter_notch.get() {
             DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => true,
+            DisplayFilterMode::Auto => state.notch_enabled.get(), // auto = show if playback notch is on
             DisplayFilterMode::Same => state.notch_enabled.get(),
             DisplayFilterMode::Custom => false,
         };
         state.display_noise_filter.set(nr_on || notch_on);
+
+        // Transform
+        let xform_on = match state.display_filter_transform.get() {
+            DisplayFilterMode::Off => false,
+            DisplayFilterMode::Auto => false, // auto = off for transform
+            DisplayFilterMode::Same => state.playback_mode.get() != PlaybackMode::Normal,
+            DisplayFilterMode::Custom => false, // not yet implemented
+        };
+        state.display_transform.set(xform_on);
 
         // Gain
         let gain_auto = match state.display_filter_gain.get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto => true,
             DisplayFilterMode::Same => matches!(state.gain_mode.get(), GainMode::AutoPeak | GainMode::Adaptive),
-            DisplayFilterMode::Custom => true,
+            DisplayFilterMode::Custom => false, // manual slider control
         };
         state.display_auto_gain.set(gain_auto);
+
+        // When Gain is Off, zero out the display gain offset
+        if state.display_filter_gain.get() == DisplayFilterMode::Off {
+            state.spect_gain_db.set(0.0);
+        }
     });
 
     // Auto-learn display noise floor when NR is Auto/Custom and a file is loaded.
