@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, DisplayFilterMode, FileSettings, GainMode, LayerPanel, MainView, MicMode, PlayStartMode, PlaybackMode, SpectrogramDisplay};
+use crate::state::{AppState, DisplayFilterMode, FftMode, FileSettings, GainMode, LayerPanel, MainView, MicMode, PlayStartMode, PlaybackMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -840,6 +840,63 @@ fn MainViewButton() -> impl IntoView {
                     </button>
                 }
             }).collect_view()}
+            // FFT size selector (when Spectrogram is active)
+            {move || (state.main_view.get() == MainView::Spectrogram).then(|| {
+                view! {
+                    <hr />
+                    <div class="layer-panel-title">"FFT Size"</div>
+                    <select
+                        class="setting-select"
+                        style="margin: 4px 8px; width: calc(100% - 16px);"
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                            let val = select.value();
+                            let mode = match val.as_str() {
+                                "a512" => FftMode::Adaptive(512),
+                                "a1024" => FftMode::Adaptive(1024),
+                                "a2048" => FftMode::Adaptive(2048),
+                                _ => {
+                                    if let Ok(v) = val.parse::<usize>() {
+                                        FftMode::Single(v)
+                                    } else {
+                                        return;
+                                    }
+                                }
+                            };
+                            state.spect_fft_mode.set(mode);
+                        }
+                    >
+                        {move || {
+                            let current = state.spect_fft_mode.get();
+                            let options: [(&str, &str); 10] = [
+                                ("128", "128"),
+                                ("256", "256"),
+                                ("512", "512"),
+                                ("1024", "1024"),
+                                ("2048", "2048"),
+                                ("4096", "4096"),
+                                ("8192", "8192"),
+                                ("a512", "Adaptive 512"),
+                                ("a1024", "Adaptive 1024"),
+                                ("a2048", "Adaptive 2048"),
+                            ];
+                            options.into_iter().map(|(value, label)| {
+                                let is_selected = match (value, current) {
+                                    ("a512", FftMode::Adaptive(512)) => true,
+                                    ("a1024", FftMode::Adaptive(1024)) => true,
+                                    ("a2048", FftMode::Adaptive(2048)) => true,
+                                    (v, FftMode::Single(sz)) => v.parse::<usize>().ok() == Some(sz),
+                                    _ => false,
+                                };
+                                let v = value.to_string();
+                                let l = label.to_string();
+                                view! { <option value={v} selected=move || is_selected>{l}</option> }
+                            }).collect::<Vec<_>>()
+                        }}
+                    </select>
+                }
+            })}
             // Flow algorithm options (when Flow is active)
             {move || (state.main_view.get() == MainView::Flow).then(|| {
                 view! {
