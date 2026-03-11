@@ -2390,7 +2390,7 @@ pub fn draw_tile_debug_overlay(
 pub fn draw_annotations(
     ctx: &web_sys::CanvasRenderingContext2d,
     annotation_set: &crate::annotations::AnnotationSet,
-    selected_id: Option<&str>,
+    selected_ids: &[String],
     min_freq: f64,
     max_freq: f64,
     scroll_offset: f64,
@@ -2432,7 +2432,7 @@ pub fn draw_annotations(
             _ => (0.0, canvas_height),
         };
 
-        let is_selected = selected_id == Some(annotation.id.as_str());
+        let is_selected = selected_ids.contains(&annotation.id);
 
         // Fill
         let fill_color = if is_selected {

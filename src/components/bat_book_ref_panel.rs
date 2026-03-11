@@ -109,6 +109,18 @@ pub fn BatBookRefPanel() -> impl IntoView {
                         }
                     }}
                 </span>
+                <label style="font-size: 10px; display: flex; align-items: center; gap: 3px; cursor: pointer; margin-right: 4px; opacity: 0.7;"
+                    title="When enabled, selecting a bat book entry sets the frequency focus"
+                >
+                    <input type="checkbox"
+                        prop:checked=move || state.bat_book_auto_focus.get()
+                        on:change=move |ev| {
+                            let checked = leptos::prelude::event_target_checked(&ev);
+                            state.bat_book_auto_focus.set(checked);
+                        }
+                    />
+                    "Auto-focus"
+                </label>
                 <button class="ref-panel-close" on:click=on_close title="Close">
                     "\u{00d7}"
                 </button>

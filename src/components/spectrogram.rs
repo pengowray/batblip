@@ -412,7 +412,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _dsp_transform = state.display_transform.get();
         let _dsp_decimate = state.display_decimate_effective.get();
         let annotation_store = state.annotation_store.get();
-        let selected_annotation = state.selected_annotation_id.get();
+        let selected_annotation_ids = state.selected_annotation_ids.get();
         let _pre = pre_rendered.track();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -983,7 +983,7 @@ pub fn Spectrogram() -> impl IntoView {
                     spectrogram_renderer::draw_annotations(
                         &ctx,
                         set,
-                        selected_annotation.as_deref(),
+                        &selected_annotation_ids,
                         min_freq,
                         max_freq,
                         scroll,

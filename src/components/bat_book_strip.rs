@@ -201,7 +201,7 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
                 state.bat_book_ref_open.set(false);
                 state.bat_book_last_clicked_id.set(None);
                 state.pop_bat_book_ff();
-            } else {
+            } else if state.bat_book_auto_focus.get_untracked() {
                 // Recalculate combined range
                 apply_bat_book_ff(&state);
             }
@@ -256,7 +256,9 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
 
         state.bat_book_last_clicked_id.set(Some(eid));
         state.bat_book_ref_open.set(true);
-        apply_bat_book_ff(&state);
+        if state.bat_book_auto_focus.get_untracked() {
+            apply_bat_book_ff(&state);
+        }
     };
 
     let class = move || {

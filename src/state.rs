@@ -813,7 +813,13 @@ pub struct AppState {
     // Annotations
     pub annotation_store: RwSignal<AnnotationStore>,
     pub annotations_dirty: RwSignal<bool>,
-    pub selected_annotation_id: RwSignal<Option<AnnotationId>>,
+    pub selected_annotation_ids: RwSignal<Vec<AnnotationId>>,
+    /// Anchor for shift-click range selection in annotation tree.
+    pub last_clicked_annotation_id: RwSignal<Option<AnnotationId>>,
+    /// When true, clicking an annotation pushes its frequency focus override.
+    pub annotation_auto_focus: RwSignal<bool>,
+    /// When true, export uses each region's own freq bounds for DSP; when false, uses global HFR.
+    pub export_use_region_focus: RwSignal<bool>,
     /// Id of annotation currently being dragged in the sidebar tree.
     pub dragging_annotation_id: RwSignal<Option<AnnotationId>>,
     /// Drop target: (target_id, position) where position is "before", "after", or "inside" (for groups).
@@ -868,7 +874,8 @@ pub struct AppState {
     // (bat_book_saved_* signals removed — now in FocusStack)
     /// Last-clicked bat book entry ID, used for shift-click range selection.
     pub bat_book_last_clicked_id: RwSignal<Option<String>>,
-    // (bat_book_hfr_suppressed removed — now handled by FocusStack)
+    /// When true, selecting bat book entries pushes their frequency focus override.
+    pub bat_book_auto_focus: RwSignal<bool>,
 
     // Timeline display: show wall-clock time instead of file-relative time
     pub show_clock_time: RwSignal<bool>,
@@ -1057,7 +1064,10 @@ impl AppState {
 
             annotation_store: RwSignal::new(AnnotationStore::default()),
             annotations_dirty: RwSignal::new(false),
-            selected_annotation_id: RwSignal::new(None),
+            selected_annotation_ids: RwSignal::new(Vec::new()),
+            last_clicked_annotation_id: RwSignal::new(None),
+            annotation_auto_focus: RwSignal::new(true),
+            export_use_region_focus: RwSignal::new(true),
             dragging_annotation_id: RwSignal::new(None),
             drop_target: RwSignal::new(None),
             undo_stack: RwSignal::new(UndoStack::default()),
@@ -1093,6 +1103,7 @@ impl AppState {
             bat_book_selected_ids: RwSignal::new(Vec::new()),
             bat_book_ref_open: RwSignal::new(false),
             bat_book_last_clicked_id: RwSignal::new(None),
+            bat_book_auto_focus: RwSignal::new(true),
             show_clock_time: RwSignal::new(false),
             focus_stack: RwSignal::new(crate::focus_stack::FocusStack::new()),
         };
@@ -1103,6 +1114,12 @@ impl AppState {
         }
 
         s
+    }
+
+    /// Returns the single selected annotation ID, or None if zero or multiple are selected.
+    pub fn selected_annotation_id(&self) -> Option<AnnotationId> {
+        let ids = self.selected_annotation_ids.get();
+        if ids.len() == 1 { Some(ids[0].clone()) } else { None }
     }
 
     pub fn current_file(&self) -> Option<LoadedFile> {

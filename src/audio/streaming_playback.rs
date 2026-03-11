@@ -502,7 +502,7 @@ fn compute_adaptive_gain(samples: &[f32]) -> f64 {
     (-3.0 - peak_db).clamp(0.0, 30.0)
 }
 
-fn apply_filters(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
+pub(crate) fn apply_filters(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
     let mut result = if params.filter_enabled {
         match params.filter_quality {
             FilterQuality::Fast => apply_eq_filter_fast(
@@ -558,7 +558,7 @@ fn apply_filters(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> 
     result
 }
 
-fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
+pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
     match params.mode {
         PlaybackMode::Normal => samples.to_vec(),
         PlaybackMode::Heterodyne => {

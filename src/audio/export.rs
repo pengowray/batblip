@@ -1,0 +1,293 @@
+//! WAV export: process audio regions through the DSP pipeline and download as WAV files.
+
+use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+
+use crate::annotations::{Annotation, AnnotationKind, Region};
+use crate::audio::microphone::encode_wav;
+use crate::audio::playback::snapshot_params;
+use crate::audio::source::{AudioSource, ChannelView};
+use crate::audio::streaming_playback::{apply_dsp_mode, apply_filters, PlaybackParams};
+use crate::audio::playback::apply_gain;
+use crate::state::{AppState, PlaybackMode, Selection};
+
+/// Number of source samples per export chunk (same as streaming playback).
+const CHUNK_SAMPLES: usize = 96_000;
+
+/// Extra overlap samples prepended for IIR filter warmup.
+const FILTER_WARMUP: usize = 4096;
+
+/// Build PlaybackParams for exporting a region.
+/// When `use_region_focus` is true and the region has frequency bounds,
+/// those bounds drive the selection-based bandpass/heterodyne.
+fn build_export_params(
+    state: &AppState,
+    region: Option<&Region>,
+    use_region_focus: bool,
+    sample_rate: u32,
+) -> PlaybackParams {
+    let selection = if use_region_focus {
+        region.and_then(|r| {
+            match (r.freq_low, r.freq_high) {
+                (Some(lo), Some(hi)) => Some(Selection {
+                    time_start: r.time_start,
+                    time_end: r.time_end,
+                    freq_low: Some(lo),
+                    freq_high: Some(hi),
+                }),
+                _ => None,
+            }
+        })
+    } else {
+        state.selection.get_untracked()
+    };
+    snapshot_params(state, selection, sample_rate)
+}
+
+/// Process a time range through the DSP pipeline and return processed f32 samples.
+fn process_region(
+    source: &dyn AudioSource,
+    sample_rate: u32,
+    start_time: f64,
+    end_time: f64,
+    params: &PlaybackParams,
+) -> Vec<f32> {
+    let start_sample = (start_time * sample_rate as f64) as usize;
+    let end_sample = ((end_time * sample_rate as f64) as usize).min(source.total_samples() as usize);
+
+    let mut all_samples: Vec<f32> = Vec::new();
+    let mut pos = start_sample;
+
+    while pos < end_sample {
+        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
+        let warmup_start = if pos > start_sample {
+            pos.saturating_sub(FILTER_WARMUP)
+        } else {
+            pos
+        };
+        let warmup_len = pos - warmup_start;
+
+        let chunk_with_warmup = source.read_region(
+            ChannelView::MonoMix,
+            warmup_start as u64,
+            chunk_end - warmup_start,
+        );
+        let filtered = apply_filters(&chunk_with_warmup, sample_rate, params);
+        let processed = apply_dsp_mode(&filtered, sample_rate, params);
+
+        // Trim warmup
+        let trimmed = if warmup_len < processed.len() {
+            &processed[warmup_len..]
+        } else {
+            &processed[..]
+        };
+
+        all_samples.extend_from_slice(trimmed);
+        pos = chunk_end;
+    }
+
+    // Apply gain
+    let gain_db = params.gain_db;
+    apply_gain(&mut all_samples, gain_db);
+
+    all_samples
+}
+
+/// Trigger a browser download of raw bytes.
+fn trigger_browser_download(data: &[u8], filename: &str) {
+    let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
+    array.copy_from(data);
+
+    let parts = js_sys::Array::new();
+    parts.push(&array.buffer());
+
+    let blob = match web_sys::Blob::new_with_u8_array_sequence(&parts) {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("Failed to create Blob: {:?}", e);
+            return;
+        }
+    };
+
+    let url = match web_sys::Url::create_object_url_with_blob(&blob) {
+        Ok(u) => u,
+        Err(e) => {
+            log::error!("Failed to create object URL: {:?}", e);
+            return;
+        }
+    };
+
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let a: web_sys::HtmlAnchorElement = document
+        .create_element("a").unwrap()
+        .dyn_into().unwrap();
+    a.set_href(&url);
+    a.set_download(filename);
+    a.set_attribute("style", "display:none").ok();
+    document.body().unwrap().append_child(&a).ok();
+    a.click();
+    document.body().unwrap().remove_child(&a).ok();
+    web_sys::Url::revoke_object_url(&url).ok();
+}
+
+/// Export a single region as a WAV file and trigger browser download.
+pub(crate) fn export_one_region(
+    source: &dyn AudioSource,
+    sample_rate: u32,
+    start_time: f64,
+    end_time: f64,
+    params: &PlaybackParams,
+    filename: &str,
+) {
+    let samples = process_region(source, sample_rate, start_time, end_time, params);
+
+    // Determine output sample rate — TimeExpansion slows playback by changing rate
+    let output_rate = match params.mode {
+        PlaybackMode::TimeExpansion => {
+            let te = params.te_factor;
+            (sample_rate as f64 / te) as u32
+        }
+        _ => sample_rate,
+    };
+
+    let wav_data = encode_wav(&samples, output_rate);
+    trigger_browser_download(&wav_data, filename);
+}
+
+/// Information about what will be exported, used for button text.
+pub struct ExportInfo {
+    pub count: usize,
+    pub source_label: &'static str, // "selection" or "region" or "regions"
+    pub mode_label: Option<String>,  // e.g. "TE 10x", "HFR", etc.
+}
+
+/// Determine what will be exported and return info for the button label.
+pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
+    let selected_ids = state.selected_annotation_ids.get();
+    let selection = state.selection.get();
+
+    // Count selected annotations that are regions/segments (have time bounds)
+    let region_count = if !selected_ids.is_empty() {
+        if let Some(idx) = state.current_file_index.get() {
+            let store = state.annotation_store.get();
+            if let Some(Some(set)) = store.sets.get(idx) {
+                set.annotations.iter()
+                    .filter(|a| selected_ids.contains(&a.id))
+                    .filter(|a| matches!(a.kind, AnnotationKind::Region(_)))
+                    .count()
+            } else { 0 }
+        } else { 0 }
+    } else { 0 };
+
+    let (count, source_label) = if region_count > 0 {
+        let label = if region_count == 1 { "region" } else { "regions" };
+        (region_count, label)
+    } else if selection.is_some() {
+        (1, "selection")
+    } else {
+        return None;
+    };
+
+    // Build mode label
+    let mode = state.playback_mode.get();
+    let hfr = state.hfr_enabled.get();
+    let mode_label = match mode {
+        PlaybackMode::Normal if hfr => Some("HFR".to_string()),
+        PlaybackMode::TimeExpansion => {
+            let te = state.te_factor.get();
+            Some(format!("TE {te}x"))
+        }
+        PlaybackMode::PitchShift => Some("pitch shift".to_string()),
+        PlaybackMode::PhaseVocoder => Some("PV".to_string()),
+        PlaybackMode::Heterodyne => Some("heterodyne".to_string()),
+        PlaybackMode::ZeroCrossing => Some("ZC".to_string()),
+        _ => None,
+    };
+
+    Some(ExportInfo { count, source_label, mode_label })
+}
+
+/// Get the list of selected Region annotations.
+pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
+    let selected_ids = state.selected_annotation_ids.get_untracked();
+    if selected_ids.is_empty() {
+        return Vec::new();
+    }
+    let idx = match state.current_file_index.get_untracked() {
+        Some(i) => i,
+        None => return Vec::new(),
+    };
+    let store = state.annotation_store.get_untracked();
+    let set = match store.sets.get(idx).and_then(|s| s.as_ref()) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    set.annotations.iter()
+        .filter(|a| selected_ids.contains(&a.id))
+        .filter_map(|a| {
+            if let AnnotationKind::Region(ref r) = a.kind {
+                Some((a.clone(), r.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Export all selected regions (or current selection) as WAV files.
+pub fn export_selected(state: &AppState) {
+    let file = match state.current_file() {
+        Some(f) => f,
+        None => return,
+    };
+    let source = &file.audio.source;
+    let sample_rate = file.audio.sample_rate;
+    let use_region_focus = state.export_use_region_focus.get_untracked();
+
+    // Strip extension from source filename for export naming
+    let base_name = file.name.trim_end_matches(".wav")
+        .trim_end_matches(".WAV")
+        .trim_end_matches(".flac")
+        .trim_end_matches(".FLAC")
+        .trim_end_matches(".ogg")
+        .trim_end_matches(".OGG")
+        .trim_end_matches(".mp3")
+        .trim_end_matches(".MP3");
+
+    let regions = get_selected_regions(state);
+
+    if !regions.is_empty() {
+        // Export selected annotation regions
+        for (i, (_annotation, region)) in regions.iter().enumerate() {
+            let params = build_export_params(state, Some(region), use_region_focus, sample_rate);
+            let label = region.label.as_deref()
+                .or_else(|| if regions.len() > 1 { None } else { Some("") });
+            let suffix = match label {
+                Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
+                _ => {
+                    if regions.len() > 1 {
+                        format!("_{}", i + 1)
+                    } else {
+                        String::new()
+                    }
+                }
+            };
+            let filename = format!("{base_name}{suffix}.wav");
+            export_one_region(
+                source.as_ref(), sample_rate,
+                region.time_start, region.time_end,
+                &params, &filename,
+            );
+        }
+    } else if let Some(sel) = state.selection.get_untracked() {
+        // Export current selection
+        let params = build_export_params(state, None, false, sample_rate);
+        let filename = format!("{base_name}_selection.wav");
+        export_one_region(
+            source.as_ref(), sample_rate,
+            sel.time_start, sel.time_end,
+            &params, &filename,
+        );
+    }
+}

@@ -223,7 +223,7 @@ fn extract_selection_range(audio: &AudioData, selection: Option<Selection>) -> (
 }
 
 /// Build a PlaybackParams snapshot from current AppState.
-fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: u32) -> PlaybackParams {
+pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: u32) -> PlaybackParams {
     PlaybackParams {
         mode: state.playback_mode.get_untracked(),
         het_freq: state.het_frequency.get_untracked(),

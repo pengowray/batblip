@@ -761,6 +761,11 @@ body.sidebar-resizing {
     border: 1px solid rgba(80, 160, 255, 0.25);
     white-space: nowrap;
     line-height: 1.4;
+    cursor: pointer;
+}
+.annotation-tag:hover {
+    background: rgba(80, 160, 255, 0.3);
+    border-color: rgba(80, 160, 255, 0.5);
 }
 
 .setting-group {

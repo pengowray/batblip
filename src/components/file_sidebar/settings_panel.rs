@@ -503,7 +503,7 @@ fn AnnotationsList() -> impl IntoView {
     };
 
     let selected_is_group = move || {
-        let sel_id = state.selected_annotation_id.get()?;
+        let sel_id = state.selected_annotation_id()?;
         let idx = state.current_file_index.get()?;
         let store = state.annotation_store.get();
         let set = store.sets.get(idx)?.as_ref()?;
@@ -542,13 +542,59 @@ fn AnnotationsList() -> impl IntoView {
                             <button class="sidebar-btn annotation-toolbar-btn"
                                 title="Group selected"
                                 on:click=on_group
-                                disabled=move || state.selected_annotation_id.get().is_none()
+                                disabled=move || state.selected_annotation_ids.get().is_empty()
                             >"Group"</button>
                             <button class="sidebar-btn annotation-toolbar-btn"
                                 title="Ungroup"
                                 on:click=on_ungroup
                                 disabled=move || selected_is_group().is_none()
                             >"Ungroup"</button>
+                        </div>
+                        <div class="setting-row" style="gap: 4px; align-items: center;">
+                            <button
+                                class="sidebar-btn"
+                                style="flex: 1;"
+                                on:click=move |_| {
+                                    crate::audio::export::export_selected(&state);
+                                }
+                                disabled=move || crate::audio::export::get_export_info(&state).is_none()
+                            >
+                                {move || {
+                                    match crate::audio::export::get_export_info(&state) {
+                                        Some(info) => {
+                                            let mode_suffix = info.mode_label
+                                                .map(|m| format!(" ({m})"))
+                                                .unwrap_or_default();
+                                            format!("Export {} {} to .wav{}", info.count, info.source_label, mode_suffix)
+                                        }
+                                        None => "Export to .wav".to_string(),
+                                    }
+                                }}
+                            </button>
+                        </div>
+                        <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
+                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox"
+                                    prop:checked=move || state.export_use_region_focus.get()
+                                    on:change=move |ev| {
+                                        let checked = leptos::prelude::event_target_checked(&ev);
+                                        state.export_use_region_focus.set(checked);
+                                    }
+                                />
+                                "Use region frequency focus"
+                            </label>
+                        </div>
+                        <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
+                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox"
+                                    prop:checked=move || state.annotation_auto_focus.get()
+                                    on:change=move |ev| {
+                                        let checked = leptos::prelude::event_target_checked(&ev);
+                                        state.annotation_auto_focus.set(checked);
+                                    }
+                                />
+                                "Auto-focus on click"
+                            </label>
                         </div>
                     </div>
                 }.into_any()
@@ -610,21 +656,71 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
         view! {
             <div
                 class="annotation-tree-item"
-                class:annotation-selected=move || state.selected_annotation_id.get().as_deref() == Some(id_click.as_str())
+                class:annotation-selected=move || state.selected_annotation_ids.get().contains(&id_click)
                 class:annotation-drop-target=move || {
                     state.drop_target.get().as_ref().map(|(tid, _)| tid.as_str()) == Some(id_dragover.as_str())
                 }
                 class:annotation-group-item=is_group
                 style:padding-left=format!("{}px", 8 + indent_px)
                 draggable="true"
-                on:click=move |_| {
+                on:click=move |ev: web_sys::MouseEvent| {
                     let click_id = id.clone();
-                    if is_group {
+                    let ctrl = ev.ctrl_key() || ev.meta_key();
+                    let shift = ev.shift_key();
+
+                    if is_group && !ctrl && !shift {
                         toggle_group_collapsed(state, &click_id);
+                    }
+
+                    if ctrl {
+                        // Toggle this annotation in/out of selection
+                        state.selected_annotation_ids.update(|ids| {
+                            if let Some(pos) = ids.iter().position(|x| x == &click_id) {
+                                ids.remove(pos);
+                            } else {
+                                ids.push(click_id.clone());
+                            }
+                        });
+                    } else if shift {
+                        // Range select from last-clicked to this one
+                        if let Some(anchor) = state.last_clicked_annotation_id.get_untracked() {
+                            if let Some(idx) = state.current_file_index.get_untracked() {
+                                let store = state.annotation_store.get_untracked();
+                                if let Some(Some(set)) = store.sets.get(idx) {
+                                    let flat_ids: Vec<String> = set.annotations.iter().map(|a| a.id.clone()).collect();
+                                    let anchor_pos = flat_ids.iter().position(|x| x == &anchor);
+                                    let click_pos = flat_ids.iter().position(|x| x == &click_id);
+                                    if let (Some(a), Some(b)) = (anchor_pos, click_pos) {
+                                        let lo = a.min(b);
+                                        let hi = a.max(b);
+                                        let range_ids: Vec<String> = flat_ids[lo..=hi].to_vec();
+                                        if ev.ctrl_key() || ev.meta_key() {
+                                            // Add range to existing selection
+                                            state.selected_annotation_ids.update(|ids| {
+                                                for rid in &range_ids {
+                                                    if !ids.contains(rid) {
+                                                        ids.push(rid.clone());
+                                                    }
+                                                }
+                                            });
+                                        } else {
+                                            state.selected_annotation_ids.set(range_ids);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else {
+                        // Plain click: select only this one
+                        state.selected_annotation_ids.set(vec![click_id.clone()]);
+                    }
+
+                    state.last_clicked_annotation_id.set(Some(click_id.clone()));
+
+                    // Restore selection for last-clicked non-group annotation
+                    if !is_group {
                         restore_selection(state, &click_id);
                     }
-                    state.selected_annotation_id.set(Some(id.clone()));
                 }
                 on:dragstart=move |ev: web_sys::DragEvent| {
                     state.dragging_annotation_id.set(Some(id_drag.clone()));
@@ -761,7 +857,28 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                     view! {
                                         <span class="annotation-tags">
                                             {tags_pills.into_iter().map(|tag| {
-                                                view! { <span class="annotation-tag">{tag}</span> }
+                                                let tag_click = tag.clone();
+                                                let tag_title = tag.clone();
+                                                let tag_display = tag.clone();
+                                                view! {
+                                                    <span class="annotation-tag"
+                                                        title=format!("Select all with tag '{}'", tag_title)
+                                                        on:click=move |ev: web_sys::MouseEvent| {
+                                                            ev.stop_propagation();
+                                                            let target_tag = tag_click.clone();
+                                                            if let Some(idx) = state.current_file_index.get_untracked() {
+                                                                let store = state.annotation_store.get_untracked();
+                                                                if let Some(Some(set)) = store.sets.get(idx) {
+                                                                    let matching: Vec<String> = set.annotations.iter()
+                                                                        .filter(|a| a.tags.contains(&target_tag))
+                                                                        .map(|a| a.id.clone())
+                                                                        .collect();
+                                                                    state.selected_annotation_ids.set(matching);
+                                                                }
+                                                            }
+                                                        }
+                                                    >{tag_display}</span>
+                                                }
                                             }).collect_view()}
                                         </span>
                                     }.into_any()
@@ -817,10 +934,12 @@ fn restore_selection(state: AppState, annotation_id: &str) {
                         freq_low: reg.freq_low,
                         freq_high: reg.freq_high,
                     }));
-                    // Push annotation FF override if it has frequency bounds
-                    if let (Some(lo), Some(hi)) = (reg.freq_low, reg.freq_high) {
-                        if hi - lo > 100.0 {
-                            state.push_annotation_ff(lo, hi);
+                    // Push annotation FF override if it has frequency bounds and auto-focus is on
+                    if state.annotation_auto_focus.get_untracked() {
+                        if let (Some(lo), Some(hi)) = (reg.freq_low, reg.freq_high) {
+                            if hi - lo > 100.0 {
+                                state.push_annotation_ff(lo, hi);
+                            }
                         }
                     }
                     Some((reg.time_start + reg.time_end) / 2.0)
@@ -828,10 +947,12 @@ fn restore_selection(state: AppState, annotation_id: &str) {
                 AnnotationKind::Marker(m) => Some(m.time),
                 AnnotationKind::Measurement(m) => {
                     // Push annotation FF override from measurement frequency range
-                    let f_lo = m.start_freq.min(m.end_freq);
-                    let f_hi = m.start_freq.max(m.end_freq);
-                    if f_hi - f_lo > 100.0 {
-                        state.push_annotation_ff(f_lo, f_hi);
+                    if state.annotation_auto_focus.get_untracked() {
+                        let f_lo = m.start_freq.min(m.end_freq);
+                        let f_hi = m.start_freq.max(m.end_freq);
+                        if f_hi - f_lo > 100.0 {
+                            state.push_annotation_ff(f_lo, f_hi);
+                        }
                     }
                     Some((m.start_time + m.end_time) / 2.0)
                 }
@@ -883,8 +1004,9 @@ fn delete_annotation(state: AppState, annotation_id: &str) {
             set.annotations.retain(|a| a.id != annotation_id && !descendants.contains(&a.id));
         }
     });
-    if state.selected_annotation_id.get_untracked().as_deref() == Some(annotation_id) {
-        state.selected_annotation_id.set(None);
+    let was_selected = state.selected_annotation_ids.get_untracked().iter().any(|x| x == annotation_id);
+    if was_selected {
+        state.selected_annotation_ids.update(|ids| ids.retain(|x| x != annotation_id));
         state.pop_annotation_ff();
     }
     state.annotations_dirty.set(true);
@@ -947,10 +1069,8 @@ fn toggle_group_collapsed(state: AppState, annotation_id: &str) {
 }
 
 fn group_selected(state: AppState) {
-    let sel_id = match state.selected_annotation_id.get_untracked() {
-        Some(id) => id,
-        None => return,
-    };
+    let sel_ids = state.selected_annotation_ids.get_untracked();
+    if sel_ids.is_empty() { return; }
     let idx = match state.current_file_index.get_untracked() {
         Some(i) => i,
         None => return,
@@ -958,19 +1078,19 @@ fn group_selected(state: AppState) {
 
     state.snapshot_annotations();
 
-    // Create a new group and move the selected annotation into it
+    // Create a new group and move all selected annotations into it
     let group_id = generate_uuid();
     let now = now_iso8601();
 
     state.annotation_store.update(|store| {
         if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
-            // Get the selected annotation's parent and sort_order
+            // Use the first selected annotation's parent and sort_order for the group
             let (parent, order) = set.annotations.iter()
-                .find(|a| a.id == sel_id)
+                .find(|a| sel_ids.contains(&a.id))
                 .map(|a| (a.parent_id.clone(), a.sort_order))
                 .unwrap_or((None, None));
 
-            // Create group at the same level as the selected item
+            // Create group at the same level as the first selected item
             let group = Annotation {
                 id: group_id.clone(),
                 kind: AnnotationKind::Group(Group {
@@ -987,10 +1107,12 @@ fn group_selected(state: AppState) {
             };
             set.annotations.push(group);
 
-            // Move the selected annotation into the group
-            if let Some(a) = set.annotations.iter_mut().find(|a| a.id == sel_id) {
-                a.parent_id = Some(group_id.clone());
-                a.sort_order = Some(0.0);
+            // Move all selected annotations into the group
+            for (i, a) in set.annotations.iter_mut().enumerate() {
+                if sel_ids.contains(&a.id) {
+                    a.parent_id = Some(group_id.clone());
+                    a.sort_order = Some(i as f64);
+                }
             }
 
             // Renumber siblings at the old level
@@ -1000,12 +1122,12 @@ fn group_selected(state: AppState) {
             renumber_children(&mut set.annotations, parent_key.as_deref());
         }
     });
-    state.selected_annotation_id.set(Some(group_id));
+    state.selected_annotation_ids.set(vec![group_id]);
     state.annotations_dirty.set(true);
 }
 
 fn ungroup_selected(state: AppState) {
-    let group_id = match state.selected_annotation_id.get_untracked() {
+    let group_id = match state.selected_annotation_id() {
         Some(id) => id,
         None => return,
     };
@@ -1037,7 +1159,7 @@ fn ungroup_selected(state: AppState) {
             renumber_children(&mut set.annotations, group_parent.as_deref());
         }
     });
-    state.selected_annotation_id.set(None);
+    state.selected_annotation_ids.set(Vec::new());
     state.pop_annotation_ff();
     state.annotations_dirty.set(true);
 }
