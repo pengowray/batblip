@@ -480,9 +480,11 @@ pub fn Spectrogram() -> impl IntoView {
                 ColormapPreference::Greyscale => Colormap::Greyscale,
             }
         };
+        let xform_or_decim = state.display_transform.get_untracked()
+            || state.display_decimate_effective.get_untracked() > 0;
         let colormap = if flow_on {
             ColormapMode::Uniform(Colormap::Greyscale)
-        } else if hfr_enabled && ff_hi > ff_lo {
+        } else if hfr_enabled && ff_hi > ff_lo && !xform_or_decim {
             ColormapMode::HfrFocus {
                 colormap: pref_to_colormap(hfr_colormap_pref),
                 ff_lo_frac: ff_lo / file_max_freq,
