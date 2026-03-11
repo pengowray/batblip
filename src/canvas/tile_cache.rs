@@ -434,16 +434,38 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let sample_start = col_start * config_hop;
         let sample_len = TILE_COLS * config_hop + actual_fft;
 
-        // Prefetch for streaming sources
-        streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
+        // When xform is active with a DSP mode that has per-chunk edge artifacts
+        // (phase vocoder, pitch shift), read extra pre-padding samples so the
+        // transform's onset fade/warmup falls on discarded samples rather than
+        // visible tile content.
+        let xform_on = state.display_transform.get_untracked();
+        let needs_padding = xform_on && matches!(
+            state.playback_mode.get_untracked(),
+            PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift | PlaybackMode::TimeExpansion
+        );
+        // PV uses FFT_SIZE=4096, HOP=1024; fade_len=HOP. Pad by 8192 to ensure
+        // complete overlap-add warmup before the tile's actual samples begin.
+        let xform_pad = if needs_padding { 8192usize } else { 0 };
+        let padded_start = sample_start.saturating_sub(xform_pad);
+        let pre_pad_used = sample_start - padded_start;
+        let padded_len = pre_pad_used + sample_len;
 
-        let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
+        // Prefetch for streaming sources
+        streaming_source::prefetch_streaming(audio.source.as_ref(), padded_start as u64, padded_len).await;
+
+        let raw_samples = audio.source.read_region(cv, padded_start as u64, padded_len);
 
         // Apply DSP transform (heterodyne, pitch shift, etc.) when display_transform is active
-        let samples = if state.display_transform.get_untracked() {
-            apply_display_transform(&samples, audio.sample_rate, state)
+        let samples = if xform_on {
+            let transformed = apply_display_transform(&raw_samples, audio.sample_rate, state);
+            // Trim pre-padding so only the tile's actual transformed samples remain
+            if pre_pad_used > 0 && transformed.len() > pre_pad_used {
+                transformed[pre_pad_used..].to_vec()
+            } else {
+                transformed
+            }
         } else {
-            samples
+            raw_samples
         };
 
         // Apply decimation if active — produces fewer samples, so STFT yields fewer columns per tile

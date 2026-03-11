@@ -177,7 +177,7 @@ pub fn DisplayFilterButton() -> impl IntoView {
             <DspFilterRow label="NR" signal=state.display_filter_nr playback_active=nr_active custom_available=true />
             <DspFilterRow label="Xform" signal=state.display_filter_transform playback_active=transform_active custom_available=false auto_available=false />
             <DspFilterRow label="Gain" signal=state.display_filter_gain playback_active=gain_active custom_available=true />
-            <DspFilterRow label="Decim" signal=state.display_filter_decimate playback_active=decim_active custom_available=true />
+            <DspFilterRow label="Resam" signal=state.display_filter_decimate playback_active=decim_active custom_available=true />
 
             // Custom NR section
             {move || show_nr_custom.get().then(|| {
