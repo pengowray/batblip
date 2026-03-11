@@ -22,6 +22,12 @@ fn DspFilterRow(
     /// Whether 'auto' is available (greyed out if false)
     #[prop(default = true)]
     auto_available: bool,
+    /// When true, the sam-dot shows orange instead of green (browser handling resampling)
+    #[prop(optional, into)]
+    browser_resampling: Option<Signal<bool>>,
+    /// Extra tooltip text for the sam-dot
+    #[prop(optional, into)]
+    sam_tooltip: Option<Signal<String>>,
 ) -> impl IntoView {
     let modes = DisplayFilterMode::ALL;
 
@@ -53,10 +59,22 @@ fn DspFilterRow(
                             }
                         >
                             {mode.short_label()}
-                            {is_same.then(|| view! {
-                                <span class=move || {
-                                    if playback_active.get() { "sam-dot active" } else { "sam-dot inactive" }
-                                }></span>
+                            {is_same.then(|| {
+                                let br = browser_resampling;
+                                let tip = sam_tooltip.clone();
+                                view! {
+                                    <span
+                                        class=move || {
+                                            if let Some(br_sig) = br {
+                                                if br_sig.get() {
+                                                    return "sam-dot browser-resample";
+                                                }
+                                            }
+                                            if playback_active.get() { "sam-dot active" } else { "sam-dot inactive" }
+                                        }
+                                        title=move || tip.as_ref().map(|t| t.get()).unwrap_or_default()
+                                    ></span>
+                                }
                             })}
                         </button>
                     }
@@ -134,6 +152,44 @@ pub fn DisplayFilterButton() -> impl IntoView {
     let gain_active = Signal::derive(move || state.gain_mode.get() != GainMode::Off);
     let decim_active = Signal::derive(move || false); // No playback-side decimation yet
 
+    // Whether the browser is handling final resampling for the current file
+    let browser_is_resampling = Signal::derive(move || {
+        let bsr = state.browser_sample_rate.get();
+        if bsr == 0 { return false; }
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+        let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
+        if file_rate == 0 { return false; }
+        // After our decimation, what's the effective rate?
+        let decim = state.display_decimate_effective.get();
+        let effective = if decim > 0 && decim < file_rate {
+            crate::dsp::filters::decimated_rate(file_rate, decim)
+        } else {
+            file_rate
+        };
+        effective != bsr
+    });
+
+    let resam_tooltip = Signal::derive(move || {
+        let bsr = state.browser_sample_rate.get();
+        if bsr == 0 { return String::new(); }
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+        let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
+        if file_rate == 0 { return String::new(); }
+        let decim = state.display_decimate_effective.get();
+        let effective = if decim > 0 && decim < file_rate {
+            crate::dsp::filters::decimated_rate(file_rate, decim)
+        } else {
+            file_rate
+        };
+        if effective != bsr {
+            format!("Browser resampling {}Hz to {}Hz output", effective, bsr)
+        } else {
+            format!("Output matches browser rate ({}Hz)", bsr)
+        }
+    });
+
     // Whether custom NR or Gain sections should show
     let show_nr_custom = Signal::derive(move || {
         enabled.get() && state.display_filter_nr.get() == DisplayFilterMode::Custom
@@ -174,10 +230,10 @@ pub fn DisplayFilterButton() -> impl IntoView {
 
             <DspFilterRow label="EQ" signal=state.display_filter_eq playback_active=eq_active custom_available=false />
             <DspFilterRow label="Notch" signal=state.display_filter_notch playback_active=notch_active custom_available=false auto_available=false />
-            <DspFilterRow label="NR" signal=state.display_filter_nr playback_active=nr_active custom_available=true />
+            <DspFilterRow label="NR" signal=state.display_filter_nr playback_active=nr_active custom_available=false />
             <DspFilterRow label="Xform" signal=state.display_filter_transform playback_active=transform_active custom_available=false auto_available=false />
             <DspFilterRow label="Gain" signal=state.display_filter_gain playback_active=gain_active custom_available=true />
-            <DspFilterRow label="Resam" signal=state.display_filter_decimate playback_active=decim_active custom_available=true />
+            <DspFilterRow label="Resam" signal=state.display_filter_decimate playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
 
             // Custom NR section
             {move || show_nr_custom.get().then(|| {

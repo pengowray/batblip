@@ -3338,6 +3338,10 @@ body.sidebar-resizing {
 .sam-dot.inactive {
     background: #555;
 }
+.sam-dot.browser-resample {
+    background: #f0a030;
+    box-shadow: 0 0 3px rgba(240, 160, 48, 0.6);
+}
 
 .dsp-filter-indicator-header {
     font-size: 8px;

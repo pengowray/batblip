@@ -28,6 +28,18 @@ pub fn App() -> impl IntoView {
     let state = AppState::new();
     provide_context(state);
 
+    // Detect browser's default audio output sample rate
+    {
+        use web_sys::AudioContext;
+        if let Ok(ctx) = AudioContext::new() {
+            let rate = ctx.sample_rate() as u32;
+            if rate > 0 {
+                state.browser_sample_rate.set(rate);
+            }
+            let _ = ctx.close();
+        }
+    }
+
     // Auto-load demo sound from URL hash (e.g. #XC928094)
     if let Some(window) = web_sys::window() {
         if let Ok(hash) = window.location().hash() {
@@ -316,7 +328,11 @@ pub fn App() -> impl IntoView {
                 // Only decimate when xform display is active
                 if xform_on { 44100 } else { 0 }
             }
-            DisplayFilterMode::Same => 0, // no playback decimation yet
+            DisplayFilterMode::Same => {
+                // Decimate to browser's native output sample rate so Web Audio doesn't resample
+                let bsr = state.browser_sample_rate.get();
+                if bsr > 0 { bsr } else { 0 }
+            }
             DisplayFilterMode::Custom => state.display_decimate_rate.get(),
         };
         state.display_decimate_effective.set(decim_rate);

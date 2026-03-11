@@ -852,6 +852,8 @@ pub struct AppState {
     pub display_decimate_rate: RwSignal<u32>,
     /// Effective decimation target rate resolved from display_filter_decimate mode (0 = no decimation).
     pub display_decimate_effective: RwSignal<u32>,
+    /// Browser's default audio output sample rate (detected from AudioContext, typically 44100 or 48000).
+    pub browser_sample_rate: RwSignal<u32>,
     // Custom NR settings (display-only)
     pub display_nr_strength: RwSignal<f64>,
     // Auto-learned noise floor for display (computed from first ~500ms of file)
@@ -1081,6 +1083,7 @@ impl AppState {
             display_filter_decimate: RwSignal::new(DisplayFilterMode::Auto),
             display_decimate_rate: RwSignal::new(48000),
             display_decimate_effective: RwSignal::new(0),
+            browser_sample_rate: RwSignal::new(0),
             display_gain_boost: RwSignal::new(0.0),
             display_nr_strength: RwSignal::new(0.8),
             display_auto_noise_floor: RwSignal::new(None),
