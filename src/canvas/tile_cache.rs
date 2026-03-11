@@ -430,18 +430,9 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let cv = state.channel_view.get_untracked();
         let col_start = tile_idx * TILE_COLS;
 
-        // Determine decimation factor to read enough samples before decimation
-        let decim_target = state.display_decimate_effective.get_untracked();
-        let decim_factor = if decim_target > 0 && decim_target < audio.sample_rate {
-            let m = (audio.sample_rate as f64 / decim_target as f64).round() as usize;
-            m.max(1)
-        } else {
-            1
-        };
-
-        // Read enough samples so that after decimation we still have TILE_COLS worth of STFT data
-        let sample_start = col_start * config_hop * decim_factor;
-        let sample_len = (TILE_COLS * config_hop + actual_fft) * decim_factor;
+        // Read only the sample region needed for this tile
+        let sample_start = col_start * config_hop;
+        let sample_len = TILE_COLS * config_hop + actual_fft;
 
         // Prefetch for streaming sources
         streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
@@ -455,8 +446,9 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             samples
         };
 
-        // Apply decimation if active
-        let (samples, effective_rate) = if decim_factor > 1 {
+        // Apply decimation if active — produces fewer samples, so STFT yields fewer columns per tile
+        let decim_target = state.display_decimate_effective.get_untracked();
+        let (samples, effective_rate) = if decim_target > 0 && decim_target < audio.sample_rate {
             let decimated = crate::dsp::filters::decimate(&samples, audio.sample_rate, decim_target);
             let rate = crate::dsp::filters::decimated_rate(audio.sample_rate, decim_target);
             (decimated, rate)
