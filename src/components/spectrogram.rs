@@ -450,19 +450,7 @@ pub fn Spectrogram() -> impl IntoView {
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0);
-        // Compute effective decimation inline to avoid stale resolved signal on toggle
-        let decim_effective = {
-            let enabled = state.display_filter_enabled.get_untracked();
-            let xform_on = state.display_transform.get_untracked();
-            if !enabled { 0 } else {
-                match state.display_filter_decimate.get_untracked() {
-                    DisplayFilterMode::Off => 0,
-                    DisplayFilterMode::Auto => if xform_on { 44100 } else { 0 },
-                    DisplayFilterMode::Same => 0,
-                    DisplayFilterMode::Custom => state.display_decimate_rate.get_untracked(),
-                }
-            }
-        };
+        let decim_effective = state.display_decimate_effective.get_untracked();
         let original_sample_rate = idx
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.sample_rate)

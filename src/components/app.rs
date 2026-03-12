@@ -254,6 +254,7 @@ pub fn App() -> impl IntoView {
             state.display_noise_filter.set(false);
             state.display_auto_gain.set(false);
             state.display_gain_boost.set(0.0);
+            state.display_decimate_effective.set(0);
             return;
         }
 

@@ -279,7 +279,7 @@ impl MainView {
     pub fn short_label(self) -> &'static str {
         match self {
             Self::Spectrogram => "Spec",
-            Self::XformedSpec => "Xform",
+            Self::XformedSpec => "Xform S",
             Self::Waveform => "Wave",
             Self::ZcChart => "ZC",
             Self::Flow => "Flow",
