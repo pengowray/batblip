@@ -56,6 +56,8 @@ pub struct PsdResult {
     pub frame_count: usize,
     /// All detected peaks, sorted by power (strongest first).
     pub peaks: Vec<PsdPeak>,
+    /// Optional frequency range used for peak detection (Hz).
+    pub peak_freq_range: Option<(f64, f64)>,
 }
 
 /// Peak frequency and bandwidth analysis from a PSD.
@@ -82,7 +84,7 @@ pub struct PsdPeak {
 /// - `nfft`: FFT size (e.g. 256, 512, 1024, 2048, 4096)
 ///
 /// Uses 50% overlap and Hann window.
-pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize) -> PsdResult {
+pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize, peak_freq_range: Option<(f64, f64)>) -> PsdResult {
     let n_bins = nfft / 2 + 1;
     let hop = nfft / 2;
     let window = hann_window(nfft);
@@ -139,7 +141,7 @@ pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize) -> PsdResult 
     };
 
     let freq_resolution = sample_rate as f64 / nfft as f64;
-    let peaks = find_peaks(&power_db, freq_resolution);
+    let peaks = find_peaks(&power_db, freq_resolution, peak_freq_range);
 
     PsdResult {
         power_db,
@@ -148,6 +150,7 @@ pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize) -> PsdResult 
         nfft,
         frame_count,
         peaks,
+        peak_freq_range,
     }
 }
 
@@ -156,6 +159,7 @@ pub async fn compute_psd_async(
     samples: &[f32],
     sample_rate: u32,
     nfft: usize,
+    peak_freq_range: Option<(f64, f64)>,
     generation: u32,
     gen_signal: leptos::prelude::RwSignal<u32>,
 ) -> Option<PsdResult> {
@@ -232,7 +236,7 @@ pub async fn compute_psd_async(
     };
 
     let freq_resolution = sample_rate as f64 / nfft as f64;
-    let peaks = find_peaks(&power_db, freq_resolution);
+    let peaks = find_peaks(&power_db, freq_resolution, peak_freq_range);
 
     Some(PsdResult {
         power_db,
@@ -241,6 +245,7 @@ pub async fn compute_psd_async(
         nfft,
         frame_count,
         peaks,
+        peak_freq_range,
     })
 }
 
@@ -254,31 +259,42 @@ const MAX_PEAKS: usize = 8;
 const MIN_PROMINENCE_DB: f64 = 3.0;
 
 /// Find all significant local maxima in the PSD, sorted by power (strongest first).
-fn find_peaks(power_db: &[f64], freq_resolution: f64) -> Vec<PsdPeak> {
+/// If `freq_range` is Some, only bins within that Hz range are considered for peaks.
+fn find_peaks(power_db: &[f64], freq_resolution: f64, freq_range: Option<(f64, f64)>) -> Vec<PsdPeak> {
     if power_db.len() < 3 {
         return Vec::new();
     }
 
     let n = power_db.len();
 
-    // Find local maxima (bins where power[i] > both neighbours), skip DC (bin 0)
+    // Compute bin range from frequency range
+    let (min_bin, max_bin) = if let Some((lo, hi)) = freq_range {
+        let lo_bin = ((lo / freq_resolution).floor() as usize).max(2);
+        let hi_bin = ((hi / freq_resolution).ceil() as usize).min(n - 2);
+        (lo_bin, hi_bin)
+    } else {
+        (2, n - 2)
+    };
+
+    // Find local maxima (bins where power[i] > both neighbours)
     let mut candidates: Vec<(usize, f64)> = Vec::new();
-    for i in 2..n - 1 {
+    for i in min_bin..=max_bin {
         if power_db[i] > power_db[i - 1] && power_db[i] >= power_db[i + 1] {
             candidates.push((i, power_db[i]));
         }
     }
 
     if candidates.is_empty() {
-        // Fallback: global max
-        let start_bin = 1;
-        let (peak_bin, &peak_power) = power_db[start_bin..]
+        // Fallback: global max within range
+        let (peak_bin, &peak_power) = power_db[min_bin..=max_bin]
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, v)| (i + start_bin, v))
+            .map(|(i, v)| (i + min_bin, v))
             .unwrap_or((0, &-200.0));
-        candidates.push((peak_bin, peak_power));
+        if peak_bin > 0 {
+            candidates.push((peak_bin, peak_power));
+        }
     }
 
     // Filter by prominence: for each candidate, walk left and right to find

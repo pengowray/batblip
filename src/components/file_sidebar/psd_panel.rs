@@ -40,6 +40,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
     let file_is_long = RwSignal::new(false);
     let using_selection = RwSignal::new(false);
     let log_scale = RwSignal::new(false);
+    let freq_range_enabled = RwSignal::new(false);
 
     let run_psd = move |full_file: bool| {
         let files = state.files.get_untracked();
@@ -122,11 +123,24 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             );
         }
 
+        // Compute peak frequency range from selection
+        let peak_freq_range = if freq_range_enabled.get_untracked() {
+            let sel = state.selection.get_untracked();
+            sel.and_then(|s| {
+                match (s.freq_low, s.freq_high) {
+                    (Some(lo), Some(hi)) if lo < hi => Some((lo, hi)),
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
+
         let samples = Arc::new(samples);
 
         spawn_local(async move {
             let result = psd::compute_psd_async(
-                &samples, sample_rate, nfft, generation, compute_gen,
+                &samples, sample_rate, nfft, peak_freq_range, generation, compute_gen,
             ).await;
             if compute_gen.get_untracked() != generation {
                 return;
@@ -154,6 +168,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let _eq = state.psd_apply_eq.get();
         let _notch = state.psd_apply_notch.get();
         let _nr = state.psd_apply_nr.get();
+        let _fr = freq_range_enabled.get();
 
         // Subscribe to relevant filter params when toggles are on
         if state.psd_apply_eq.get_untracked() {
@@ -400,6 +415,26 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     />
                     "NR"
                 </label>
+                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
+                    title="Restrict peak detection to the selected frequency range">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || freq_range_enabled.get()
+                        prop:disabled=move || {
+                            let sel = state.selection.get();
+                            sel.and_then(|s| match (s.freq_low, s.freq_high) {
+                                (Some(lo), Some(hi)) if lo < hi => Some(()),
+                                _ => None,
+                            }).is_none()
+                        }
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            freq_range_enabled.set(input.checked());
+                        }
+                    />
+                    "Freq range"
+                </label>
             </div>
 
             // Scope badge
@@ -565,6 +600,7 @@ fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
     let freq_res = psd.freq_resolution;
     let sample_rate = psd.sample_rate;
     let peaks = psd.peaks.clone();
+    let peak_freq_range = psd.peak_freq_range;
 
     Effect::new(move || {
         let Some(el) = canvas_ref.get() else { return };
@@ -704,6 +740,30 @@ fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
                 };
                 let _ = ctx.fill_text(&label, x - 8.0, h as f64 - 6.0);
             }
+        }
+
+        // Draw frequency range constraint shading (dim regions outside range)
+        if let Some((lo, hi)) = peak_freq_range {
+            ctx.set_fill_style_str("rgba(255,255,255,0.05)");
+            let x_lo = freq_to_x(lo);
+            let x_hi = freq_to_x(hi);
+            // Dim left side
+            ctx.fill_rect(margin_left, margin_top, x_lo - margin_left, chart_h);
+            // Dim right side
+            ctx.fill_rect(x_hi, margin_top, (w as f64 - margin_right) - x_hi, chart_h);
+            // Draw range boundary lines
+            ctx.set_stroke_style_str("rgba(255,200,50,0.4)");
+            ctx.set_line_width(1.0);
+            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
+                &JsValue::from(2.0), &JsValue::from(2.0),
+            )));
+            ctx.begin_path();
+            ctx.move_to(x_lo, margin_top);
+            ctx.line_to(x_lo, h as f64 - margin_bottom);
+            ctx.move_to(x_hi, margin_top);
+            ctx.line_to(x_hi, h as f64 - margin_bottom);
+            ctx.stroke();
+            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
         }
 
         // Draw bandwidth shading for the primary peak only (to keep chart clean)
