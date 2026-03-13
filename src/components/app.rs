@@ -848,13 +848,58 @@ fn MainViewButton() -> impl IntoView {
         if is_open.get() { "layer-btn combo-btn-right dim open" } else { "layer-btn combo-btn-right dim" }
     });
 
+    // Helper: handle all side-effects of a view switch synchronously,
+    // so the spectrogram render Effect always sees consistent state.
+    let switch_view = move |new_view: MainView| {
+        let old_view = state.main_view.get_untracked();
+        if new_view == old_view { return; }
+
+        let entering_xform = new_view == MainView::XformedSpec && old_view != MainView::XformedSpec;
+        let leaving_xform = new_view != MainView::XformedSpec && old_view == MainView::XformedSpec;
+
+        if entering_xform {
+            // Enable display processing with all filters defaulting to "Same".
+            // Also directly resolve the display_* signals so the render Effect
+            // sees correct state immediately (don't wait for the resolve Effect).
+            state.display_filter_enabled.set(true);
+            state.display_filter_eq.set(DisplayFilterMode::Same);
+            state.display_filter_notch.set(DisplayFilterMode::Same);
+            state.display_filter_nr.set(DisplayFilterMode::Same);
+            state.display_filter_transform.set(DisplayFilterMode::Same);
+            state.display_filter_gain.set(DisplayFilterMode::Same);
+            state.display_filter_decimate.set(DisplayFilterMode::Same);
+            // Eagerly resolve "Same" → mirror current playback state
+            state.display_eq.set(state.filter_enabled.get_untracked());
+            state.display_noise_filter.set(
+                state.noise_reduce_enabled.get_untracked() || state.notch_enabled.get_untracked()
+            );
+            state.display_transform.set(
+                state.playback_mode.get_untracked() != PlaybackMode::Normal
+            );
+        } else if leaving_xform {
+            // Disable display processing and directly reset all display signals.
+            // Setting these directly (rather than relying on the resolve Effect)
+            // ensures the spectrogram render Effect sees consistent state.
+            state.display_filter_enabled.set(false);
+            state.display_transform.set(false);
+            state.display_eq.set(false);
+            state.display_noise_filter.set(false);
+            state.display_auto_gain.set(false);
+            state.display_gain_boost.set(0.0);
+            state.display_decimate_effective.set(0);
+        }
+
+        // Set the view last so all display state is consistent when
+        // the main_view change triggers the spectrogram render Effect.
+        state.main_view.set(new_view);
+    };
+
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        state.main_view.update(|v| {
-            *v = match *v {
-                MainView::Spectrogram | MainView::XformedSpec => MainView::Waveform,
-                _ => MainView::Spectrogram,
-            };
-        });
+        let new_view = match state.main_view.get_untracked() {
+            MainView::Spectrogram | MainView::XformedSpec => MainView::Waveform,
+            _ => MainView::Spectrogram,
+        };
+        switch_view(new_view);
     });
 
     let left_value = Signal::derive(move || state.main_view.get().short_label().to_string());
@@ -864,29 +909,9 @@ fn MainViewButton() -> impl IntoView {
         toggle_panel(&state, LayerPanel::MainView);
     });
 
-    // Track previous view to detect transitions to/from XformedSpec
-    let prev_view: RwSignal<MainView> = RwSignal::new(state.main_view.get_untracked());
-    Effect::new(move |_| {
-        let current = state.main_view.get();
-        let prev = prev_view.get_untracked();
-        if current == prev { return; }
-        if current == MainView::XformedSpec && prev != MainView::XformedSpec {
-            state.display_filter_enabled.set(true);
-            state.display_filter_eq.set(DisplayFilterMode::Same);
-            state.display_filter_notch.set(DisplayFilterMode::Same);
-            state.display_filter_nr.set(DisplayFilterMode::Same);
-            state.display_filter_transform.set(DisplayFilterMode::Same);
-            state.display_filter_gain.set(DisplayFilterMode::Same);
-            state.display_filter_decimate.set(DisplayFilterMode::Same);
-        } else if current != MainView::XformedSpec && prev == MainView::XformedSpec {
-            state.display_filter_enabled.set(false);
-        }
-        prev_view.set(current);
-    });
-
     let set_view = move |mode: MainView| {
         move |_: web_sys::MouseEvent| {
-            state.main_view.set(mode);
+            switch_view(mode);
             state.layer_panel_open.set(None);
         }
     };
