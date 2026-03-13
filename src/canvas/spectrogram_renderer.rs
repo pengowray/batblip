@@ -883,9 +883,13 @@ pub fn blit_tiles_viewport(
         let c_end = clip_lod1_end.min(tile_lod1_end);
         if c_end <= c_start { return; }
 
-        // Source coordinates in tile pixel space
-        let src_x = ((c_start - tile_lod1_start) * tile_ratio).max(0.0);
-        let src_x_end = ((c_end - tile_lod1_start) * tile_ratio).min(tw);
+        // Source coordinates in tile pixel space.
+        // pixel_scale maps LOD1 column offsets to actual tile pixels.
+        // When decimation is active, tw < TILE_COLS, so we must scale down
+        // to avoid overshooting the tile's actual pixel width.
+        let pixel_scale = tw * tile_ratio / TILE_COLS as f64;
+        let src_x = ((c_start - tile_lod1_start) * pixel_scale).max(0.0);
+        let src_x_end = ((c_end - tile_lod1_start) * pixel_scale).min(tw);
         let src_w = (src_x_end - src_x).max(0.0);
         if src_w <= 0.0 { return; }
 
@@ -1122,9 +1126,13 @@ pub fn blit_flow_tiles_viewport(
         let c_end = clip_lod1_end.min(tile_lod1_end);
         if c_end <= c_start { return; }
 
-        // Source coordinates in tile pixel space
-        let src_x = ((c_start - tile_lod1_start) * tile_ratio).max(0.0);
-        let src_x_end = ((c_end - tile_lod1_start) * tile_ratio).min(tw);
+        // Source coordinates in tile pixel space.
+        // pixel_scale maps LOD1 column offsets to actual tile pixels.
+        // When decimation is active, tw < TILE_COLS, so we must scale down
+        // to avoid overshooting the tile's actual pixel width.
+        let pixel_scale = tw * tile_ratio / TILE_COLS as f64;
+        let src_x = ((c_start - tile_lod1_start) * pixel_scale).max(0.0);
+        let src_x_end = ((c_end - tile_lod1_start) * pixel_scale).min(tw);
         let src_w = (src_x_end - src_x).max(0.0);
         if src_w <= 0.0 { return; }
 

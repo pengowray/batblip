@@ -229,6 +229,10 @@ thread_local! {
     /// Entries older than IN_FLIGHT_TIMEOUT_MS are considered stuck and can be re-scheduled.
     static IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
         RefCell::new(HashMap::new());
+    /// Generation counter — incremented on every clear_all_tiles(). In-flight
+    /// async tasks capture the generation at spawn time and discard their result
+    /// if a clear happened while they were computing (prevents stale tiles).
+    static CACHE_GENERATION: RefCell<u64> = RefCell::new(0);
 
     /// Flow-mode tile cache — multi-LOD, same CacheKey as magnitude tiles.
     static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
@@ -286,6 +290,7 @@ pub fn borrow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(
 pub fn clear_file(file_idx: usize) {
     CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
     IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
+    CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
 }
 
 /// Clear all magnitude tiles (all files, all LODs). Used when global
@@ -293,6 +298,7 @@ pub fn clear_file(file_idx: usize) {
 pub fn clear_all_tiles() {
     CACHE.with(|c| c.borrow_mut().clear_all());
     IN_FLIGHT.with(|s| s.borrow_mut().clear());
+    CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
 }
 
 /// Clear all tile caches (main, flow, reassign, chroma). Used when a global
@@ -400,6 +406,9 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
 
+    // Capture generation so we can discard the result if a clear happened mid-compute
+    let gen = CACHE_GENERATION.with(|g| *g.borrow());
+
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let fft_mode = state.spect_fft_mode.get_untracked();
     let actual_fft = fft_mode.fft_for_lod(config_hop);
@@ -480,6 +489,14 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
         let cols = compute_stft_columns(&samples, effective_rate, actual_fft, config_hop, 0, TILE_COLS);
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+
+        // Discard result if the cache was cleared while we were computing
+        // (e.g. user toggled xform mode — these tiles are stale)
+        let current_gen = CACHE_GENERATION.with(|g| *g.borrow());
+        if current_gen != gen {
+            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            return;
+        }
 
         if cols.is_empty() {
             // Still bump the signal so the render effect re-evaluates
