@@ -235,6 +235,29 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 tags: Vec::new(),
             }];
 
+            // Add selection bounds as the first child annotation
+            if let Some(sel) = selection {
+                if let (Some(flo), Some(fhi)) = (sel.freq_low, sel.freq_high) {
+                    annotations.push(Annotation {
+                        id: generate_uuid(),
+                        kind: AnnotationKind::Region(Region {
+                            time_start,
+                            time_end,
+                            freq_low: Some(flo),
+                            freq_high: Some(fhi),
+                            label: Some(format!("Selection {:.1}\u{2013}{:.1} kHz", flo / 1000.0, fhi / 1000.0)),
+                            color: Some("#ffcc33".to_string()),
+                        }),
+                        created_at: now_iso8601(),
+                        modified_at: now_iso8601(),
+                        notes: None,
+                        parent_id: Some(group_id.clone()),
+                        sort_order: Some(-1.0),
+                        tags: Vec::new(),
+                    });
+                }
+            }
+
             for (i, peak) in psd.peaks.iter().enumerate() {
                 let sort = i as f64 * 3.0;
                 let color = peak_color(i).to_string();
