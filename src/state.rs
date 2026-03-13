@@ -140,6 +140,7 @@ pub enum RightSidebarTab {
     Metadata,
     Spectrogram,
     Selection,
+    Psd,
     Analysis,
     Harmonics,
     Notch,
@@ -153,6 +154,7 @@ impl RightSidebarTab {
             Self::Metadata => "Info",
             Self::Spectrogram => "Display",
             Self::Selection => "Selection",
+            Self::Psd => "PSD",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::Notch => "Noise Filter",
@@ -165,6 +167,7 @@ impl RightSidebarTab {
         Self::Metadata,
         Self::Spectrogram,
         Self::Selection,
+        Self::Psd,
         Self::Analysis,
         Self::Harmonics,
         Self::Notch,
@@ -879,6 +882,12 @@ pub struct AppState {
     // Auto-learned noise floor for display (computed from first ~500ms of file)
     pub display_auto_noise_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
 
+    // PSD (Power Spectral Density) panel
+    pub psd_nfft: RwSignal<usize>,
+    pub psd_apply_eq: RwSignal<bool>,
+    pub psd_apply_notch: RwSignal<bool>,
+    pub psd_apply_nr: RwSignal<bool>,
+
     // Bat Book
     pub bat_book_open: RwSignal<bool>,
     pub bat_book_region: RwSignal<crate::bat_book::types::BatBookRegion>,
@@ -1116,6 +1125,11 @@ impl AppState {
             display_gain_boost: RwSignal::new(0.0),
             display_nr_strength: RwSignal::new(0.8),
             display_auto_noise_floor: RwSignal::new(None),
+
+            psd_nfft: RwSignal::new(1024),
+            psd_apply_eq: RwSignal::new(false),
+            psd_apply_notch: RwSignal::new(false),
+            psd_apply_nr: RwSignal::new(false),
 
             bat_book_open: RwSignal::new(false),
             bat_book_region: RwSignal::new(crate::bat_book::types::BatBookRegion::Global),

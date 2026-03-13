@@ -1,0 +1,727 @@
+use leptos::prelude::*;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::spawn_local;
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
+use crate::state::{AppState, RightSidebarTab};
+use crate::dsp::psd::{self, PsdResult};
+use crate::annotations::{
+    Annotation, AnnotationKind, AnnotationSet, Group, Region,
+    generate_uuid, now_iso8601,
+};
+use std::sync::Arc;
+
+#[component]
+pub(crate) fn PsdPanel() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    let psd_result: RwSignal<Option<PsdResult>> = RwSignal::new(None);
+    let is_computing = RwSignal::new(false);
+    let compute_gen = RwSignal::new(0u32);
+    let analysis_is_full = RwSignal::new(false);
+    let file_is_long = RwSignal::new(false);
+    let using_selection = RwSignal::new(false);
+    let log_scale = RwSignal::new(false);
+
+    let run_psd = move |full_file: bool| {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file = idx.and_then(|i| files.get(i).cloned());
+        let Some(file) = file else { return; };
+
+        psd_result.set(None);
+        is_computing.set(true);
+        compute_gen.update(|g| *g += 1);
+        let generation = compute_gen.get_untracked();
+
+        let sample_rate = file.audio.sample_rate;
+        let total = file.audio.source.total_samples() as usize;
+        if total == 0 {
+            is_computing.set(false);
+            return;
+        }
+
+        let nfft = state.psd_nfft.get_untracked();
+        let apply_eq = state.psd_apply_eq.get_untracked();
+        let apply_notch = state.psd_apply_notch.get_untracked();
+        let apply_nr = state.psd_apply_nr.get_untracked();
+
+        // Determine sample range
+        let selection = state.selection.get_untracked();
+        let (start_sample, end_sample, is_sel) = if let Some(sel) = selection {
+            let s = (sel.time_start * sample_rate as f64) as usize;
+            let e = ((sel.time_end * sample_rate as f64) as usize).min(total);
+            (s, e, true)
+        } else {
+            let max_samples = (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as usize;
+            let is_long = total > max_samples;
+            file_is_long.set(is_long);
+            if full_file || !is_long {
+                analysis_is_full.set(true);
+                (0, total, false)
+            } else {
+                analysis_is_full.set(false);
+                (0, max_samples, false)
+            }
+        };
+        using_selection.set(is_sel);
+
+        let mut samples: Vec<f32> = file.audio.source.read_region(
+            ChannelView::MonoMix,
+            start_sample as u64,
+            end_sample.saturating_sub(start_sample),
+        );
+
+        // Apply filters pre-FFT
+        if apply_notch && state.notch_enabled.get_untracked() {
+            let bands = state.notch_bands.get_untracked();
+            let harm_supp = state.notch_harmonic_suppression.get_untracked();
+            if !bands.is_empty() {
+                samples = crate::dsp::notch::apply_notch_filters(&samples, sample_rate, &bands, harm_supp);
+            }
+        }
+
+        if apply_nr && state.noise_reduce_enabled.get_untracked() {
+            if let Some(nf) = state.noise_reduce_floor.get_untracked() {
+                let strength = state.noise_reduce_strength.get_untracked();
+                samples = crate::dsp::spectral_sub::apply_spectral_subtraction(
+                    &samples, sample_rate, &nf, strength, 0.01, 0.0,
+                );
+            }
+        }
+
+        if apply_eq && state.filter_enabled.get_untracked() {
+            let freq_low = state.filter_freq_low.get_untracked();
+            let freq_high = state.filter_freq_high.get_untracked();
+            let db_below = state.filter_db_below.get_untracked();
+            let db_selected = state.filter_db_selected.get_untracked();
+            let db_harmonics = state.filter_db_harmonics.get_untracked();
+            let db_above = state.filter_db_above.get_untracked();
+            let band_mode = state.filter_band_mode.get_untracked();
+            samples = crate::dsp::filters::apply_eq_filter(
+                &samples, sample_rate, freq_low, freq_high,
+                db_below, db_selected, db_harmonics, db_above, band_mode,
+            );
+        }
+
+        let samples = Arc::new(samples);
+
+        spawn_local(async move {
+            let result = psd::compute_psd_async(
+                &samples, sample_rate, nfft, generation, compute_gen,
+            ).await;
+            if compute_gen.get_untracked() != generation {
+                return;
+            }
+            psd_result.set(result);
+            is_computing.set(false);
+        });
+    };
+
+    // Trigger recomputation when tab is active and inputs change
+    Effect::new(move || {
+        let tab = state.right_sidebar_tab.get();
+        if tab != RightSidebarTab::Psd {
+            return;
+        }
+
+        let _files = state.files.get();
+        let _idx = state.current_file_index.get();
+        let _sel = state.selection.get();
+        let _nfft = state.psd_nfft.get();
+        let _eq = state.psd_apply_eq.get();
+        let _notch = state.psd_apply_notch.get();
+        let _nr = state.psd_apply_nr.get();
+
+        // Subscribe to relevant filter params when toggles are on
+        if state.psd_apply_eq.get_untracked() {
+            let _ = state.filter_enabled.get();
+            let _ = state.filter_freq_low.get();
+            let _ = state.filter_freq_high.get();
+            let _ = state.filter_band_mode.get();
+        }
+        if state.psd_apply_notch.get_untracked() {
+            let _ = state.notch_enabled.get();
+            let _ = state.notch_bands.get();
+        }
+        if state.psd_apply_nr.get_untracked() {
+            let _ = state.noise_reduce_enabled.get();
+        }
+
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        if idx.and_then(|i| files.get(i)).is_none() {
+            psd_result.set(None);
+            is_computing.set(false);
+            return;
+        }
+
+        run_psd(false);
+    });
+
+    // Annotate peak
+    let annotate_peak = move |_: web_sys::MouseEvent| {
+        let result = psd_result.get_untracked();
+        let file_idx = state.current_file_index.get_untracked();
+        let selection = state.selection.get_untracked();
+        if let (Some(psd), Some(idx)) = (result, file_idx) {
+            let peak = &psd.peak;
+            let time_start;
+            let time_end;
+            if let Some(sel) = selection {
+                time_start = sel.time_start;
+                time_end = sel.time_end;
+            } else {
+                time_start = 0.0;
+                let files = state.files.get_untracked();
+                time_end = files.get(idx).map(|f| f.audio.duration_secs).unwrap_or(0.0);
+            }
+
+            state.snapshot_annotations();
+
+            let group_id = generate_uuid();
+            let group = Annotation {
+                id: group_id.clone(),
+                kind: AnnotationKind::Group(Group {
+                    label: Some("PSD Analysis".to_string()),
+                    color: None,
+                    collapsed: Some(false),
+                }),
+                created_at: now_iso8601(),
+                modified_at: now_iso8601(),
+                notes: Some(format!(
+                    "NFFT={}, {} frames averaged",
+                    psd.nfft, psd.frame_count
+                )),
+                parent_id: None,
+                sort_order: None,
+                tags: Vec::new(),
+            };
+
+            // Peak frequency region (narrow band)
+            let peak_half_bw = psd.freq_resolution;
+            let peak_ann = Annotation {
+                id: generate_uuid(),
+                kind: AnnotationKind::Region(Region {
+                    time_start,
+                    time_end,
+                    freq_low: Some((peak.freq_hz - peak_half_bw).max(0.0)),
+                    freq_high: Some(peak.freq_hz + peak_half_bw),
+                    label: Some(format!("Peak {:.1} kHz ({:.1} dB)", peak.freq_hz / 1000.0, peak.power_db)),
+                    color: Some("#ff4444".to_string()),
+                }),
+                created_at: now_iso8601(),
+                modified_at: now_iso8601(),
+                notes: None,
+                parent_id: Some(group_id.clone()),
+                sort_order: Some(0.0),
+                tags: Vec::new(),
+            };
+
+            let mut annotations = vec![group, peak_ann];
+
+            if let Some((lo, hi)) = peak.bw_6db {
+                annotations.push(Annotation {
+                    id: generate_uuid(),
+                    kind: AnnotationKind::Region(Region {
+                        time_start,
+                        time_end,
+                        freq_low: Some(lo),
+                        freq_high: Some(hi),
+                        label: Some(format!("-6 dB BW: {:.1} kHz", (hi - lo) / 1000.0)),
+                        color: Some("#44aa66".to_string()),
+                    }),
+                    created_at: now_iso8601(),
+                    modified_at: now_iso8601(),
+                    notes: None,
+                    parent_id: Some(group_id.clone()),
+                    sort_order: Some(1.0),
+                    tags: Vec::new(),
+                });
+            }
+
+            if let Some((lo, hi)) = peak.bw_10db {
+                annotations.push(Annotation {
+                    id: generate_uuid(),
+                    kind: AnnotationKind::Region(Region {
+                        time_start,
+                        time_end,
+                        freq_low: Some(lo),
+                        freq_high: Some(hi),
+                        label: Some(format!("-10 dB BW: {:.1} kHz", (hi - lo) / 1000.0)),
+                        color: Some("#aaaa44".to_string()),
+                    }),
+                    created_at: now_iso8601(),
+                    modified_at: now_iso8601(),
+                    notes: None,
+                    parent_id: Some(group_id.clone()),
+                    sort_order: Some(2.0),
+                    tags: Vec::new(),
+                });
+            }
+
+            state.annotation_store.update(|store| {
+                store.ensure_len(idx + 1);
+                if store.sets[idx].is_none() {
+                    let new_set = state.files.with_untracked(|files| {
+                        files.get(idx).map(|f| {
+                            let id = f.identity.clone().unwrap_or_else(|| {
+                                crate::file_identity::identity_layer1(&f.name, 0)
+                            });
+                            AnnotationSet::new_with_metadata(id, &f.audio)
+                        })
+                    });
+                    if let Some(set) = new_set {
+                        store.sets[idx] = Some(set);
+                    }
+                }
+                if let Some(ref mut set) = store.sets[idx] {
+                    for ann in annotations {
+                        set.annotations.push(ann);
+                    }
+                }
+            });
+            state.annotations_dirty.set(true);
+            state.show_info_toast("PSD peak annotated");
+        }
+    };
+
+    view! {
+        <div class="sidebar-panel">
+            // Controls: NFFT selector + log scale toggle
+            <div class="setting-group">
+                <div class="setting-group-title">"Power Spectral Density"</div>
+                <div class="psd-controls-row">
+                    <label class="setting-label">"NFFT:"</label>
+                    <select
+                        class="psd-nfft-select"
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                            if let Ok(val) = select.value().parse::<usize>() {
+                                state.psd_nfft.set(val);
+                            }
+                        }
+                    >
+                        {[256, 512, 1024, 2048, 4096].iter().map(|&n| {
+                            let selected = move || state.psd_nfft.get() == n;
+                            view! {
+                                <option value=n.to_string() selected=selected>{n.to_string()}</option>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </select>
+                    <label class="setting-label" style="margin-left:8px;display:flex;align-items:center;gap:3px;cursor:pointer"
+                        title="Toggle logarithmic frequency scale">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || log_scale.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                log_scale.set(input.checked());
+                            }
+                        />
+                        "Log"
+                    </label>
+                </div>
+            </div>
+
+            // Filter toggles
+            <div class="psd-filter-toggles">
+                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
+                    title="Apply EQ filter to PSD">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || state.psd_apply_eq.get()
+                        prop:disabled=move || !state.filter_enabled.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.psd_apply_eq.set(input.checked());
+                        }
+                    />
+                    "EQ"
+                </label>
+                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
+                    title="Apply notch filter to PSD">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || state.psd_apply_notch.get()
+                        prop:disabled=move || !state.notch_enabled.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.psd_apply_notch.set(input.checked());
+                        }
+                    />
+                    "Notch"
+                </label>
+                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
+                    title="Apply noise reduction to PSD">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || state.psd_apply_nr.get()
+                        prop:disabled=move || !state.noise_reduce_enabled.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.psd_apply_nr.set(input.checked());
+                        }
+                    />
+                    "NR"
+                </label>
+            </div>
+
+            // Scope badge
+            {move || {
+                if is_computing.get() {
+                    view! { <div class="sidebar-panel-empty">"Computing PSD\u{2026}"</div> }.into_any()
+                } else if using_selection.get() && psd_result.get().is_some() {
+                    view! {
+                        <div class="analysis-scope-row">
+                            <span class="analysis-scope-badge">"Selection"</span>
+                        </div>
+                    }.into_any()
+                } else if file_is_long.get() && !analysis_is_full.get() && psd_result.get().is_some() {
+                    view! {
+                        <div class="analysis-scope-row">
+                            <span class="analysis-scope-badge">"First 30s"</span>
+                            <button
+                                class="analysis-full-btn"
+                                on:click=move |_| run_psd(true)
+                            >
+                                "Analyze full file"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else if analysis_is_full.get() && file_is_long.get() && psd_result.get().is_some() {
+                    view! {
+                        <div class="analysis-scope-row">
+                            <span class="analysis-scope-badge analysis-scope-full">"Full file"</span>
+                        </div>
+                    }.into_any()
+                } else if psd_result.get().is_none() && !is_computing.get() {
+                    let has_file = {
+                        let files = state.files.get();
+                        let idx = state.current_file_index.get();
+                        idx.and_then(|i| files.get(i)).is_some()
+                    };
+                    if !has_file {
+                        view! { <div class="sidebar-panel-empty">"No file loaded"</div> }.into_any()
+                    } else {
+                        view! { <span></span> }.into_any()
+                    }
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
+
+            // PSD Chart
+            {move || {
+                let result = psd_result.get();
+                let is_log = log_scale.get();
+                if let Some(psd) = result {
+                    view! {
+                        <PsdChart psd=psd log_scale=is_log />
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
+
+            // Peak stats + annotate button
+            {move || {
+                let result = psd_result.get();
+                match result {
+                    None => view! { <span></span> }.into_any(),
+                    Some(psd) => {
+                        let peak = &psd.peak;
+                        let peak_freq_text = format!("{:.1} kHz", peak.freq_hz / 1000.0);
+                        let peak_power_text = format!("{:.1} dB", peak.power_db);
+                        let bw_6_text = match peak.bw_6db {
+                            Some((lo, hi)) => format!("{:.1} kHz ({:.1}\u{2013}{:.1})", (hi - lo) / 1000.0, lo / 1000.0, hi / 1000.0),
+                            None => "\u{2014}".to_string(),
+                        };
+                        let bw_10_text = match peak.bw_10db {
+                            Some((lo, hi)) => format!("{:.1} kHz ({:.1}\u{2013}{:.1})", (hi - lo) / 1000.0, lo / 1000.0, hi / 1000.0),
+                            None => "\u{2014}".to_string(),
+                        };
+                        let frames_text = format!("{} frames, {:.1} Hz/bin", psd.frame_count, psd.freq_resolution);
+
+                        view! {
+                            <div class="setting-group">
+                                <div class="setting-group-title">"Peak Analysis"</div>
+                                <div class="analysis-stats">
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{peak_freq_text}</span>
+                                        <span class="analysis-stat-label">"Peak Freq"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{peak_power_text}</span>
+                                        <span class="analysis-stat-label">"Peak Power"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{bw_6_text}</span>
+                                        <span class="analysis-stat-label">"-6 dB BW"</span>
+                                    </div>
+                                    <div class="analysis-stat">
+                                        <span class="analysis-stat-value">{bw_10_text}</span>
+                                        <span class="analysis-stat-label">"-10 dB BW"</span>
+                                    </div>
+                                </div>
+                                <div class="psd-meta-text">{frames_text}</div>
+                                <button
+                                    class="analysis-full-btn"
+                                    style="margin-top:4px"
+                                    on:click=annotate_peak
+                                    title="Add peak frequency and bandwidth annotations"
+                                >
+                                    "Add peak annotation"
+                                </button>
+                            </div>
+                        }.into_any()
+                    }
+                }
+            }}
+        </div>
+    }
+}
+
+// ── PSD Chart Canvas ────────────────────────────────────────────────────────
+
+#[component]
+fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
+    let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+    let power_db = psd.power_db.clone();
+    let freq_res = psd.freq_resolution;
+    let sample_rate = psd.sample_rate;
+    let peak = psd.peak.clone();
+    let bw_6 = peak.bw_6db;
+    let bw_10 = peak.bw_10db;
+
+    Effect::new(move || {
+        let Some(el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = el.as_ref();
+
+        // Get parent width for responsive sizing
+        let parent_width = canvas.parent_element()
+            .map(|p| p.client_width() as u32)
+            .unwrap_or(250);
+        let w = parent_width.max(150);
+        let h = 200u32;
+        canvas.set_width(w);
+        canvas.set_height(h);
+
+        let ctx = canvas
+            .get_context("2d")
+            .unwrap()
+            .unwrap()
+            .dyn_into::<CanvasRenderingContext2d>()
+            .unwrap();
+
+        // Background
+        ctx.set_fill_style_str("#111");
+        ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
+
+        if power_db.is_empty() {
+            return;
+        }
+
+        // Layout
+        let margin_left = 36.0;
+        let margin_right = 8.0;
+        let margin_top = 8.0;
+        let margin_bottom = 24.0;
+        let chart_w = w as f64 - margin_left - margin_right;
+        let chart_h = h as f64 - margin_top - margin_bottom;
+
+        let nyquist = sample_rate as f64 / 2.0;
+        let n_bins = power_db.len();
+
+        // dB range: auto from peak
+        let db_max = power_db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let db_min = (db_max - 80.0).max(-200.0);
+        let db_range = db_max - db_min;
+        if db_range <= 0.0 { return; }
+
+        // Frequency to x coordinate
+        let min_log_freq = 100.0f64; // minimum freq for log scale
+        let freq_to_x = |freq: f64| -> f64 {
+            if log_scale {
+                if freq <= 0.0 { return margin_left; }
+                let f = freq.max(min_log_freq);
+                let log_min = min_log_freq.log10();
+                let log_max = nyquist.log10();
+                let frac = (f.log10() - log_min) / (log_max - log_min);
+                margin_left + frac.clamp(0.0, 1.0) * chart_w
+            } else {
+                margin_left + (freq / nyquist) * chart_w
+            }
+        };
+
+        // dB to y coordinate
+        let db_to_y = |db: f64| -> f64 {
+            let frac = (db - db_min) / db_range;
+            margin_top + (1.0 - frac.clamp(0.0, 1.0)) * chart_h
+        };
+
+        // Draw grid lines (dB)
+        ctx.set_stroke_style_str("rgba(255,255,255,0.1)");
+        ctx.set_fill_style_str("#666");
+        ctx.set_font("9px monospace");
+        ctx.set_line_width(0.5);
+        let db_step = if db_range > 60.0 { 20.0 } else { 10.0 };
+        let mut db_tick = (db_min / db_step).ceil() * db_step;
+        while db_tick <= db_max {
+            let y = db_to_y(db_tick);
+            ctx.begin_path();
+            ctx.move_to(margin_left, y);
+            ctx.line_to(w as f64 - margin_right, y);
+            ctx.stroke();
+            let label = format!("{:.0}", db_tick);
+            let _ = ctx.fill_text(&label, 2.0, y + 3.0);
+            db_tick += db_step;
+        }
+
+        // Draw grid lines (frequency)
+        let freq_ticks: Vec<f64> = if log_scale {
+            let mut ticks = Vec::new();
+            for &base in &[100.0, 1000.0, 10000.0, 100000.0] {
+                for mult in 1..10 {
+                    let f = base * mult as f64;
+                    if f >= min_log_freq && f <= nyquist {
+                        ticks.push(f);
+                    }
+                }
+            }
+            ticks
+        } else {
+            let step = if nyquist > 100_000.0 {
+                50_000.0
+            } else if nyquist > 50_000.0 {
+                25_000.0
+            } else if nyquist > 20_000.0 {
+                10_000.0
+            } else {
+                5_000.0
+            };
+            let mut ticks = Vec::new();
+            let mut f = step;
+            while f < nyquist {
+                ticks.push(f);
+                f += step;
+            }
+            ticks
+        };
+
+        for &freq in &freq_ticks {
+            let x = freq_to_x(freq);
+            if x < margin_left || x > w as f64 - margin_right { continue; }
+
+            let is_major = if log_scale {
+                freq == 100.0 || freq == 1000.0 || freq == 10000.0 || freq == 100000.0
+            } else {
+                true
+            };
+
+            if is_major {
+                ctx.set_stroke_style_str("rgba(255,255,255,0.12)");
+            } else {
+                ctx.set_stroke_style_str("rgba(255,255,255,0.04)");
+            }
+            ctx.begin_path();
+            ctx.move_to(x, margin_top);
+            ctx.line_to(x, h as f64 - margin_bottom);
+            ctx.stroke();
+
+            if is_major {
+                ctx.set_fill_style_str("#666");
+                let label = if freq >= 1000.0 {
+                    format!("{:.0}k", freq / 1000.0)
+                } else {
+                    format!("{:.0}", freq)
+                };
+                let _ = ctx.fill_text(&label, x - 8.0, h as f64 - 6.0);
+            }
+        }
+
+        // Draw -10dB bandwidth shaded region
+        if let Some((lo, hi)) = bw_10 {
+            let x1 = freq_to_x(lo);
+            let x2 = freq_to_x(hi);
+            ctx.set_fill_style_str("rgba(170,170,68,0.15)");
+            ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
+        }
+
+        // Draw -6dB bandwidth shaded region
+        if let Some((lo, hi)) = bw_6 {
+            let x1 = freq_to_x(lo);
+            let x2 = freq_to_x(hi);
+            ctx.set_fill_style_str("rgba(68,170,102,0.2)");
+            ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
+        }
+
+        // Draw PSD curve
+        ctx.set_stroke_style_str("#4dd");
+        ctx.set_line_width(1.5);
+        ctx.begin_path();
+        let mut started = false;
+        for i in 0..n_bins {
+            let freq = i as f64 * freq_res;
+            if log_scale && freq < min_log_freq { continue; }
+            let x = freq_to_x(freq);
+            let y = db_to_y(power_db[i]);
+            if !started {
+                ctx.move_to(x, y);
+                started = true;
+            } else {
+                ctx.line_to(x, y);
+            }
+        }
+        ctx.stroke();
+
+        // Draw peak marker
+        let peak_x = freq_to_x(peak.freq_hz);
+        let peak_y = db_to_y(peak.power_db);
+
+        // Dashed vertical line
+        ctx.set_stroke_style_str("rgba(255,68,68,0.6)");
+        ctx.set_line_width(1.0);
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
+            &JsValue::from(3.0),
+            &JsValue::from(3.0),
+        )));
+        ctx.begin_path();
+        ctx.move_to(peak_x, margin_top);
+        ctx.line_to(peak_x, h as f64 - margin_bottom);
+        ctx.stroke();
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
+
+        // Red dot at peak
+        ctx.set_fill_style_str("#f44");
+        ctx.begin_path();
+        let _ = ctx.arc(peak_x, peak_y, 3.0, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+
+        // Peak label
+        ctx.set_fill_style_str("#faa");
+        ctx.set_font("9px monospace");
+        let peak_label = format!("{:.1}k", peak.freq_hz / 1000.0);
+        let _ = ctx.fill_text(&peak_label, peak_x + 5.0, peak_y - 4.0);
+
+        // Chart border
+        ctx.set_stroke_style_str("rgba(255,255,255,0.2)");
+        ctx.set_line_width(1.0);
+        ctx.stroke_rect(margin_left, margin_top, chart_w, chart_h);
+    });
+
+    view! {
+        <div class="psd-chart-wrap">
+            <canvas
+                node_ref=canvas_ref
+                style="width:100%;height:200px;display:block;border-radius:3px"
+            />
+        </div>
+    }
+}
