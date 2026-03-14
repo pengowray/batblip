@@ -236,12 +236,30 @@ pub fn Spectrogram() -> impl IntoView {
     // animation cycle starts (e.g. target changes mid-flight).
     let label_hover_target = RwSignal::new(0.0f64);
     let anim_gen: Rc<Cell<u32>> = Rc::new(Cell::new(0));
+    // Label hover animation: lerp label_hover_opacity toward target via rAF.
+    // IMPORTANT: The Effect must NOT call .set() on label_hover_opacity directly,
+    // since it subscribes to it via .get() — that would cause "closure invoked
+    // recursively". Instead, ALL writes go through rAF callbacks (which run
+    // outside the Effect scope) and convergence snapping also uses rAF.
     Effect::new(move || {
         let target = label_hover_target.get();
         let current = state.label_hover_opacity.get();
         if (current - target).abs() < 0.01 {
+            // Close enough — schedule a final snap via rAF to avoid
+            // setting the signal inside this Effect (which would recurse).
             if current != target {
-                state.label_hover_opacity.set(target);
+                let generation = anim_gen.get().wrapping_add(1);
+                anim_gen.set(generation);
+                let ag = anim_gen.clone();
+                let cb = Closure::once(move || {
+                    if ag.get() != generation { return; }
+                    let tgt = label_hover_target.get_untracked();
+                    state.label_hover_opacity.set(tgt);
+                });
+                let _ = web_sys::window().unwrap().request_animation_frame(
+                    cb.as_ref().unchecked_ref(),
+                );
+                cb.forget();
             }
             return;
         }
@@ -1065,7 +1083,9 @@ pub fn Spectrogram() -> impl IntoView {
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
         let follow = state.follow_cursor.get();
-        let suspended = state.follow_suspended.get();
+        // Use get_untracked to avoid recursive Effect invocation — this Effect
+        // already re-runs via playhead_time / is_playing / follow_cursor changes.
+        let suspended = state.follow_suspended.get_untracked();
 
         if !follow {
             return;

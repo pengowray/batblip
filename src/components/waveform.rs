@@ -256,7 +256,9 @@ pub fn Waveform() -> impl IntoView {
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
         let follow = state.follow_cursor.get();
-        let suspended = state.follow_suspended.get();
+        // Use get_untracked to avoid recursive Effect invocation — this Effect
+        // already re-runs via playhead_time / is_playing / follow_cursor changes.
+        let suspended = state.follow_suspended.get_untracked();
 
         if !follow { return; }
         if !is_playing {
