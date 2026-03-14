@@ -253,7 +253,7 @@ pub fn Spectrogram() -> impl IntoView {
                 let ag = anim_gen.clone();
                 let cb = Closure::once(move || {
                     if ag.get() != generation { return; }
-                    let tgt = label_hover_target.get_untracked();
+                    let Some(tgt) = label_hover_target.try_get_untracked() else { return; };
                     state.label_hover_opacity.set(tgt);
                 });
                 let _ = web_sys::window().unwrap().request_animation_frame(
@@ -268,8 +268,8 @@ pub fn Spectrogram() -> impl IntoView {
         let ag = anim_gen.clone();
         let cb = Closure::once(move || {
             if ag.get() != generation { return; }
-            let cur = state.label_hover_opacity.get_untracked();
-            let tgt = label_hover_target.get_untracked();
+            let Some(cur) = state.label_hover_opacity.try_get_untracked() else { return; };
+            let Some(tgt) = label_hover_target.try_get_untracked() else { return; };
             let speed = if tgt > cur { 0.35 } else { 0.20 };
             let next = cur + (tgt - cur) * speed;
             let next = if (next - tgt).abs() < 0.01 { tgt } else { next };
