@@ -1,0 +1,223 @@
+use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use crate::canvas::{tile_cache, spectral_store};
+use crate::canvas::tile_cache::TILE_COLS;
+use crate::canvas::spectrogram_renderer::FlowAlgo;
+use crate::state::AppState;
+
+/// Schedule missing normal/reassignment tiles for the visible viewport.
+///
+/// Called from the render Effect after blitting, to ensure tiles are being
+/// computed for the current viewport.
+pub fn schedule_normal_tiles(
+    state: AppState,
+    file_idx: usize,
+    total_cols: usize,
+    scroll_col: f64,
+    zoom: f64,
+    display_w: f64,
+    time_res: f64,
+    is_playing: bool,
+    reassign_on: bool,
+    disposed: &Arc<AtomicBool>,
+) {
+    let ideal_lod = tile_cache::select_lod(zoom);
+    let ratio = tile_cache::lod_ratio(ideal_lod);
+
+    // Clamp vis_start to valid range (must match renderer's clamping)
+    let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let vis_end = (vis_start + display_w / zoom).min(total_cols as f64);
+
+    if vis_end <= vis_start { return; }
+
+    // Tile range at ideal LOD
+    let vis_start_lod = vis_start * ratio;
+    let vis_end_lod = vis_end * ratio;
+    let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
+    let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+
+    // Cancel stale in-flight entries far from viewport
+    let viewport_center_tile = ((vis_start_lod + vis_end_lod) / 2.0 / TILE_COLS as f64) as usize;
+    let visible_tile_count = last_tile.saturating_sub(first_tile) + 1;
+    let keep_cancel = visible_tile_count.max(10) * 3;
+    let keep_evict = visible_tile_count.max(10) * 5;
+
+    // During playback, also protect tiles near the pre-play scroll position
+    if is_playing {
+        let pre_scroll = state.pre_play_scroll.get_untracked();
+        let pre_col = (pre_scroll / time_res).max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+        let pre_end_col = (pre_col + display_w / zoom).min(total_cols as f64);
+        let pre_center = (((pre_col * ratio) + (pre_end_col * ratio)) / 2.0 / TILE_COLS as f64) as usize;
+
+        tile_cache::cancel_far_in_flight_multi(file_idx, ideal_lod, &[
+            (viewport_center_tile, keep_cancel), (pre_center, keep_cancel)
+        ]);
+        tile_cache::evict_far_multi(file_idx, ideal_lod, &[
+            (viewport_center_tile, keep_evict), (pre_center, keep_evict)
+        ]);
+    } else {
+        tile_cache::cancel_far_in_flight(file_idx, ideal_lod, viewport_center_tile, keep_cancel);
+        tile_cache::evict_far(file_idx, ideal_lod, viewport_center_tile, keep_evict);
+    }
+
+    let is_loading = state.loading_files.with_untracked(|v| !v.is_empty());
+    let use_reassign = reassign_on && ideal_lod > 0;
+
+    for t in first_tile..=last_tile {
+        // Schedule reassignment tiles when enabled (skip LOD0)
+        if use_reassign {
+            if tile_cache::get_reassign_tile(file_idx, ideal_lod, t).is_none() {
+                tile_cache::schedule_reassign_tile(state.clone(), file_idx, ideal_lod, t);
+            }
+        }
+
+        // Always schedule normal tiles (for fallback and non-reassign mode)
+        if tile_cache::get_tile(file_idx, ideal_lod, t).is_none() {
+            tile_cache::schedule_tile_lod(state.clone(), file_idx, ideal_lod, t);
+        }
+
+        // Also ensure a LOD1 fallback tile exists (for smooth transitions)
+        if ideal_lod != 1 {
+            let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
+            if tile_cache::get_tile(file_idx, 1, fb_tile).is_none() {
+                if !is_loading {
+                    let tile_start = fb_tile * TILE_COLS;
+                    let tile_end = (tile_start + TILE_COLS).min(total_cols);
+                    if spectral_store::has_store(file_idx)
+                        && spectral_store::tile_complete(file_idx, tile_start, tile_end)
+                    {
+                        tile_cache::schedule_tile_from_store(state.clone(), file_idx, fb_tile);
+                    } else {
+                        tile_cache::schedule_tile_on_demand(state.clone(), file_idx, fb_tile);
+                    }
+                }
+            }
+        }
+    }
+
+    // When ideal LOD is 1, also schedule LOD1 from store/on-demand
+    if ideal_lod == 1 && !is_loading {
+        let lod1_first = (vis_start / TILE_COLS as f64).floor() as usize;
+        let lod1_last = ((vis_end - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+        for t in lod1_first..=lod1_last {
+            if tile_cache::get_tile(file_idx, 1, t).is_none() {
+                let tile_start = t * TILE_COLS;
+                let tile_end = (tile_start + TILE_COLS).min(total_cols);
+                if spectral_store::has_store(file_idx)
+                    && spectral_store::tile_complete(file_idx, tile_start, tile_end)
+                {
+                    tile_cache::schedule_tile_from_store(state.clone(), file_idx, t);
+                } else {
+                    tile_cache::schedule_tile_on_demand(state.clone(), file_idx, t);
+                }
+            }
+        }
+    }
+
+    // Recovery: if visible tiles are missing, force a retry after 500ms
+    let missing = tile_cache::count_missing_visible(file_idx, ideal_lod, first_tile, last_tile);
+    if missing > 0 {
+        let state_recovery = state;
+        let disposed_rc = disposed.clone();
+        let recovery_cb = Closure::once(move || {
+            if disposed_rc.load(Ordering::Relaxed) { return; }
+            state_recovery.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        });
+        let _ = web_sys::window().unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                recovery_cb.as_ref().unchecked_ref(), 500,
+            );
+        recovery_cb.forget();
+    }
+}
+
+/// Schedule missing flow tiles for the visible viewport.
+pub fn schedule_flow_tiles(
+    state: AppState,
+    file_idx: usize,
+    total_cols: usize,
+    scroll_col: f64,
+    zoom: f64,
+    display_w: f64,
+    algo: FlowAlgo,
+) {
+    let ideal_lod = tile_cache::select_lod(zoom);
+    let ratio = tile_cache::lod_ratio(ideal_lod);
+
+    let vis_start = scroll_col.max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+    let vis_end = (vis_start + display_w / zoom).min(total_cols as f64);
+    if vis_end <= vis_start { return; }
+
+    // Convert to ideal-LOD tile space
+    let vis_start_lod = vis_start * ratio;
+    let vis_end_lod = vis_end * ratio;
+    let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
+    let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
+
+    for t in first_tile..=last_tile {
+        // Schedule ideal LOD tile
+        if tile_cache::get_flow_tile(file_idx, ideal_lod, t).is_none() {
+            tile_cache::schedule_flow_tile(state.clone(), file_idx, ideal_lod, t, algo);
+        }
+
+        // Also ensure a LOD1 fallback exists for smooth transitions
+        if ideal_lod != 1 {
+            let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
+            if tile_cache::get_flow_tile(file_idx, 1, fb_tile).is_none() {
+                tile_cache::schedule_flow_tile(state.clone(), file_idx, 1, fb_tile, algo);
+            }
+        }
+    }
+}
+
+/// Set up all tile-cache-clearing Effects. Call once from the component body.
+pub fn setup_cache_clearing_effects(state: AppState) {
+    // Clear flow tile cache when algorithm or enabled state changes
+    Effect::new(move || {
+        let _display = state.spectrogram_display.get();
+        let _enabled = state.flow_enabled.get();
+        crate::canvas::tile_cache::clear_flow_cache();
+    });
+
+    // Clear all tiles when FFT mode changes
+    Effect::new(move || {
+        let _fft = state.spect_fft_mode.get();
+        crate::canvas::tile_cache::clear_all_tiles();
+        crate::canvas::tile_cache::clear_flow_cache();
+        crate::canvas::tile_cache::clear_reassign_cache();
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+
+    // Clear magnitude tiles when display transform/decimation toggles
+    {
+        let prev_xform = RwSignal::new(false);
+        let prev_decim = RwSignal::new(0u32);
+        Effect::new(move || {
+            let xform_on = state.display_transform.get();
+            let _mode = state.playback_mode.get();
+            let _het = state.het_frequency.get();
+            let _het_cut = state.het_cutoff.get();
+            let _te = state.te_factor.get();
+            let _ps = state.ps_factor.get();
+            let _pv = state.pv_factor.get();
+            let _zc = state.zc_factor.get();
+            let decim = state.display_decimate_effective.get();
+            let decim_changed = decim != prev_decim.get_untracked();
+            if xform_on || prev_xform.get_untracked() || decim_changed {
+                crate::canvas::tile_cache::clear_all_tiles();
+                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            }
+            prev_xform.set(xform_on);
+            prev_decim.set(decim);
+        });
+    }
+
+    // Clear reassignment tile cache when toggle changes
+    Effect::new(move || {
+        let _reassign = state.reassign_enabled.get();
+        crate::canvas::tile_cache::clear_reassign_cache();
+    });
+}

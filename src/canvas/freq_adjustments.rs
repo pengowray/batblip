@@ -1,0 +1,131 @@
+use leptos::prelude::*;
+use crate::state::{AppState, DisplayFilterMode};
+
+/// Compute per-row dB adjustments for display EQ and noise filtering.
+/// Returns None if no adjustments are needed (both checkboxes off).
+/// Row 0 = highest frequency, row (tile_height-1) = 0 Hz.
+pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_height: usize) -> Option<Vec<f32>> {
+    let show_eq = state.display_eq.get_untracked();
+    let show_noise = state.display_noise_filter.get_untracked();
+    if !show_eq && !show_noise {
+        return None;
+    }
+    if tile_height == 0 { return None; }
+
+    let mut adj = vec![0.0f32; tile_height];
+
+    // EQ: apply per-band dB offsets
+    if show_eq && state.filter_enabled.get_untracked() {
+        let freq_low = state.filter_freq_low.get_untracked();
+        let freq_high = state.filter_freq_high.get_untracked();
+        let db_below = state.filter_db_below.get_untracked() as f32;
+        let db_selected = state.filter_db_selected.get_untracked() as f32;
+        let db_harmonics = state.filter_db_harmonics.get_untracked() as f32;
+        let db_above = state.filter_db_above.get_untracked() as f32;
+        let band_mode = state.filter_band_mode.get_untracked();
+        let harm_active = band_mode >= 4 && freq_high > 0.0 && (freq_high / freq_low.max(1.0)) < 2.0;
+        let harm_upper = freq_high * 2.0;
+
+        for row in 0..tile_height {
+            let bin = tile_height - 1 - row; // bin 0 = DC
+            let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+            let eq_db = if freq < freq_low {
+                db_below
+            } else if freq <= freq_high {
+                db_selected
+            } else if band_mode <= 2 {
+                db_selected
+            } else if harm_active && freq <= harm_upper {
+                db_harmonics
+            } else {
+                db_above
+            };
+            adj[row] += eq_db;
+        }
+    }
+
+    // Noise filtering: notch bands + spectral subtraction
+    if show_noise {
+        // Notch bands: check DSP filter state to determine if notch should show
+        let show_notch = {
+            let dsp_on = state.display_filter_enabled.get_untracked();
+            if dsp_on {
+                // DSP panel controls notch display
+                match state.display_filter_notch.get_untracked() {
+                    DisplayFilterMode::Off => false,
+                    DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch_enabled.get_untracked(),
+                    DisplayFilterMode::Custom => false,
+                }
+            } else {
+                // Legacy: notch shows when playback notch is on
+                state.notch_enabled.get_untracked()
+            }
+        };
+        if show_notch {
+            let bands = state.notch_bands.get_untracked();
+            let harm_supp = state.notch_harmonic_suppression.get_untracked();
+            for row in 0..tile_height {
+                let bin = tile_height - 1 - row;
+                let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+                for band in &bands {
+                    if !band.enabled { continue; }
+                    let half_bw = band.bandwidth_hz / 2.0;
+                    // Primary notch
+                    if (freq - band.center_hz).abs() <= half_bw {
+                        adj[row] -= band.strength_db as f32;
+                    }
+                    // Harmonic suppression at 2x and 3x
+                    if harm_supp > 0.0 {
+                        for harmonic in [2.0, 3.0] {
+                            let hfreq = band.center_hz * harmonic;
+                            if (freq - hfreq).abs() <= half_bw * harmonic {
+                                adj[row] -= (band.strength_db * harm_supp) as f32;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Spectral subtraction: use display auto noise floor when DSP NR is Auto,
+        // custom strength when Custom, or playback noise floor when Same/fallback.
+        {
+            let dsp_enabled = state.display_filter_enabled.get_untracked();
+            let nr_mode = state.display_filter_nr.get_untracked();
+
+            let (nf_opt, strength) = if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
+                // Auto: use display-specific auto-learned floor
+                (state.display_auto_noise_floor.get_untracked(), 0.8)
+            } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
+                // Custom: prefer display auto floor with custom strength
+                let floor = state.display_auto_noise_floor.get_untracked()
+                    .or_else(|| state.noise_reduce_floor.get_untracked());
+                (floor, state.display_nr_strength.get_untracked())
+            } else if state.noise_reduce_enabled.get_untracked() {
+                // Same/fallback: use playback noise floor
+                (state.noise_reduce_floor.get_untracked(), state.noise_reduce_strength.get_untracked())
+            } else {
+                (None, 0.0)
+            };
+
+            if let Some(nf) = nf_opt {
+                let nf_bins = nf.bin_magnitudes.len();
+                let nf_max_freq = nf.sample_rate as f64 / 2.0;
+                for row in 0..tile_height {
+                    let bin = tile_height - 1 - row;
+                    let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+                    let nf_bin = ((freq / nf_max_freq) * (nf_bins - 1) as f64).round() as usize;
+                    if nf_bin < nf_bins {
+                        let noise_mag = nf.bin_magnitudes[nf_bin];
+                        if noise_mag > 1e-15 {
+                            let noise_db = 20.0 * (noise_mag as f32).log10();
+                            adj[row] -= noise_db * strength as f32;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(adj)
+}

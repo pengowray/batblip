@@ -1,9 +1,13 @@
 pub mod colors;
 pub mod colormap_2d;
+pub mod coord;
 pub mod flow;
+pub mod freq_adjustments;
+pub mod hit_test;
 pub mod overlays;
 pub mod spectrogram_renderer;
 pub mod waveform_renderer;
 pub mod tile_cache;
+pub mod tile_scheduler;
 pub mod spectral_store;
 pub mod time_markers;

@@ -4,6 +4,7 @@ pub mod slider_row;
 pub mod file_sidebar;
 pub mod right_sidebar;
 pub mod spectrogram;
+pub mod spectrogram_events;
 pub mod waveform;
 pub mod toolbar;
 pub mod analysis_panel;

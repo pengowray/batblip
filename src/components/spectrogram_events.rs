@@ -1,0 +1,718 @@
+use leptos::prelude::*;
+use web_sys::{HtmlCanvasElement, MouseEvent};
+use crate::canvas::coord::pointer_to_xtf;
+use crate::canvas::hit_test::hit_test_spec_handles;
+use crate::canvas::spectrogram_renderer;
+use crate::state::{AppState, CanvasTool, SpectrogramHandle, Selection};
+
+pub const LABEL_AREA_WIDTH: f64 = 60.0;
+
+/// Local interaction state for the spectrogram component.
+/// These signals are only used by event handlers, not by rendering.
+#[derive(Copy, Clone)]
+pub struct SpectInteraction {
+    /// Drag start for selection tool: (time, freq)
+    pub drag_start: RwSignal<(f64, f64)>,
+    /// Hand-tool drag state: (initial_client_x, initial_scroll_offset)
+    pub hand_drag_start: RwSignal<(f64, f64)>,
+    /// Pinch-to-zoom state (two-finger touch)
+    pub pinch_state: RwSignal<Option<crate::components::pinch::PinchState>>,
+    /// Raw (un-snapped) frequency where axis drag started
+    pub axis_drag_raw_start: RwSignal<f64>,
+    /// Label hover animation target (0.0 or 1.0)
+    pub label_hover_target: RwSignal<f64>,
+    /// Double-tap detection: timestamp of last tap
+    pub last_tap_time: RwSignal<f64>,
+    /// Double-tap detection: x-position of last tap
+    pub last_tap_x: RwSignal<f64>,
+    /// Time-axis tooltip: (x_px, tooltip_text) — None when not hovering the axis
+    pub time_axis_tooltip: RwSignal<Option<(f64, String)>>,
+}
+
+impl SpectInteraction {
+    pub fn new() -> Self {
+        Self {
+            drag_start: RwSignal::new((0.0f64, 0.0f64)),
+            hand_drag_start: RwSignal::new((0.0f64, 0.0f64)),
+            pinch_state: RwSignal::new(None),
+            axis_drag_raw_start: RwSignal::new(0.0f64),
+            label_hover_target: RwSignal::new(0.0f64),
+            last_tap_time: RwSignal::new(0.0f64),
+            last_tap_x: RwSignal::new(0.0f64),
+            time_axis_tooltip: RwSignal::new(None),
+        }
+    }
+}
+
+/// Apply a frequency handle drag (FF or HET). Shared by mouse and touch handlers.
+pub fn apply_handle_drag(
+    state: AppState,
+    handle: SpectrogramHandle,
+    freq_at_pointer: f64,
+    file_max_freq: f64,
+) {
+    match handle {
+        SpectrogramHandle::FfUpper => {
+            let lo = state.ff_freq_lo.get_untracked();
+            let clamped = freq_at_pointer.clamp(lo + 500.0, file_max_freq);
+            state.set_ff_hi(clamped);
+        }
+        SpectrogramHandle::FfLower => {
+            let hi = state.ff_freq_hi.get_untracked();
+            let clamped = freq_at_pointer.clamp(0.0, hi - 500.0);
+            state.set_ff_lo(clamped);
+        }
+        SpectrogramHandle::FfMiddle => {
+            let lo = state.ff_freq_lo.get_untracked();
+            let hi = state.ff_freq_hi.get_untracked();
+            let bw = hi - lo;
+            let mid = (lo + hi) / 2.0;
+            let delta = freq_at_pointer - mid;
+            let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
+            let new_hi = new_lo + bw;
+            state.set_ff_range(new_lo, new_hi);
+        }
+        SpectrogramHandle::HetCenter => {
+            state.het_freq_auto.set(false);
+            let clamped = freq_at_pointer.clamp(1000.0, file_max_freq);
+            state.het_frequency.set(clamped);
+        }
+        SpectrogramHandle::HetBandUpper => {
+            state.het_cutoff_auto.set(false);
+            let het_freq = state.het_frequency.get_untracked();
+            let new_cutoff = (freq_at_pointer - het_freq).clamp(1000.0, 30000.0);
+            state.het_cutoff.set(new_cutoff);
+        }
+        SpectrogramHandle::HetBandLower => {
+            state.het_cutoff_auto.set(false);
+            let het_freq = state.het_frequency.get_untracked();
+            let new_cutoff = (het_freq - freq_at_pointer).clamp(1000.0, 30000.0);
+            state.het_cutoff.set(new_cutoff);
+        }
+    }
+}
+
+/// Apply axis drag (frequency range selection on left axis).
+/// Returns true if a meaningful range was updated.
+pub fn apply_axis_drag(
+    state: AppState,
+    raw_start: f64,
+    freq: f64,
+    snap: f64,
+) {
+    let (snapped_start, snapped_end) = if freq > raw_start {
+        // Dragging up: start floors down, end ceils up
+        ((raw_start / snap).floor() * snap, (freq / snap).ceil() * snap)
+    } else if freq < raw_start {
+        // Dragging down: start ceils up, end floors down
+        ((raw_start / snap).ceil() * snap, (freq / snap).floor() * snap)
+    } else {
+        let s = (raw_start / snap).round() * snap;
+        (s, s)
+    };
+    state.axis_drag_start_freq.set(Some(snapped_start));
+    state.axis_drag_current_freq.set(Some(snapped_end));
+    // Live update FF range
+    let lo = snapped_start.min(snapped_end);
+    let hi = snapped_start.max(snapped_end);
+    if hi - lo > 500.0 {
+        state.set_ff_range(lo, hi);
+    }
+}
+
+/// Resolve a pointer's pixel-Y into a frequency, given canvas and display state.
+/// Shared helper for handle-drag in both mouse and touch handlers.
+pub fn resolve_freq_at_pointer(
+    px_y: f64,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) -> Option<(f64, f64)> {
+    let canvas_el = canvas_ref.get()?;
+    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+    let ch = canvas.height() as f64;
+    let files = state.files.get_untracked();
+    let idx = state.current_file_index.get_untracked();
+    let file = idx.and_then(|i| files.get(i));
+    let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+    let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+    let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+    let freq = spectrogram_renderer::y_to_freq(px_y, min_freq_val, max_freq_val, ch);
+    Some((freq, file_max_freq))
+}
+
+/// Finalize axis drag — auto-enable HFR if a meaningful range was selected.
+pub fn finalize_axis_drag(state: AppState) {
+    let stack = state.focus_stack.get_untracked();
+    let range = stack.effective_range_ignoring_hfr();
+    if range.hi - range.lo > 500.0 && !stack.hfr_enabled() {
+        state.toggle_hfr();
+    }
+    state.axis_drag_start_freq.set(None);
+    state.axis_drag_current_freq.set(None);
+    state.is_dragging.set(false);
+}
+
+/// Perform hand-tool panning given a delta from the drag start.
+pub fn apply_hand_pan(
+    state: AppState,
+    client_x: f64,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    hand_drag_start: (f64, f64),
+) {
+    let (start_client_x, start_scroll) = hand_drag_start;
+    let dx = client_x - start_client_x;
+    let Some(canvas_el) = canvas_ref.get() else { return };
+    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+    let cw = canvas.width() as f64;
+    if cw == 0.0 { return; }
+    let files = state.files.get_untracked();
+    let idx = state.current_file_index.get_untracked();
+    let file = idx.and_then(|i| files.get(i));
+    let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+    let zoom = state.zoom_level.get_untracked();
+    let visible_time = (cw / zoom) * time_res;
+    let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+    let max_scroll = (duration - visible_time).max(0.0);
+    let dt = -(dx / cw) * visible_time;
+    state.suspend_follow();
+    state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+}
+
+// ── Mouse event handlers ───────────────────────────────────────────────────
+
+pub fn on_mousedown(
+    ev: MouseEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    if ev.button() != 0 { return; }
+
+    // Check for spec handle drag first (FF or HET — takes priority over tool)
+    if let Some(handle) = state.spec_hover_handle.get_untracked() {
+        state.spec_drag_handle.set(Some(handle));
+        state.is_dragging.set(true);
+        ev.prevent_default();
+        return;
+    }
+
+    // Check for axis drag (left axis frequency range selection) — disabled in xform view
+    if let Some((px_x, _, _, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
+            let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+            let snapped = (freq / snap).round() * snap;
+            ix.axis_drag_raw_start.set(freq);
+            state.axis_drag_start_freq.set(Some(snapped));
+            state.axis_drag_current_freq.set(Some(snapped));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
+    }
+
+    match state.canvas_tool.get_untracked() {
+        CanvasTool::Hand => {
+            state.is_dragging.set(true);
+            ix.hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+        }
+        CanvasTool::Selection => {
+            if let Some((_, _, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+                state.is_dragging.set(true);
+                ix.drag_start.set((t, f));
+                state.selection.set(None);
+            }
+        }
+    }
+}
+
+pub fn on_mousemove(
+    ev: MouseEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    if let Some((px_x, px_y, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        // Always track hover position
+        state.mouse_freq.set(Some(f));
+        state.mouse_canvas_x.set(px_x);
+        state.cursor_time.set(Some(t));
+
+        // Time-axis tooltip: show full datetime when hovering bottom 16px
+        if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.get_bounding_client_rect().height();
+            if px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH {
+                let tooltip = state.current_file()
+                    .and_then(|f| f.recording_start_info())
+                    .map(|(epoch, source)| {
+                        crate::canvas::time_markers::format_clock_time_full(epoch, t, source)
+                    });
+                if let Some(text) = tooltip {
+                    ix.time_axis_tooltip.set(Some((px_x, text)));
+                } else {
+                    ix.time_axis_tooltip.set(None);
+                }
+            } else {
+                ix.time_axis_tooltip.set(None);
+            }
+        }
+
+        // Update label hover target and in-label-area state
+        let in_label_area = px_x < LABEL_AREA_WIDTH;
+        state.mouse_in_label_area.set(in_label_area);
+        let current_target = ix.label_hover_target.get_untracked();
+        let new_target = if in_label_area { 1.0 } else { 0.0 };
+        if current_target != new_target {
+            ix.label_hover_target.set(new_target);
+        }
+
+        if state.is_dragging.get_untracked() {
+            // Spec handle drag takes priority
+            if let Some(handle) = state.spec_drag_handle.get_untracked() {
+                if let Some((freq_at_mouse, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
+                    apply_handle_drag(state, handle, freq_at_mouse, file_max_freq);
+                }
+                return;
+            }
+
+            // Axis drag takes second priority
+            if state.axis_drag_start_freq.get_untracked().is_some() {
+                let raw_start = ix.axis_drag_raw_start.get_untracked();
+                let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+                apply_axis_drag(state, raw_start, f, snap);
+                return;
+            }
+
+            match state.canvas_tool.get_untracked() {
+                CanvasTool::Hand => {
+                    apply_hand_pan(state, ev.client_x() as f64, canvas_ref, ix.hand_drag_start.get_untracked());
+                }
+                CanvasTool::Selection => {
+                    let (t0, f0) = ix.drag_start.get_untracked();
+                    state.selection.set(Some(Selection {
+                        time_start: t0.min(t),
+                        time_end: t0.max(t),
+                        freq_low: Some(f0.min(f)),
+                        freq_high: Some(f0.max(f)),
+                    }));
+                }
+            }
+        } else {
+            // Not dragging — do spec handle hover detection (FF + HET)
+            // Skip handle hover when in label area (to allow axis drag)
+            if !in_label_area {
+                if let Some((_, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
+                    let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+                    let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+                    let canvas_el = canvas_ref.get();
+                    if let Some(canvas_el) = canvas_el {
+                        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                        let ch = canvas.height() as f64;
+                        let handle = hit_test_spec_handles(
+                            &state, px_y, min_freq_val, max_freq_val, ch, 8.0,
+                        );
+                        state.spec_hover_handle.set(handle);
+                    }
+                }
+            } else {
+                state.spec_hover_handle.set(None);
+            }
+        }
+    }
+}
+
+pub fn on_mouseleave(
+    _ev: MouseEvent,
+    ix: SpectInteraction,
+    state: AppState,
+) {
+    state.mouse_freq.set(None);
+    state.mouse_in_label_area.set(false);
+    state.cursor_time.set(None);
+    ix.label_hover_target.set(0.0);
+    state.is_dragging.set(false);
+    state.spec_drag_handle.set(None);
+    state.spec_hover_handle.set(None);
+    state.axis_drag_start_freq.set(None);
+    state.axis_drag_current_freq.set(None);
+    ix.time_axis_tooltip.set(None);
+}
+
+pub fn on_mouseup(
+    ev: MouseEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    if !state.is_dragging.get_untracked() { return; }
+
+    // End HET/FF handle drag
+    if state.spec_drag_handle.get_untracked().is_some() {
+        state.spec_drag_handle.set(None);
+        state.is_dragging.set(false);
+        return;
+    }
+
+    // End axis drag (FF range already updated live during drag)
+    if state.axis_drag_start_freq.get_untracked().is_some() {
+        finalize_axis_drag(state);
+        return;
+    }
+
+    state.is_dragging.set(false);
+
+    if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+        // If the mouse barely moved, treat as a click → bookmark while playing
+        let (start_x, _) = ix.hand_drag_start.get_untracked();
+        let dx = (ev.client_x() as f64 - start_x).abs();
+        if dx < 3.0 && state.is_playing.get_untracked() {
+            let t = state.playhead_time.get_untracked();
+            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+        }
+        return;
+    }
+    if state.canvas_tool.get_untracked() != CanvasTool::Selection { return; }
+    if let Some((_, _, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        let (t0, f0) = ix.drag_start.get_untracked();
+        let sel = Selection {
+            time_start: t0.min(t),
+            time_end: t0.max(t),
+            freq_low: Some(f0.min(f)),
+            freq_high: Some(f0.max(f)),
+        };
+        if sel.time_end - sel.time_start > 0.0001 {
+            state.selection.set(Some(sel));
+            if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                if hi - lo > 100.0 {
+                    state.set_ff_range(lo, hi);
+                }
+            }
+        } else {
+            state.selection.set(None);
+        }
+    }
+}
+
+pub fn on_dblclick(
+    ev: MouseEvent,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    let has_range = state.ff_freq_hi.get_untracked() > state.ff_freq_lo.get_untracked();
+    if !has_range { return; }
+
+    if let Some((px_x, _, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        let in_label = px_x < LABEL_AREA_WIDTH;
+        let on_handle = matches!(
+            state.spec_hover_handle.get_untracked(),
+            Some(SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle)
+        );
+        if in_label || on_handle {
+            state.toggle_hfr();
+            ev.prevent_default();
+        }
+    }
+}
+
+// ── Touch event handlers ───────────────────────────────────────────────────
+
+pub fn on_touchstart(
+    ev: web_sys::TouchEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    let touches = ev.touches();
+    let n = touches.length();
+
+    // Two-finger: initialize pinch-to-zoom
+    if n == 2 {
+        ev.prevent_default();
+        use crate::components::pinch::{two_finger_geometry, PinchState};
+        if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            let file = idx.and_then(|i| files.get(i));
+            let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+            ix.pinch_state.set(Some(PinchState {
+                initial_dist: dist,
+                initial_zoom: state.zoom_level.get_untracked(),
+                initial_scroll: state.scroll_offset.get_untracked(),
+                initial_mid_client_x: mid_x,
+                time_res,
+                duration,
+            }));
+        }
+        // End any in-progress single-touch gesture
+        state.is_dragging.set(false);
+        state.spec_drag_handle.set(None);
+        state.axis_drag_start_freq.set(None);
+        state.axis_drag_current_freq.set(None);
+        return;
+    }
+
+    if n != 1 { return; }
+    // Transitioning from 2 to 1 finger — re-anchor pan position
+    if ix.pinch_state.get_untracked().is_some() {
+        ix.pinch_state.set(None);
+        if let Some(touch) = touches.get(0) {
+            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+                state.is_dragging.set(true);
+            }
+        }
+        return;
+    }
+
+    let touch = touches.get(0).unwrap();
+
+    // Check for spec handle drag first — hit-test at touch position
+    if let Some((_, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+        if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.height() as f64;
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            let file = idx.and_then(|i| files.get(i));
+            let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+            let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+            let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+            let handle = hit_test_spec_handles(
+                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
+            );
+            if let Some(handle) = handle {
+                state.spec_drag_handle.set(Some(handle));
+                state.is_dragging.set(true);
+                ev.prevent_default();
+                return;
+            }
+        }
+    }
+
+    // Check for axis drag
+    if let Some((px_x, _, _, freq)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+        if px_x < LABEL_AREA_WIDTH {
+            let snap = 5_000.0;
+            let snapped = (freq / snap).round() * snap;
+            ix.axis_drag_raw_start.set(freq);
+            state.axis_drag_start_freq.set(Some(snapped));
+            state.axis_drag_current_freq.set(Some(snapped));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
+    }
+
+    match state.canvas_tool.get_untracked() {
+        CanvasTool::Hand => {
+            ev.prevent_default();
+            state.is_dragging.set(true);
+            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+        }
+        CanvasTool::Selection => {
+            ev.prevent_default();
+        }
+    }
+}
+
+pub fn on_touchmove(
+    ev: web_sys::TouchEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    let touches = ev.touches();
+    let n = touches.length();
+
+    // Two-finger pinch/pan
+    if n == 2 {
+        if let Some(ps) = ix.pinch_state.get_untracked() {
+            ev.prevent_default();
+            use crate::components::pinch::{two_finger_geometry, apply_pinch};
+            if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+                let Some(canvas_el) = canvas_ref.get() else { return };
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let rect = canvas.get_bounding_client_rect();
+                let cw = canvas.width() as f64;
+                let (new_zoom, new_scroll) = apply_pinch(&ps, dist, mid_x, rect.left(), cw);
+                state.suspend_follow();
+                state.zoom_level.set(new_zoom);
+                state.scroll_offset.set(new_scroll);
+            }
+        }
+        return;
+    }
+
+    if n != 1 { return; }
+    let touch = touches.get(0).unwrap();
+
+    if !state.is_dragging.get_untracked() { return; }
+    ev.prevent_default();
+
+    // Spec handle drag takes priority
+    if let Some(handle) = state.spec_drag_handle.get_untracked() {
+        if let Some((_, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+            if let Some((freq_at_touch, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
+                apply_handle_drag(state, handle, freq_at_touch, file_max_freq);
+            }
+        }
+        return;
+    }
+
+    // Axis drag takes second priority
+    if state.axis_drag_start_freq.get_untracked().is_some() {
+        if let Some((_, _, _, f)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+            let raw_start = ix.axis_drag_raw_start.get_untracked();
+            let snap = 5_000.0;
+            apply_axis_drag(state, raw_start, f, snap);
+        }
+        return;
+    }
+
+    match state.canvas_tool.get_untracked() {
+        CanvasTool::Hand => {
+            apply_hand_pan(state, touch.client_x() as f64, canvas_ref, ix.hand_drag_start.get_untracked());
+        }
+        CanvasTool::Selection => {}
+    }
+}
+
+pub fn on_touchend(
+    ev: web_sys::TouchEvent,
+    ix: SpectInteraction,
+    canvas_ref: &NodeRef<leptos::html::Canvas>,
+    state: AppState,
+) {
+    let remaining = ev.touches().length();
+
+    if remaining < 2 {
+        ix.pinch_state.set(None);
+    }
+
+    // One finger remains after pinch — re-anchor pan to avoid jump
+    if remaining == 1 {
+        if let Some(touch) = ev.touches().get(0) {
+            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+                state.is_dragging.set(true);
+            }
+        }
+        return;
+    }
+
+    if remaining == 0 {
+        if state.spec_drag_handle.get_untracked().is_some() {
+            state.spec_drag_handle.set(None);
+            state.is_dragging.set(false);
+            return;
+        }
+        // Finalize axis drag
+        if state.axis_drag_start_freq.get_untracked().is_some() {
+            finalize_axis_drag(state);
+            return;
+        }
+        state.is_dragging.set(false);
+
+        // Hand tool: bookmark on tap (no significant drag) while playing
+        if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+            if let Some(touch) = ev.changed_touches().get(0) {
+                let (start_x, _) = ix.hand_drag_start.get_untracked();
+                let dx = (touch.client_x() as f64 - start_x).abs();
+                if dx < 5.0 && state.is_playing.get_untracked() {
+                    let t = state.playhead_time.get_untracked();
+                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                }
+            }
+        }
+
+        // Update frequency focus from selection
+        if state.canvas_tool.get_untracked() == CanvasTool::Selection {
+            if let Some(sel) = state.selection.get_untracked() {
+                if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                    if hi - lo > 100.0 {
+                        state.set_ff_range(lo, hi);
+                    }
+                }
+            }
+        }
+
+        // Double-tap detection: if two taps within 400ms in label area → toggle HFR
+        if let Some(touch) = ev.changed_touches().get(0) {
+            if let Some((px_x, _, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+                let now = js_sys::Date::now();
+                let prev_time = ix.last_tap_time.get_untracked();
+                let prev_x = ix.last_tap_x.get_untracked();
+                ix.last_tap_time.set(now);
+                ix.last_tap_x.set(px_x);
+                let in_label = px_x < LABEL_AREA_WIDTH;
+                let prev_in_label = prev_x < LABEL_AREA_WIDTH;
+                if now - prev_time < 400.0 && in_label && prev_in_label {
+                    let has_range = state.ff_freq_hi.get_untracked() > state.ff_freq_lo.get_untracked();
+                    if has_range {
+                        state.toggle_hfr();
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn on_wheel(
+    ev: web_sys::WheelEvent,
+    state: AppState,
+) {
+    ev.prevent_default();
+    if ev.shift_key() {
+        // Shift+scroll: vertical freq zoom around mouse position
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file_max_freq = idx
+            .and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .unwrap_or(96_000.0);
+        let cur_max = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+        let cur_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
+        let range = cur_max - cur_min;
+        if range < 1.0 { return; }
+
+        let anchor_frac = if let Some(mf) = state.mouse_freq.get_untracked() {
+            ((mf - cur_min) / range).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+
+        let factor = if ev.delta_y() > 0.0 { 1.15 } else { 1.0 / 1.15 };
+        let new_range = (range * factor).clamp(500.0, file_max_freq);
+        let anchor_freq = cur_min + anchor_frac * range;
+        let new_min = (anchor_freq - anchor_frac * new_range).max(0.0);
+        let new_max = (new_min + new_range).min(file_max_freq);
+        let new_min = (new_max - new_range).max(0.0);
+
+        state.min_display_freq.set(Some(new_min));
+        state.max_display_freq.set(Some(new_max));
+    } else if ev.ctrl_key() {
+        let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
+        state.zoom_level.update(|z| {
+            *z = (*z * delta).max(0.1).min(400.0);
+        });
+    } else {
+        let delta = (ev.delta_y() + ev.delta_x()) * 0.001;
+        let max_scroll = {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked().unwrap_or(0);
+            if let Some(file) = files.get(idx) {
+                let zoom = state.zoom_level.get_untracked();
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
+                (file.audio.duration_secs - visible_time).max(0.0)
+            } else {
+                f64::MAX
+            }
+        };
+        state.suspend_follow();
+        state.scroll_offset.update(|s| {
+            *s = (*s + delta).clamp(0.0, max_scroll);
+        });
+    }
+}
