@@ -550,40 +550,6 @@ fn AnnotationsList() -> impl IntoView {
                                 disabled=move || selected_is_group().is_none()
                             >"Ungroup"</button>
                         </div>
-                        <div class="setting-row" style="gap: 4px; align-items: center;">
-                            <button
-                                class="sidebar-btn"
-                                style="flex: 1;"
-                                on:click=move |_| {
-                                    crate::audio::export::export_selected(&state);
-                                }
-                                disabled=move || crate::audio::export::get_export_info(&state).is_none()
-                            >
-                                {move || {
-                                    match crate::audio::export::get_export_info(&state) {
-                                        Some(info) => {
-                                            let mode_suffix = info.mode_label
-                                                .map(|m| format!(" ({m})"))
-                                                .unwrap_or_default();
-                                            format!("Export {} {} to .wav{}", info.count, info.source_label, mode_suffix)
-                                        }
-                                        None => "Export to .wav".to_string(),
-                                    }
-                                }}
-                            </button>
-                        </div>
-                        <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
-                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                <input type="checkbox"
-                                    prop:checked=move || state.export_use_region_focus.get()
-                                    on:change=move |ev| {
-                                        let checked = leptos::prelude::event_target_checked(&ev);
-                                        state.export_use_region_focus.set(checked);
-                                    }
-                                />
-                                "Use region frequency focus"
-                            </label>
-                        </div>
                         <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
                             <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
                                 <input type="checkbox"
@@ -602,6 +568,40 @@ fn AnnotationsList() -> impl IntoView {
                 view! { <div></div> }.into_any()
             }
         }}
+        <div class="setting-row" style="gap: 4px; align-items: center;">
+            <button
+                class="sidebar-btn"
+                style="flex: 1;"
+                on:click=move |_| {
+                    crate::audio::export::export_selected(&state);
+                }
+                disabled=move || crate::audio::export::get_export_info(&state).is_none()
+            >
+                {move || {
+                    match crate::audio::export::get_export_info(&state) {
+                        Some(info) => {
+                            let mode_suffix = info.mode_label
+                                .map(|m| format!(" ({m})"))
+                                .unwrap_or_default();
+                            format!("Export {} {} to .wav{}", info.count, info.source_label, mode_suffix)
+                        }
+                        None => "Export to .wav".to_string(),
+                    }
+                }}
+            </button>
+        </div>
+        <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
+            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox"
+                    prop:checked=move || state.export_use_region_focus.get()
+                    on:change=move |ev| {
+                        let checked = leptos::prelude::event_target_checked(&ev);
+                        state.export_use_region_focus.set(checked);
+                    }
+                />
+                "Use region frequency focus"
+            </label>
+        </div>
         <div class="setting-row" style="gap: 4px;">
             <button
                 class="sidebar-btn"
