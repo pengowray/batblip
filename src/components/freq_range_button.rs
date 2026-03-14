@@ -83,32 +83,37 @@ pub fn FreqRangeButton() -> impl IntoView {
                         )
                     }}</span>
                 </button>
-                {move || is_open().then(|| {
-                    let fm = file_max();
-                    let cur_max = state.max_display_freq.get();
-                    let is_full = cur_max.is_none() || cur_max == Some(fm);
-                    let is_22k = cur_max.map_or(false, |m| (m - 22_000.0).abs() < 100.0);
-                    let is_50k = cur_max.map_or(false, |m| (m - 50_000.0).abs() < 100.0);
-                    let is_100k = cur_max.map_or(false, |m| (m - 100_000.0).abs() < 100.0);
-
-                    view! {
-                        <div class="layer-panel" style="left: 0; top: 34px; min-width: 140px;">
-                            <div class="layer-panel-title">"Freq Range"</div>
-                            <button class=layer_opt_class(is_full)
-                                on:click=set_range(None, None)
-                            >"Full"</button>
-                            <button class=layer_opt_class(is_22k)
-                                on:click=set_range(Some(0.0), Some(22_000.0))
-                            >"0 – 22 kHz"</button>
-                            <button class=layer_opt_class(is_50k)
-                                on:click=set_range(Some(0.0), Some(50_000.0))
-                            >"0 – 50 kHz"</button>
-                            <button class=layer_opt_class(is_100k)
-                                on:click=set_range(Some(0.0), Some(100_000.0))
-                            >"0 – 100 kHz"</button>
-                        </div>
-                    }
-                })}
+                <Show when=move || is_open()>
+                    <div class="layer-panel" style="left: 0; top: 34px; min-width: 140px;">
+                        <div class="layer-panel-title">"Freq Range"</div>
+                        <button class=move || {
+                            let cur_max = state.max_display_freq.get();
+                            let fm = file_max();
+                            let full = cur_max.is_none() || cur_max == Some(fm);
+                            layer_opt_class(full)
+                        }
+                            on:click=set_range(None, None)
+                        >"Full"</button>
+                        <button class=move || {
+                            let is_22k = state.max_display_freq.get().map_or(false, |m| (m - 22_000.0).abs() < 100.0);
+                            layer_opt_class(is_22k)
+                        }
+                            on:click=set_range(Some(0.0), Some(22_000.0))
+                        >"0 – 22 kHz"</button>
+                        <button class=move || {
+                            let is_50k = state.max_display_freq.get().map_or(false, |m| (m - 50_000.0).abs() < 100.0);
+                            layer_opt_class(is_50k)
+                        }
+                            on:click=set_range(Some(0.0), Some(50_000.0))
+                        >"0 – 50 kHz"</button>
+                        <button class=move || {
+                            let is_100k = state.max_display_freq.get().map_or(false, |m| (m - 100_000.0).abs() < 100.0);
+                            layer_opt_class(is_100k)
+                        }
+                            on:click=set_range(Some(0.0), Some(100_000.0))
+                        >"0 – 100 kHz"</button>
+                    </div>
+                </Show>
             </div>
         </div>
     }
