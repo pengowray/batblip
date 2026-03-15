@@ -6,6 +6,7 @@ use crate::project::BatProject;
 use crate::project_store;
 use crate::annotations::AudioFileMetadata;
 use crate::opfs;
+use crate::format_time::format_duration_compact;
 
 /// Helper: build AudioFileMetadata from a LoadedFile.
 fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
@@ -438,7 +439,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     }}
                 </div>
                 <div class="project-file-info">
-                    {duration.map(|d| format!("{d:.1}s")).unwrap_or_default()}
+                    {duration.map(|d| format_duration_compact(d)).unwrap_or_default()}
                     {sample_rate.map(|sr| format!("  {}kHz", sr / 1000)).unwrap_or_default()}
                     {if has_annotations { " annot." } else { "" }}
                     {if has_noise { " NR" } else { "" }}

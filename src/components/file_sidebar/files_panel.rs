@@ -12,6 +12,7 @@ use crate::types::PreviewImage;
 
 use super::file_groups;
 use crate::timeline::TimelineView;
+use crate::format_time::format_duration_compact;
 
 use super::loading::{read_and_load_file, DemoEntry, fetch_demo_index, load_single_demo};
 
@@ -227,10 +228,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     let gap_view = if let Some(gap) = cur_seq.gap_from_prev_secs {
                                         let (label, cls) = if gap.abs() < 0.01 {
                                             ("continuous".to_string(), "seq-gap-row continuous")
-                                        } else if gap <= 60.0 {
-                                            (format!("{gap:.1}s gap"), "seq-gap-row")
+                                        } else if gap > 60.0 {
+                                            (format!("{} gap", format_duration_compact(gap)), "seq-gap-row large-gap")
                                         } else {
-                                            (format!("{gap:.0}s gap"), "seq-gap-row large-gap")
+                                            (format!("{} gap", format_duration_compact(gap)), "seq-gap-row")
                                         };
                                         view! { <div class=cls>{label}</div> }.into_any()
                                     } else {
@@ -359,7 +360,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         })}
                                         {seq_badge.map(|si| {
                                             view! { <span class="file-badge file-badge-seq"
-                                                title=si.gap_from_prev_secs.map(|g| format!("Gap: {g:.1}s")).unwrap_or_default()
+                                                title=si.gap_from_prev_secs.map(|g| format!("Gap: {}", format_duration_compact(g))).unwrap_or_default()
                                             >{format!("#{}", si.sequence_number)}</span> }
                                         })}
                                         {if is_streaming {
@@ -382,7 +383,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     <button class="file-item-close" on:click=on_close>"×"</button>
                                 </div>
                                 <div class="file-item-info">
-                                    {format!("{:.1}s  {}kHz", dur, sr / 1000)}
+                                    {format!("{}  {}kHz", format_duration_compact(dur), sr / 1000)}
                                 </div>
                             </div>
                         }.into_any();
@@ -461,7 +462,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     view! {
                                         <div class="timeline-banner">
                                             <span class="timeline-banner-label">
-                                                {format!("Timeline: {} files, {:.1}s", seg_count, total_dur)}
+                                                {format!("Timeline: {} files, {}", seg_count, format_duration_compact(total_dur))}
                                             </span>
                                             <button class="timeline-exit-btn" on:click=on_exit_timeline
                                                 title="Exit timeline view"

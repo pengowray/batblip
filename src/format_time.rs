@@ -99,6 +99,36 @@ pub fn format_duration(seconds: f64, precision: u8) -> String {
     format_time_display(seconds.abs(), precision)
 }
 
+/// Format a duration compactly for UI lists (file lengths, gaps, etc.).
+///
+/// - Under 90s: `45.1s`
+/// - 90s–1h: `5m30s`
+/// - Over 1h: `9h44m22s`
+pub fn format_duration_compact(seconds: f64) -> String {
+    let abs = seconds.abs();
+    if abs < 90.0 {
+        format!("{abs:.1}s")
+    } else if abs < 3600.0 {
+        let mins = (abs / 60.0).floor() as u32;
+        let secs = (abs - mins as f64 * 60.0).round() as u32;
+        if secs == 60 {
+            format!("{}m00s", mins + 1)
+        } else {
+            format!("{mins}m{secs:02}s")
+        }
+    } else {
+        let hours = (abs / 3600.0).floor() as u32;
+        let rem = abs - hours as f64 * 3600.0;
+        let mins = (rem / 60.0).floor() as u32;
+        let secs = (rem - mins as f64 * 60.0).round() as u32;
+        if secs == 60 {
+            format!("{hours}h{:02}m00s", mins + 1)
+        } else {
+            format!("{hours}h{mins:02}m{secs:02}s")
+        }
+    }
+}
+
 /// Format a time range as "start–end" (en-dash separated).
 ///
 /// Example: `5.000–10.500s`
