@@ -47,15 +47,6 @@ fn metadata_row(label: String, value: String, label_title: Option<String>) -> im
     }
 }
 
-/// Truncate a hex hash to first 16 chars with ellipsis.
-fn truncate_hash(hash: &str) -> String {
-    if hash.len() > 16 {
-        format!("{}...", &hash[..16])
-    } else {
-        hash.to_string()
-    }
-}
-
 fn format_file_size(bytes: usize) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)
@@ -89,8 +80,8 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
         if let Some(ref hash) = id.spot_hash_b3 {
             items.push(metadata_row(
                 "Spot hash".into(),
-                truncate_hash(hash),
-                Some(hash.clone()),
+                hash.clone(),
+                None,
             ).into_any());
         } else {
             items.push(metadata_row(
@@ -104,8 +95,8 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
         if let Some(ref hash) = id.content_hash {
             items.push(metadata_row(
                 "Content hash".into(),
-                truncate_hash(hash),
-                Some(hash.clone()),
+                hash.clone(),
+                None,
             ).into_any());
         }
 
@@ -117,8 +108,8 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
                 .unwrap_or("");
             items.push(metadata_row(
                 "Full BLAKE3".into(),
-                format!("{}{}", truncate_hash(hash), sidecar_match),
-                Some(hash.clone()),
+                format!("{}{}", hash, sidecar_match),
+                None,
             ).into_any());
         } else if has_file_handle {
             let on_calc = move |_: web_sys::MouseEvent| {
@@ -150,8 +141,8 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
                 .unwrap_or("");
             items.push(metadata_row(
                 "Full SHA-256".into(),
-                format!("{}{}", truncate_hash(hash), sidecar_match),
-                Some(hash.clone()),
+                format!("{}{}", hash, sidecar_match),
+                None,
             ).into_any());
         } else if has_file_handle {
             let on_calc_sha = move |_: web_sys::MouseEvent| {
