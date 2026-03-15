@@ -321,13 +321,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn harmonics_band_starts_at_focus_high_for_narrow_selections() {
-        assert_eq!(harmonics_band_bounds(20_000.0, 30_000.0, 4), Some((30_000.0, 60_000.0)));
+    fn harmonics_band_uses_doubled_low_when_it_exceeds_focus_high() {
+        assert_eq!(harmonics_band_bounds(20_000.0, 30_000.0, 4), Some((40_000.0, 60_000.0)));
     }
 
     #[test]
-    fn harmonics_band_uses_doubled_low_for_wide_selections() {
-        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, 4), Some((40_000.0, 100_000.0)));
+    fn harmonics_band_uses_focus_high_as_lower_floor() {
+        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, 4), Some((50_000.0, 100_000.0)));
     }
 
     #[test]
