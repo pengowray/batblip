@@ -2,23 +2,31 @@ use leptos::prelude::*;
 use crate::canvas::spectrogram_renderer;
 use crate::state::{AppState, PlaybackMode, SpectrogramHandle};
 
+/// Half-width of the FF handle interaction zone (pixels from center).
+pub const FF_HANDLE_HALF_WIDTH: f64 = 50.0;
+
 /// Hit-test all spectrogram overlay handles (FF + HET).
 /// Returns the closest handle within `threshold` pixels, or None.
 /// HET handles take priority over FF when they overlap and HET is manual.
+/// FF handles only respond in a limited horizontal zone around the canvas center.
 pub fn hit_test_spec_handles(
     state: &AppState,
+    mouse_x: f64,
     mouse_y: f64,
     min_freq: f64,
     max_freq: f64,
+    canvas_width: f64,
     canvas_height: f64,
     threshold: f64,
 ) -> Option<SpectrogramHandle> {
     let mut candidates: Vec<(SpectrogramHandle, f64)> = Vec::new();
 
-    // FF handles (always active when FF range is set)
+    // FF handles — only respond when mouse is within the center handle zone
     let ff_lo = state.ff_freq_lo.get_untracked();
     let ff_hi = state.ff_freq_hi.get_untracked();
-    if ff_hi > ff_lo {
+    let center_x = canvas_width / 2.0;
+    let in_ff_zone = (mouse_x - center_x).abs() <= FF_HANDLE_HALF_WIDTH;
+    if ff_hi > ff_lo && in_ff_zone {
         let y_upper = spectrogram_renderer::freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
         let y_lower = spectrogram_renderer::freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
         let d_upper = (mouse_y - y_upper).abs();

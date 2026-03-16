@@ -689,6 +689,7 @@ pub fn Spectrogram() -> impl IntoView {
                     min_freq, max_freq,
                     display_h as f64, display_w as f64,
                     spec_hover, spec_drag,
+                    state.is_mobile.get_untracked(),
                 );
             }
 

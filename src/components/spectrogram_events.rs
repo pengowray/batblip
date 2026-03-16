@@ -323,9 +323,10 @@ pub fn on_mousemove(
                     let canvas_el = canvas_ref.get();
                     if let Some(canvas_el) = canvas_el {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                        let cw = canvas.width() as f64;
                         let ch = canvas.height() as f64;
                         let handle = hit_test_spec_handles(
-                            &state, px_y, min_freq_val, max_freq_val, ch, 8.0,
+                            &state, px_x, px_y, min_freq_val, max_freq_val, cw, ch, 8.0,
                         );
                         state.spec_hover_handle.set(handle);
                     }
@@ -488,9 +489,10 @@ pub fn on_touchstart(
     let touch = touches.get(0).unwrap();
 
     // Check for spec handle drag first — hit-test at touch position
-    if let Some((_, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+    if let Some((px_x, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
         if let Some(canvas_el) = canvas_ref.get() {
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let cw = canvas.width() as f64;
             let ch = canvas.height() as f64;
             let files = state.files.get_untracked();
             let idx = state.current_file_index.get_untracked();
@@ -499,7 +501,7 @@ pub fn on_touchstart(
             let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
             let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
             let handle = hit_test_spec_handles(
-                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
+                &state, px_x, px_y, min_freq_val, max_freq_val, cw, ch, 16.0, // wider touch target
             );
             if let Some(handle) = handle {
                 state.spec_drag_handle.set(Some(handle));

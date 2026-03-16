@@ -317,6 +317,7 @@ pub fn draw_freq_markers(
 }
 
 /// Draw the Frequency Focus overlay: dim outside the FF range, amber edge lines with drag handles.
+/// Handles are diamond-shaped and centered horizontally. They appear on hover (or always on mobile).
 pub fn draw_ff_overlay(
     ctx: &CanvasRenderingContext2d,
     ff_lo: f64,
@@ -327,6 +328,7 @@ pub fn draw_ff_overlay(
     canvas_width: f64,
     hover_handle: Option<SpectrogramHandle>,
     drag_handle: Option<SpectrogramHandle>,
+    is_mobile: bool,
 ) {
     if ff_hi <= ff_lo { return; }
 
@@ -342,52 +344,75 @@ pub fn draw_ff_overlay(
         ctx.fill_rect(0.0, y_bottom, canvas_width, canvas_height - y_bottom);
     }
 
+    let any_ff_active = matches!(hover_handle, Some(SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle))
+        || matches!(drag_handle, Some(SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle));
+
     let is_active = |handle: SpectrogramHandle| -> bool {
         drag_handle == Some(handle) || hover_handle == Some(handle)
     };
 
-    // Amber edge lines + triangular drag handles
+    let center_x = canvas_width / 2.0;
+    let handle_zone_half = crate::canvas::hit_test::FF_HANDLE_HALF_WIDTH;
+
+    // Amber edge lines (full width) + centered diamond drag handles
     for &(y, handle) in &[(y_top, SpectrogramHandle::FfUpper), (y_bottom, SpectrogramHandle::FfLower)] {
         let active = is_active(handle);
-        let alpha = if active { 0.9 } else { 0.4 };
+        let line_alpha = if active { 0.9 } else { 0.4 };
         let width = if active { 2.0 } else { 1.0 };
-        ctx.set_stroke_style_str(&format!("rgba(255, 180, 60, {:.2})", alpha));
+        ctx.set_stroke_style_str(&format!("rgba(255, 180, 60, {:.2})", line_alpha));
         ctx.set_line_width(width);
         ctx.begin_path();
         ctx.move_to(0.0, y);
         ctx.line_to(canvas_width, y);
         ctx.stroke();
 
-        // Triangle handle at right edge
-        let handle_size = if active { 10.0 } else { 6.0 };
-        let handle_alpha = if active { 0.9 } else { 0.4 };
-        ctx.set_fill_style_str(&format!("rgba(255, 180, 60, {:.2})", handle_alpha));
+        // Diamond handle at center — visible on hover/drag or always on mobile
+        let show_handle = active || any_ff_active || is_mobile;
+        if show_handle {
+            let handle_size = if active { 8.0 } else if is_mobile { 6.0 } else { 5.0 };
+            let handle_alpha = if active { 0.9 } else if is_mobile { 0.5 } else { 0.45 };
+            ctx.set_fill_style_str(&format!("rgba(255, 180, 60, {:.2})", handle_alpha));
+            ctx.begin_path();
+            ctx.move_to(center_x, y - handle_size);              // top
+            ctx.line_to(center_x + handle_size, y);              // right
+            ctx.line_to(center_x, y + handle_size);              // bottom
+            ctx.line_to(center_x - handle_size, y);              // left
+            ctx.close_path();
+            let _ = ctx.fill();
+
+            // Short horizontal line through handle zone for visual affordance
+            let line_half = handle_zone_half * 0.6;
+            ctx.set_stroke_style_str(&format!("rgba(255, 180, 60, {:.2})", handle_alpha * 0.6));
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(center_x - line_half, y);
+            ctx.line_to(center_x + line_half, y);
+            ctx.stroke();
+        }
+    }
+
+    // Middle handle (diamond at midpoint, centered)
+    let mid_y = (y_top + y_bottom) / 2.0;
+    let mid_active = is_active(SpectrogramHandle::FfMiddle);
+    let show_mid = mid_active || any_ff_active || is_mobile;
+    if show_mid {
+        let mid_size = if mid_active { 7.0 } else if is_mobile { 5.0 } else { 4.0 };
+        let mid_alpha = if mid_active { 0.9 } else if is_mobile { 0.4 } else { 0.35 };
+        ctx.set_fill_style_str(&format!("rgba(255, 180, 60, {:.2})", mid_alpha));
         ctx.begin_path();
-        ctx.move_to(canvas_width, y - handle_size);
-        ctx.line_to(canvas_width - handle_size, y);
-        ctx.line_to(canvas_width, y + handle_size);
+        ctx.move_to(center_x, mid_y - mid_size);
+        ctx.line_to(center_x + mid_size, mid_y);
+        ctx.line_to(center_x, mid_y + mid_size);
+        ctx.line_to(center_x - mid_size, mid_y);
         ctx.close_path();
         let _ = ctx.fill();
     }
-
-    // Middle handle (triangle at midpoint on right edge)
-    let mid_y = (y_top + y_bottom) / 2.0;
-    let mid_active = is_active(SpectrogramHandle::FfMiddle);
-    let mid_alpha = if mid_active { 0.9 } else { 0.3 };
-    let mid_size = if mid_active { 8.0 } else { 5.0 };
-    ctx.set_fill_style_str(&format!("rgba(255, 180, 60, {:.2})", mid_alpha));
-    ctx.begin_path();
-    ctx.move_to(canvas_width, mid_y - mid_size);
-    ctx.line_to(canvas_width - mid_size, mid_y);
-    ctx.line_to(canvas_width, mid_y + mid_size);
-    ctx.close_path();
-    let _ = ctx.fill();
 
     // FF range labels (only when handles are active): top and bottom frequencies
     if hover_handle.is_some() || drag_handle.is_some() {
         ctx.set_fill_style_str("rgba(255, 180, 60, 0.8)");
         ctx.set_font("11px sans-serif");
-        let label_x = canvas_width * 0.35;
+        let label_x = center_x + handle_zone_half + 8.0;
 
         // Top frequency label: just above the upper FF line
         let top_label = format!("{:.1} kHz", ff_hi / 1000.0);

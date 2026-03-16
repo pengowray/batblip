@@ -261,6 +261,7 @@ pub fn ZcDotChart() -> impl IntoView {
                 min_freq, max_freq,
                 ch, cw,
                 spec_hover, spec_drag,
+                state.is_mobile.get_untracked(),
             );
         }
 
