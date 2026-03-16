@@ -787,9 +787,18 @@ pub fn ZcDotChart() -> impl IntoView {
     view! {
         <div class="waveform-container"
             style=move || {
-                // FF handle hover: show resize cursor
-                if state.spec_hover_handle.get().is_some() || state.spec_drag_handle.get().is_some() {
+                // Handle hover: show resize cursor only when over the drag zone
+                if state.spec_drag_handle.get().is_some() {
                     return "cursor: ns-resize; touch-action: none;";
+                }
+                if let Some(handle) = state.spec_hover_handle.get() {
+                    let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
+                    if !is_ff || crate::canvas::hit_test::is_in_ff_drag_zone(
+                        state.mouse_canvas_x.get(),
+                        state.spectrogram_canvas_width.get(),
+                    ) {
+                        return "cursor: ns-resize; touch-action: none;";
+                    }
                 }
                 match state.canvas_tool.get() {
                     CanvasTool::Hand => if state.is_dragging.get() {

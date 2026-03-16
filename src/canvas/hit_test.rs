@@ -6,27 +6,23 @@ use crate::state::{AppState, PlaybackMode, SpectrogramHandle};
 pub const FF_HANDLE_HALF_WIDTH: f64 = 50.0;
 
 /// Hit-test all spectrogram overlay handles (FF + HET).
-/// Returns the closest handle within `threshold` pixels, or None.
+/// Returns the closest handle within `threshold` pixels of mouse_y, or None.
 /// HET handles take priority over FF when they overlap and HET is manual.
-/// FF handles only respond in a limited horizontal zone around the canvas center.
+/// FF hover is full-width; drag zone is checked separately via `is_in_ff_drag_zone`.
 pub fn hit_test_spec_handles(
     state: &AppState,
-    mouse_x: f64,
     mouse_y: f64,
     min_freq: f64,
     max_freq: f64,
-    canvas_width: f64,
     canvas_height: f64,
     threshold: f64,
 ) -> Option<SpectrogramHandle> {
     let mut candidates: Vec<(SpectrogramHandle, f64)> = Vec::new();
 
-    // FF handles — only respond when mouse is within the center handle zone
+    // FF handles — hover across full line width, drag only in center zone
     let ff_lo = state.ff_freq_lo.get_untracked();
     let ff_hi = state.ff_freq_hi.get_untracked();
-    let center_x = canvas_width / 2.0;
-    let in_ff_zone = (mouse_x - center_x).abs() <= FF_HANDLE_HALF_WIDTH;
-    if ff_hi > ff_lo && in_ff_zone {
+    if ff_hi > ff_lo {
         let y_upper = spectrogram_renderer::freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
         let y_lower = spectrogram_renderer::freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
         let d_upper = (mouse_y - y_upper).abs();
@@ -77,4 +73,10 @@ pub fn hit_test_spec_handles(
     });
 
     Some(candidates[0].0)
+}
+
+/// Check whether a given x position is within the FF handle drag zone (center strip).
+pub fn is_in_ff_drag_zone(mouse_x: f64, canvas_width: f64) -> bool {
+    let center_x = canvas_width / 2.0;
+    (mouse_x - center_x).abs() <= FF_HANDLE_HALF_WIDTH
 }

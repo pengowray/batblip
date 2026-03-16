@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use web_sys::{HtmlCanvasElement, MouseEvent};
 use crate::canvas::coord::pointer_to_xtf;
-use crate::canvas::hit_test::hit_test_spec_handles;
+use crate::canvas::hit_test::{hit_test_spec_handles, is_in_ff_drag_zone};
 use crate::canvas::spectrogram_renderer;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, Selection};
 
@@ -205,11 +205,25 @@ pub fn on_mousedown(
     if ev.button() != 0 { return; }
 
     // Check for spec handle drag first (FF or HET — takes priority over tool)
+    // FF handles only start drag when clicking within the center handle zone.
     if let Some(handle) = state.spec_hover_handle.get_untracked() {
-        state.spec_drag_handle.set(Some(handle));
-        state.is_dragging.set(true);
-        ev.prevent_default();
-        return;
+        let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
+        let allow_drag = if is_ff {
+            if let Some((px_x, _, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+                if let Some(canvas_el) = canvas_ref.get() {
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    is_in_ff_drag_zone(px_x, canvas.width() as f64)
+                } else { false }
+            } else { false }
+        } else {
+            true // HET handles drag from anywhere
+        };
+        if allow_drag {
+            state.spec_drag_handle.set(Some(handle));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
     }
 
     // Check for axis drag (left axis frequency range selection) — disabled in xform view
@@ -323,10 +337,9 @@ pub fn on_mousemove(
                     let canvas_el = canvas_ref.get();
                     if let Some(canvas_el) = canvas_el {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-                        let cw = canvas.width() as f64;
                         let ch = canvas.height() as f64;
                         let handle = hit_test_spec_handles(
-                            &state, px_x, px_y, min_freq_val, max_freq_val, cw, ch, 8.0,
+                            &state, px_y, min_freq_val, max_freq_val, ch, 8.0,
                         );
                         state.spec_hover_handle.set(handle);
                     }
@@ -501,13 +514,16 @@ pub fn on_touchstart(
             let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
             let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
             let handle = hit_test_spec_handles(
-                &state, px_x, px_y, min_freq_val, max_freq_val, cw, ch, 16.0, // wider touch target
+                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
             );
             if let Some(handle) = handle {
-                state.spec_drag_handle.set(Some(handle));
-                state.is_dragging.set(true);
-                ev.prevent_default();
-                return;
+                let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
+                if !is_ff || is_in_ff_drag_zone(px_x, cw) {
+                    state.spec_drag_handle.set(Some(handle));
+                    state.is_dragging.set(true);
+                    ev.prevent_default();
+                    return;
+                }
             }
         }
     }
