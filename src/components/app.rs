@@ -22,6 +22,7 @@ use crate::components::bat_book_tab::BatBookTab;
 use crate::components::bat_book_strip::BatBookStrip;
 use crate::components::bat_book_ref_panel::BatBookRefPanel;
 use crate::components::display_filter_button::DspFilterRow;
+use crate::viewport;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -651,15 +652,15 @@ pub fn App() -> impl IntoView {
             {
                 let zoom = state_kb.zoom_level.get_untracked();
                 let canvas_w = state_kb.spectrogram_canvas_width.get_untracked();
-                let visible_time = (canvas_w / zoom) * time_res;
-                let max_scroll = (duration - visible_time).max(0.0);
+                let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
+                let (_min_scroll, max_scroll) = viewport::scroll_bounds(duration, visible_time);
                 let new_scroll = match key.as_str() {
-                    "Home" => 0.0,
+                    "Home" => viewport::clamp_scroll(0.0, duration, visible_time),
                     "End" => max_scroll,
-                    "ArrowLeft" => (state_kb.scroll_offset.get_untracked() - visible_time * 0.2).max(0.0),
-                    "ArrowRight" => (state_kb.scroll_offset.get_untracked() + visible_time * 0.2).min(max_scroll),
-                    "PageUp" => (state_kb.scroll_offset.get_untracked() - visible_time * 0.8).max(0.0),
-                    "PageDown" => (state_kb.scroll_offset.get_untracked() + visible_time * 0.8).min(max_scroll),
+                    "ArrowLeft" => viewport::clamp_scroll(state_kb.scroll_offset.get_untracked() - visible_time * 0.2, duration, visible_time),
+                    "ArrowRight" => viewport::clamp_scroll(state_kb.scroll_offset.get_untracked() + visible_time * 0.2, duration, visible_time),
+                    "PageUp" => viewport::clamp_scroll(state_kb.scroll_offset.get_untracked() - visible_time * 0.8, duration, visible_time),
+                    "PageDown" => viewport::clamp_scroll(state_kb.scroll_offset.get_untracked() + visible_time * 0.8, duration, visible_time),
                     _ => state_kb.scroll_offset.get_untracked(),
                 };
                 state_kb.suspend_follow();

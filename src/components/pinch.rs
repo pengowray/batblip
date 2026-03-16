@@ -1,5 +1,7 @@
 /// Pinch-to-zoom gesture helpers shared across all canvas components.
 
+use crate::viewport;
+
 /// Snapshot of state at the moment a 2-finger touch begins.
 #[derive(Clone, Copy, Debug)]
 pub struct PinchState {
@@ -53,13 +55,13 @@ pub fn apply_pinch(
     let new_zoom = (pinch.initial_zoom * scale).clamp(0.1, 400.0);
 
     // What time was under the initial midpoint?
-    let initial_visible_time = (canvas_width / pinch.initial_zoom) * pinch.time_res;
+    let initial_visible_time = viewport::visible_time(canvas_width, pinch.initial_zoom, pinch.time_res);
     let initial_mid_canvas_x = pinch.initial_mid_client_x - canvas_left;
     let mid_frac = (initial_mid_canvas_x / canvas_width).clamp(0.0, 1.0);
     let anchor_time = pinch.initial_scroll + mid_frac * initial_visible_time;
 
     // New visible time at new zoom
-    let new_visible_time = (canvas_width / new_zoom) * pinch.time_res;
+    let new_visible_time = viewport::visible_time(canvas_width, new_zoom, pinch.time_res);
 
     // Scroll so anchor_time stays at the same screen fraction
     let scroll_from_anchor = anchor_time - mid_frac * new_visible_time;
@@ -69,8 +71,7 @@ pub fn apply_pinch(
     let pan_dt = -(mid_shift_px / canvas_width) * new_visible_time;
 
     let raw_scroll = scroll_from_anchor + pan_dt;
-    let max_scroll = (pinch.duration - new_visible_time).max(0.0);
-    let new_scroll = raw_scroll.clamp(0.0, max_scroll);
+    let new_scroll = viewport::clamp_scroll(raw_scroll, pinch.duration, new_visible_time);
 
     (new_zoom, new_scroll)
 }

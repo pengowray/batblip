@@ -12,6 +12,7 @@ use crate::canvas::freq_adjustments::compute_freq_adjustments;
 use crate::canvas::spectrogram_renderer::{self, Colormap, ColormapMode, FreqMarkerState, FreqShiftMode, FlowAlgo, PreRendered, SpectDisplaySettings};
 use crate::components::spectrogram_events::{self, SpectInteraction, LABEL_AREA_WIDTH};
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, MainView, PlaybackMode, SpectrogramDisplay};
+use crate::viewport;
 
 #[component]
 pub fn Spectrogram() -> impl IntoView {
@@ -809,8 +810,8 @@ pub fn Spectrogram() -> impl IntoView {
 
             // Draw static position marker when not playing
             if !is_playing && canvas_tool == CanvasTool::Hand {
-                let here_x = display_w as f64 * 0.10;
-                let here_time = scroll + visible_time * 0.10;
+                let here_x = display_w as f64 * viewport::PLAY_FROM_HERE_FRACTION;
+                let here_time = viewport::play_from_here_time(scroll, visible_time);
                 state.play_from_here_time.set(here_time);
                 ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
                 ctx.set_line_width(1.5);
@@ -875,7 +876,7 @@ pub fn Spectrogram() -> impl IntoView {
         let zoom = state.zoom_level.get_untracked();
         let scroll = state.scroll_offset.get_untracked();
 
-        let visible_time = (display_w / zoom) * time_res;
+        let visible_time = viewport::visible_time(display_w, zoom, time_res);
         let playhead_rel = playhead - scroll;
 
         if suspended {
@@ -901,9 +902,9 @@ pub fn Spectrogram() -> impl IntoView {
         }
 
         // Normal follow: scroll when playhead nears the edge
-        if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
-            let max_scroll = (duration - visible_time).max(0.0);
-            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
+        if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
+            let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
+            state.scroll_offset.set(viewport::clamp_scroll(target_scroll, duration, visible_time));
         }
     });
 

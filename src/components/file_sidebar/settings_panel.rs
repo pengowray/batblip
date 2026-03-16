@@ -984,8 +984,7 @@ fn jump_to_time(state: AppState, time: f64) {
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let half_visible = (canvas_w / zoom) * file.spectrogram.time_resolution / 2.0;
         let visible = half_visible * 2.0;
-        let max_scroll = (file.audio.duration_secs - visible).max(0.0);
-        let centered = (time - half_visible).clamp(0.0, max_scroll);
+        let centered = crate::viewport::clamp_scroll(time - half_visible, file.audio.duration_secs, visible);
         state.scroll_offset.set(centered);
     }
 }

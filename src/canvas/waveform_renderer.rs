@@ -1,8 +1,12 @@
 use web_sys::CanvasRenderingContext2d;
 
+use crate::viewport;
+
 /// Common viewport calculation for waveform rendering.
 struct WaveViewport {
     start_time: f64,
+    data_x: f64,
+    data_width: f64,
     px_per_sec: f64,
     samples_per_pixel: f64,
     mid_y: f64,
@@ -21,11 +25,30 @@ fn compute_viewport(
     region_start_sample: usize,
 ) -> WaveViewport {
     let mid_y = canvas_height / 2.0;
-    let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset.max(0.0).min((total_duration - visible_time).max(0.0));
-    let px_per_sec = canvas_width / visible_time;
-    let samples_per_pixel = (visible_time * sample_rate as f64) / canvas_width;
-    WaveViewport { start_time, px_per_sec, samples_per_pixel, mid_y, region_start_sample }
+    let visible_time = viewport::visible_time(canvas_width, zoom, time_resolution);
+    let px_per_sec = if visible_time > 0.0 { canvas_width / visible_time } else { 0.0 };
+    let (start_time, data_x, data_width) = viewport::data_region_px(
+        scroll_offset,
+        visible_time,
+        total_duration,
+        canvas_width,
+    )
+    .map(|(data_start, _data_end, dst_x, dst_w)| (data_start, dst_x, dst_w))
+    .unwrap_or((0.0, 0.0, 0.0));
+    let samples_per_pixel = if data_width > 0.0 {
+        ((data_width / px_per_sec) * sample_rate as f64) / data_width
+    } else {
+        0.0
+    };
+    WaveViewport {
+        start_time,
+        data_x,
+        data_width,
+        px_per_sec,
+        samples_per_pixel,
+        mid_y,
+        region_start_sample,
+    }
 }
 
 /// Draw a single waveform layer with the given color.
@@ -38,16 +61,23 @@ fn draw_waveform_layer(
     color: &str,
     gain_linear: f64,
 ) {
+    if vp.data_width <= 0.0 || vp.px_per_sec <= 0.0 || vp.samples_per_pixel <= 0.0 {
+        return;
+    }
+
     ctx.set_stroke_style_str(color);
     ctx.set_line_width(1.0);
 
     let off = vp.region_start_sample;
+    let px_start = vp.data_x.floor().max(0.0) as usize;
+    let px_end = (vp.data_x + vp.data_width).ceil().min(canvas_width).max(vp.data_x) as usize;
 
     if vp.samples_per_pixel <= 2.0 {
         ctx.begin_path();
         let mut first = true;
-        for px in 0..(canvas_width as usize) {
-            let t = vp.start_time + (px as f64 / vp.px_per_sec);
+        for px in px_start..px_end {
+            let x = px as f64;
+            let t = vp.start_time + ((x - vp.data_x) / vp.px_per_sec);
             let abs_idx = (t * sample_rate as f64) as usize;
             if abs_idx < off {
                 continue;
@@ -58,17 +88,18 @@ fn draw_waveform_layer(
             }
             let y = vp.mid_y - (samples[idx] as f64 * gain_linear * vp.mid_y * 0.9);
             if first {
-                ctx.move_to(px as f64, y);
+                ctx.move_to(x, y);
                 first = false;
             } else {
-                ctx.line_to(px as f64, y);
+                ctx.line_to(x, y);
             }
         }
         ctx.stroke();
     } else {
-        for px in 0..(canvas_width as usize) {
-            let t0 = vp.start_time + (px as f64 / vp.px_per_sec);
-            let t1 = vp.start_time + ((px as f64 + 1.0) / vp.px_per_sec);
+        for px in px_start..px_end {
+            let x = px as f64;
+            let t0 = vp.start_time + ((x - vp.data_x) / vp.px_per_sec);
+            let t1 = vp.start_time + ((x + 1.0 - vp.data_x) / vp.px_per_sec);
             let abs_i0 = (t0 * sample_rate as f64) as usize;
             let abs_i1 = (t1 * sample_rate as f64) as usize;
             if abs_i1 <= off {
@@ -92,8 +123,8 @@ fn draw_waveform_layer(
             let y_max = vp.mid_y - (min_val as f64 * gain_linear * vp.mid_y * 0.9);
 
             ctx.begin_path();
-            ctx.move_to(px as f64, y_min);
-            ctx.line_to(px as f64, y_max);
+            ctx.move_to(x, y_min);
+            ctx.line_to(x, y_max);
             ctx.stroke();
         }
     }
@@ -108,8 +139,8 @@ fn draw_selection(
     canvas_height: f64,
 ) {
     if let Some((sel_start, sel_end)) = selection {
-        let x0 = ((sel_start - vp.start_time) * vp.px_per_sec).max(0.0);
-        let x1 = ((sel_end - vp.start_time) * vp.px_per_sec).min(canvas_width);
+        let x0 = (vp.data_x + (sel_start - vp.start_time) * vp.px_per_sec).max(0.0);
+        let x1 = (vp.data_x + (sel_end - vp.start_time) * vp.px_per_sec).min(canvas_width);
         if x1 > x0 {
             ctx.set_fill_style_str("rgba(50, 120, 200, 0.2)");
             ctx.fill_rect(x0, 0.0, x1 - x0, canvas_height);
@@ -216,14 +247,21 @@ pub fn draw_zc_rate(
         return;
     }
 
-    let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset.max(0.0).min((total_duration - visible_time).max(0.0));
+    let visible_time = viewport::visible_time(canvas_width, zoom, time_resolution);
+    let Some((start_time, end_time, data_x, _data_width)) = viewport::data_region_px(
+        scroll_offset,
+        visible_time,
+        total_duration,
+        canvas_width,
+    ) else {
+        return;
+    };
     let px_per_sec = canvas_width / visible_time;
 
     // Selection highlight
     if let Some((sel_start, sel_end)) = selection {
-        let x0 = ((sel_start - start_time) * px_per_sec).max(0.0);
-        let x1 = ((sel_end - start_time) * px_per_sec).min(canvas_width);
+        let x0 = (data_x + (sel_start - start_time) * px_per_sec).max(0.0);
+        let x1 = (data_x + (sel_end - start_time) * px_per_sec).min(canvas_width);
         if x1 > x0 {
             ctx.set_fill_style_str("rgba(50, 120, 200, 0.2)");
             ctx.fill_rect(x0, 0.0, x1 - x0, canvas_height);
@@ -252,7 +290,6 @@ pub fn draw_zc_rate(
 
     // Only iterate visible bins
     let first_bin = ((start_time / bin_duration) as usize).saturating_sub(1);
-    let end_time = start_time + visible_time;
     let last_bin = ((end_time / bin_duration) as usize + 2).min(bins.len());
 
     for bin_idx in first_bin..last_bin {
@@ -262,7 +299,7 @@ pub fn draw_zc_rate(
         }
 
         let bin_time = bin_idx as f64 * bin_duration;
-        let x = (bin_time - start_time) * px_per_sec;
+        let x = data_x + (bin_time - start_time) * px_per_sec;
         let bar_w = (bin_duration * px_per_sec).max(1.0);
 
         let bar_h = (rate_hz / max_freq_hz * canvas_height).min(canvas_height);

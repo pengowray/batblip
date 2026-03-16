@@ -10,6 +10,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::Clamped;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 
+use crate::viewport;
+
 // Re-export from split modules so callers don't need to change imports
 pub use crate::canvas::flow::{FlowAlgo, FlowData, compute_flow_data, composite_flow, pre_render_flow_columns};
 pub use crate::canvas::overlays::{
@@ -369,17 +371,16 @@ pub fn blit_preview_as_background(
     // Map viewport time range to preview pixel columns.
     // The preview spans the entire file: column 0 = time 0, column W = total_duration.
     let pw = preview.width as f64;
-    let src_x = (scroll_offset / total_duration * pw).clamp(0.0, pw);
+    let Some((data_start, data_end, dst_x, dst_w)) = viewport::data_region_px(
+        scroll_offset,
+        visible_time,
+        total_duration,
+        cw,
+    ) else { return; };
+    let src_x = (data_start / total_duration * pw).clamp(0.0, pw);
     let remaining = pw - src_x;
-    if remaining < 0.5 { return; } // nothing meaningful left to draw
-    let src_w = (visible_time / total_duration * pw).max(0.5).min(remaining);
-
-    // Scale destination width so the preview only covers the portion of the
-    // canvas that has actual file data.  This handles both short files that fit
-    // entirely in the viewport AND viewports that extend past the file end
-    // (e.g. follow-cursor near the end).
-    let overlap_time = (total_duration - scroll_offset.max(0.0)).clamp(0.0, visible_time);
-    let dst_w = cw * (overlap_time / visible_time).min(1.0);
+    if remaining < 0.5 { return; }
+    let src_w = (((data_end - data_start) / total_duration) * pw).max(0.5).min(remaining);
 
     // Vertical crop: row 0 = highest freq, last row = 0 Hz
     let fc_lo = freq_crop_lo.max(0.0);
@@ -419,7 +420,7 @@ pub fn blit_preview_as_background(
     let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
         &tmp,
         src_x, src_y, src_w, src_h,
-        0.0, dst_y, dst_w, dst_h,
+        dst_x, dst_y, dst_w, dst_h,
     );
 }
 

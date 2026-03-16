@@ -7,6 +7,7 @@ use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, SpectrogramHandle};
+use crate::viewport;
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
 const TAU: f64 = std::f64::consts::TAU;
@@ -148,8 +149,15 @@ pub fn ZcDotChart() -> impl IntoView {
         // Dot area is to the right of the label area
         let dot_area_w = (cw - LABEL_AREA_WIDTH).max(0.0);
 
-        let visible_time = (dot_area_w / zoom) * time_res;
-        let start_time = scroll.max(0.0).min((total_duration - visible_time).max(0.0));
+        let visible_time = viewport::visible_time(dot_area_w, zoom, time_res);
+        let Some((start_time, end_time, data_x, _data_width)) = viewport::data_region_px(
+            scroll,
+            visible_time,
+            total_duration,
+            dot_area_w,
+        ) else {
+            return;
+        };
         let px_per_sec = if visible_time > 0.0 { dot_area_w / visible_time } else { 0.0 };
 
         // Clip to dot area for drawing dots and selection
@@ -160,8 +168,8 @@ pub fn ZcDotChart() -> impl IntoView {
 
         // Selection highlight
         if let Some(sel) = selection {
-            let x0 = LABEL_AREA_WIDTH + ((sel.time_start - start_time) * px_per_sec).max(0.0);
-            let x1 = LABEL_AREA_WIDTH + ((sel.time_end - start_time) * px_per_sec).min(dot_area_w);
+            let x0 = LABEL_AREA_WIDTH + (data_x + (sel.time_start - start_time) * px_per_sec).max(0.0);
+            let x1 = LABEL_AREA_WIDTH + (data_x + (sel.time_end - start_time) * px_per_sec).min(dot_area_w);
             if x1 > x0 {
                 ctx.set_fill_style_str("rgba(50, 120, 200, 0.2)");
                 ctx.fill_rect(x0, 0.0, x1 - x0, ch);
@@ -195,7 +203,6 @@ pub fn ZcDotChart() -> impl IntoView {
         let small_t = (1.0 - (radius_armed - 0.7) / 2.3).clamp(0.0, 1.0);
 
         // Only iterate visible bins
-        let end_time = start_time + visible_time;
         let first_bin = ((start_time / ZC_BIN_DURATION) as usize).saturating_sub(1);
         let last_bin = ((end_time / ZC_BIN_DURATION) as usize + 2).min(bins.len());
 
@@ -209,7 +216,7 @@ pub fn ZcDotChart() -> impl IntoView {
             if rate_hz <= 0.0 || !armed { continue; }
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
-            let x = LABEL_AREA_WIDTH + (bin_time - start_time) * px_per_sec;
+            let x = LABEL_AREA_WIDTH + data_x + (bin_time - start_time) * px_per_sec;
             let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
             let _ = ctx.move_to(x + radius_armed, y);
             let _ = ctx.arc(x, y, radius_armed, 0.0, TAU);
@@ -226,7 +233,7 @@ pub fn ZcDotChart() -> impl IntoView {
             if rate_hz <= 0.0 || armed { continue; }
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
-            let x = LABEL_AREA_WIDTH + (bin_time - start_time) * px_per_sec;
+            let x = LABEL_AREA_WIDTH + data_x + (bin_time - start_time) * px_per_sec;
             let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
             let _ = ctx.move_to(x + radius_unarmed, y);
             let _ = ctx.arc(x, y, radius_unarmed, 0.0, TAU);
@@ -235,8 +242,8 @@ pub fn ZcDotChart() -> impl IntoView {
 
         // Draw "play here" marker when not playing
         if !is_playing && canvas_tool == CanvasTool::Hand {
-            let here_x = LABEL_AREA_WIDTH + dot_area_w * 0.10;
-            let here_time = scroll + visible_time * 0.10;
+            let here_x = LABEL_AREA_WIDTH + dot_area_w * viewport::PLAY_FROM_HERE_FRACTION;
+            let here_time = viewport::play_from_here_time(scroll, visible_time);
             state.play_from_here_time.set(here_time);
             ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
             ctx.set_line_width(1.5);
@@ -351,7 +358,7 @@ pub fn ZcDotChart() -> impl IntoView {
         let zoom = state.zoom_level.get_untracked();
         let scroll = state.scroll_offset.get_untracked();
 
-        let visible_time = (display_w / zoom) * time_res;
+        let visible_time = viewport::visible_time(display_w, zoom, time_res);
         let playhead_rel = playhead - scroll;
 
         if suspended {
@@ -372,9 +379,9 @@ pub fn ZcDotChart() -> impl IntoView {
             return;
         }
 
-        if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
-            let max_scroll = (duration - visible_time).max(0.0);
-            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
+        if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
+            let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
+            state.scroll_offset.set(viewport::clamp_scroll(target_scroll, duration, visible_time));
         }
     });
 
@@ -425,20 +432,23 @@ pub fn ZcDotChart() -> impl IntoView {
             state.zoom_level.update(|z| *z = (*z * delta).max(0.1).min(100.0));
         } else {
             let delta = (ev.delta_y() + ev.delta_x()) * 0.001;
-            let max_scroll = {
+            let visible_time = {
                 let files = state.files.get_untracked();
                 let idx = state.current_file_index.get_untracked().unwrap_or(0);
                 if let Some(file) = files.get(idx) {
                     let zoom = state.zoom_level.get_untracked();
                     let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                    let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
-                    (file.audio.duration_secs - visible_time).max(0.0)
+                    viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution)
                 } else {
-                    f64::MAX
+                    0.0
                 }
             };
+            let duration = state.files.get_untracked()
+                .get(state.current_file_index.get_untracked().unwrap_or(0))
+                .map(|f| f.audio.duration_secs)
+                .unwrap_or(0.0);
             state.suspend_follow();
-            state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
+            state.scroll_offset.update(|s| *s = viewport::clamp_scroll(*s + delta, duration, visible_time));
         }
     };
 
@@ -559,12 +569,11 @@ pub fn ZcDotChart() -> impl IntoView {
                 let file = idx.and_then(|i| files.get(i));
                 let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let zoom = state.zoom_level.get_untracked();
-                let visible_time = (cw / zoom) * time_res;
-                let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-                let max_scroll = (duration - visible_time).max(0.0);
+                let visible_time = viewport::visible_time(cw, zoom, time_res);
+                let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
                 let dt = -(dx / cw) * visible_time;
                 state.suspend_follow();
-                state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+                state.scroll_offset.set(viewport::clamp_scroll(start_scroll + dt, duration, visible_time));
             } else {
                 // Not dragging: do FF handle hover detection (skip in label area)
                 if !in_label_area {
@@ -751,12 +760,11 @@ pub fn ZcDotChart() -> impl IntoView {
         let file = idx.and_then(|i| files.get(i));
         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
         let zoom = state.zoom_level.get_untracked();
-        let visible_time = (cw / zoom) * time_res;
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-        let max_scroll = (duration - visible_time).max(0.0);
+        let visible_time = viewport::visible_time(cw, zoom, time_res);
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+        state.scroll_offset.set(viewport::clamp_scroll(start_scroll + dt, duration, visible_time));
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {

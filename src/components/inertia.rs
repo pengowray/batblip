@@ -99,6 +99,8 @@ pub fn cancel_inertia(generation: StoredValue<u32>) {
 /// `velocity_px_per_sec` is signed (positive = finger moved right = scroll backward).
 /// The function converts this to a time-domain velocity and animates scroll_offset
 /// with exponential decay until it stops.
+use crate::viewport;
+
 pub fn start_inertia(
     state: crate::state::AppState,
     velocity_px_per_sec: f64,
@@ -116,11 +118,11 @@ pub fn start_inertia(
     let my_gen = generation.get_value();
 
     let zoom = state.zoom_level.get_untracked();
-    let visible_time = (canvas_width / zoom) * time_resolution;
+    let visible_time = viewport::visible_time(canvas_width, zoom, time_resolution);
     // Convert px velocity to time velocity (same sign convention as apply_hand_pan: negate)
     let v0_time = -(velocity_px_per_sec / canvas_width) * visible_time;
     let start_scroll = state.scroll_offset.get_untracked();
-    let max_scroll = (duration - visible_time).max(0.0);
+    let (min_scroll, max_scroll) = viewport::scroll_bounds(duration, visible_time);
 
     // Threshold in time-domain units
     let stop_threshold = (STOP_VELOCITY / canvas_width) * visible_time;
@@ -149,13 +151,13 @@ pub fn start_inertia(
 
         // Integrated position: x(t) = x0 + (v0/friction)(1 - e^(-friction*t))
         let scroll = start_scroll + (v0_time / FRICTION) * (1.0 - decay);
-        let clamped = scroll.clamp(0.0, max_scroll);
+        let clamped = scroll.clamp(min_scroll, max_scroll);
 
         state.scroll_offset.set(clamped);
         state.suspend_follow();
 
         // Stop conditions: velocity too low, or hit bounds
-        let hit_bound = (clamped <= 0.0 && current_v < 0.0)
+        let hit_bound = (clamped <= min_scroll && current_v < 0.0)
             || (clamped >= max_scroll && current_v > 0.0);
 
         if current_v.abs() < stop_threshold || hit_bound {

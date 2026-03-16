@@ -6,6 +6,7 @@ use crate::canvas::spectrogram_renderer;
 use crate::canvas::tile_cache::{self, TILE_COLS};
 use crate::dsp::chromagram::{NUM_PITCH_CLASSES, NUM_OCTAVES, PITCH_CLASS_NAMES};
 use crate::state::{AppState, CanvasTool};
+use crate::viewport;
 
 #[component]
 pub fn ChromagramView() -> impl IntoView {
@@ -124,9 +125,9 @@ pub fn ChromagramView() -> impl IntoView {
 
         // Draw "play here" marker when not playing
         if !is_playing && canvas_tool == CanvasTool::Hand {
-            let visible_time = (display_w as f64 / zoom) * time_res;
-            let here_x = display_w as f64 * 0.10;
-            let here_time = scroll + visible_time * 0.10;
+            let visible_time = viewport::visible_time(display_w as f64, zoom, time_res);
+            let here_x = display_w as f64 * viewport::PLAY_FROM_HERE_FRACTION;
+            let here_time = viewport::play_from_here_time(scroll, visible_time);
             state.play_from_here_time.set(here_time);
             ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
             ctx.set_line_width(1.5);
@@ -174,7 +175,7 @@ pub fn ChromagramView() -> impl IntoView {
         let zoom = state.zoom_level.get_untracked();
         let scroll = state.scroll_offset.get_untracked();
 
-        let visible_time = (display_w / zoom) * time_res;
+        let visible_time = viewport::visible_time(display_w, zoom, time_res);
         let playhead_rel = playhead - scroll;
 
         if suspended {
@@ -195,9 +196,9 @@ pub fn ChromagramView() -> impl IntoView {
             return;
         }
 
-        if playhead_rel > visible_time * 0.8 || playhead_rel < 0.0 {
-            let max_scroll = (duration - visible_time).max(0.0);
-            state.scroll_offset.set((playhead - visible_time * 0.2).max(0.0).min(max_scroll));
+        if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
+            let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
+            state.scroll_offset.set(viewport::clamp_scroll(target_scroll, duration, visible_time));
         }
     });
 
@@ -208,20 +209,20 @@ pub fn ChromagramView() -> impl IntoView {
             state.zoom_level.update(|z| *z = (*z * delta).max(0.1).min(100.0));
         } else {
             let delta = ev.delta_y() * 0.001;
-            let max_scroll = {
-                let files = state.files.get_untracked();
-                let idx = state.current_file_index.get_untracked().unwrap_or(0);
-                if let Some(file) = files.get(idx) {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked().unwrap_or(0);
+            let visible_time = if let Some(file) = files.get(idx) {
                     let zoom = state.zoom_level.get_untracked();
                     let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                    let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
-                    (file.audio.duration_secs - visible_time).max(0.0)
-                } else {
-                    f64::MAX
-                }
+                    viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution)
+            } else {
+                0.0
             };
             state.suspend_follow();
-            state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
+            let duration = files.get(idx)
+                .map(|f| f.audio.duration_secs)
+                .unwrap_or(0.0);
+            state.scroll_offset.update(|s| *s = viewport::clamp_scroll(*s + delta, duration, visible_time));
         }
     };
 
@@ -244,12 +245,11 @@ pub fn ChromagramView() -> impl IntoView {
         let file = idx.and_then(|i| files.get(i));
         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
         let zoom = state.zoom_level.get_untracked();
-        let visible_time = (cw / zoom) * time_res;
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-        let max_scroll = (duration - visible_time).max(0.0);
+        let visible_time = viewport::visible_time(cw, zoom, time_res);
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+        state.scroll_offset.set(viewport::clamp_scroll(start_scroll + dt, duration, visible_time));
     };
 
     let on_mouseup = move |ev: MouseEvent| {
@@ -340,12 +340,11 @@ pub fn ChromagramView() -> impl IntoView {
         let file = idx.and_then(|i| files.get(i));
         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
         let zoom = state.zoom_level.get_untracked();
-        let visible_time = (cw / zoom) * time_res;
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-        let max_scroll = (duration - visible_time).max(0.0);
+        let visible_time = viewport::visible_time(cw, zoom, time_res);
+        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+        state.scroll_offset.set(viewport::clamp_scroll(start_scroll + dt, duration, visible_time));
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {

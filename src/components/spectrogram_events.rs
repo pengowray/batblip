@@ -4,6 +4,7 @@ use crate::canvas::coord::pointer_to_xtf;
 use crate::canvas::hit_test::{hit_test_spec_handles, is_in_ff_drag_zone};
 use crate::canvas::spectrogram_renderer;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, Selection};
+use crate::viewport;
 
 pub const LABEL_AREA_WIDTH: f64 = 60.0;
 
@@ -182,16 +183,15 @@ pub fn apply_hand_pan(
         file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
     };
     let zoom = state.zoom_level.get_untracked();
-    let visible_time = (cw / zoom) * time_res;
+    let visible_time = viewport::visible_time(cw, zoom, time_res);
     let duration = if let Some(ref tl) = timeline {
         tl.total_duration_secs
     } else {
         file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
     };
-    let max_scroll = (duration - visible_time).max(0.0);
     let dt = -(dx / cw) * visible_time;
     state.suspend_follow();
-    state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
+    state.scroll_offset.set(viewport::clamp_scroll(start_scroll + dt, duration, visible_time));
 }
 
 // ── Mouse event handlers ───────────────────────────────────────────────────
@@ -780,14 +780,13 @@ pub fn on_wheel(
         {
             let zoom = state.zoom_level.get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
-            let visible_time = (canvas_w / zoom) * time_res;
-            let max_scroll = (duration - visible_time).max(0.0);
+            let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
             // Scroll proportional to visible time (like arrow keys),
             // normalized so a typical wheel tick (~100px) scrolls ~10% of the view
             let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
             state.suspend_follow();
             state.scroll_offset.update(|s| {
-                *s = (*s + delta).clamp(0.0, max_scroll);
+                *s = viewport::clamp_scroll(*s + delta, duration, visible_time);
             });
         }
     }
