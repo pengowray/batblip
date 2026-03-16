@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use crate::types::AudioData;
 use crate::state::{AppState, Selection, PlaybackMode};
 use crate::audio::streaming_playback::{self, PlaybackParams};
+use crate::viewport;
 use std::cell::RefCell;
 
 thread_local! {
@@ -121,13 +122,32 @@ pub fn play_from_start(state: &AppState) {
 /// Play from the current "here" time (play_from_here_time signal).
 pub fn play_from_here(state: &AppState) {
     let pre = state.scroll_offset.get_untracked();
-    let start_secs = state.play_from_here_time.get_untracked();
+    let start_secs = current_play_from_here_time(state);
     stop(state);
     state.pre_play_scroll.set(pre);
     // Ignore selection for end time — "play from here" should always play to end of file.
     // If the user has a selection and the "here" marker is past the selection end,
     // this previously caused silent failure.
     play_from_time_inner(state, start_secs, None);
+}
+
+fn current_play_from_here_time(state: &AppState) -> f64 {
+    let files = state.files.get_untracked();
+    let idx = state.current_file_index.get_untracked();
+    let Some(file) = idx.and_then(|i| files.get(i)) else {
+        return state.play_from_here_time.get_untracked();
+    };
+
+    let canvas_width = state.spectrogram_canvas_width.get_untracked();
+    let zoom = state.zoom_level.get_untracked();
+    let scroll = state.scroll_offset.get_untracked();
+    let visible_time = viewport::visible_time(canvas_width, zoom, file.spectrogram.time_resolution);
+
+    if visible_time <= 0.0 {
+        state.play_from_here_time.get_untracked()
+    } else {
+        viewport::play_from_here_time(scroll, visible_time).clamp(0.0, file.audio.duration_secs)
+    }
 }
 
 /// Play from a specific time offset in the current file.
