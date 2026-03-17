@@ -585,9 +585,10 @@ pub fn App() -> impl IntoView {
             ev.prevent_default();
             state_kb.bat_book_open.update(|v| *v = !*v);
         }
-        // Q = toggle frequency bounds on current selection (region ↔ segment)
+        // Q = toggle frequency bounds on current selection or selected annotations (region ↔ segment)
         if (ev.key() == "q" || ev.key() == "Q") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             if let Some(sel) = state_kb.selection.get_untracked() {
+                // Transient selection exists — toggle it
                 ev.prevent_default();
                 if sel.freq_low.is_some() && sel.freq_high.is_some() {
                     // Strip freq bounds: region → segment
@@ -598,18 +599,88 @@ pub fn App() -> impl IntoView {
                     }));
                     state_kb.show_info_toast("Region → Segment (Q)");
                 } else {
-                    // Restore freq bounds from display range: segment → region
-                    let files = state_kb.files.get_untracked();
-                    let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
-                    let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                    let lo = state_kb.min_display_freq.get_untracked().unwrap_or(0.0);
-                    let hi = state_kb.max_display_freq.get_untracked().unwrap_or(file_max);
+                    // Restore freq bounds from FF range: segment → region
+                    let ff = state_kb.focus_stack.get_untracked().effective_range_ignoring_hfr();
+                    let (lo, hi) = if ff.is_active() {
+                        (ff.lo, ff.hi)
+                    } else {
+                        let files = state_kb.files.get_untracked();
+                        let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
+                        let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                        (state_kb.min_display_freq.get_untracked().unwrap_or(0.0),
+                         state_kb.max_display_freq.get_untracked().unwrap_or(file_max))
+                    };
                     state_kb.selection.set(Some(crate::state::Selection {
                         freq_low: Some(lo),
                         freq_high: Some(hi),
                         ..sel
                     }));
                     state_kb.show_info_toast("Segment → Region (Q)");
+                }
+            } else {
+                // No transient selection — toggle selected annotations
+                let sel_ids = state_kb.selected_annotation_ids.get_untracked();
+                if let (false, Some(idx)) = (sel_ids.is_empty(), state_kb.current_file_index.get_untracked()) {
+                    ev.prevent_default();
+                    // Check if all selected annotations are regions (have freq bounds)
+                    let store = state_kb.annotation_store.get_untracked();
+                    let all_have_freq = if let Some(Some(ref set)) = store.sets.get(idx) {
+                        sel_ids.iter().all(|id| {
+                            set.annotations.iter().find(|a| &a.id == id).map_or(false, |a| {
+                                matches!(&a.kind, crate::annotations::AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some())
+                            })
+                        })
+                    } else {
+                        false
+                    };
+                    drop(store);
+                    state_kb.snapshot_annotations();
+                    if all_have_freq {
+                        // Region → Segment: strip freq bounds, don't reset FF
+                        state_kb.annotation_store.update(|store| {
+                            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                                for ann in set.annotations.iter_mut() {
+                                    if sel_ids.contains(&ann.id) {
+                                        if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {
+                                            r.freq_low = None;
+                                            r.freq_high = None;
+                                            ann.modified_at = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        state_kb.annotations_dirty.set(true);
+                        state_kb.show_info_toast("Region → Segment (Q)");
+                    } else {
+                        // Segment → Region: use FF height
+                        let ff = state_kb.focus_stack.get_untracked().effective_range_ignoring_hfr();
+                        let (lo, hi) = if ff.is_active() {
+                            (ff.lo, ff.hi)
+                        } else {
+                            let files = state_kb.files.get_untracked();
+                            let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                            (state_kb.min_display_freq.get_untracked().unwrap_or(0.0),
+                             state_kb.max_display_freq.get_untracked().unwrap_or(file_max))
+                        };
+                        state_kb.annotation_store.update(|store| {
+                            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                                for ann in set.annotations.iter_mut() {
+                                    if sel_ids.contains(&ann.id) {
+                                        if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {
+                                            if r.freq_low.is_none() || r.freq_high.is_none() {
+                                                r.freq_low = Some(lo);
+                                                r.freq_high = Some(hi);
+                                                ann.modified_at = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        state_kb.annotations_dirty.set(true);
+                        state_kb.show_info_toast("Segment → Region (Q)");
+                    }
                 }
             }
         }
