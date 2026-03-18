@@ -85,23 +85,14 @@ pub fn Spectrogram() -> impl IntoView {
         cb.forget();
     }});
 
-    // Effect 1: pre-render small files (when columns are in memory and not in flow mode)
+    // Effect 1: keep legacy pre-render state cleared.
+    // The active draw path is tile-based for normal spectrogram rendering, so
+    // building a full-image pre-render here only duplicates load-time work.
     Effect::new(move || {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
-        let enabled = state.flow_enabled.get();
-        if let Some(i) = idx {
-            if let Some(file) = files.get(i) {
-                if file.spectrogram.columns.is_empty() || enabled {
-                    // Tile-based rendering (normal or flow) — no monolithic pre-render
-                    pre_rendered.set(None);
-                } else {
-                    pre_rendered.set(Some(spectrogram_renderer::pre_render(&file.spectrogram)));
-                }
-            }
-        } else {
-            pre_rendered.set(None);
-        }
+        let _files = state.files.get();
+        let _idx = state.current_file_index.get();
+        let _enabled = state.flow_enabled.get();
+        pre_rendered.set(None);
     });
 
     // Cache-clearing effects: invalidate tile caches when FFT mode, flow, transform, or reassignment changes

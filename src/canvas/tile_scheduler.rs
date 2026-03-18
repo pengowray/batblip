@@ -43,7 +43,6 @@ pub fn schedule_normal_tiles(
     let viewport_center_tile = ((vis_start_lod + vis_end_lod) / 2.0 / TILE_COLS as f64) as usize;
     let visible_tile_count = last_tile.saturating_sub(first_tile) + 1;
     let keep_cancel = visible_tile_count.max(10) * 3;
-    let keep_evict = visible_tile_count.max(10) * 5;
 
     // During playback, also protect tiles near the pre-play scroll position
     if is_playing {
@@ -55,12 +54,8 @@ pub fn schedule_normal_tiles(
         tile_cache::cancel_far_in_flight_multi(file_idx, ideal_lod, &[
             (viewport_center_tile, keep_cancel), (pre_center, keep_cancel)
         ]);
-        tile_cache::evict_far_multi(file_idx, ideal_lod, &[
-            (viewport_center_tile, keep_evict), (pre_center, keep_evict)
-        ]);
     } else {
         tile_cache::cancel_far_in_flight(file_idx, ideal_lod, viewport_center_tile, keep_cancel);
-        tile_cache::evict_far(file_idx, ideal_lod, viewport_center_tile, keep_evict);
     }
 
     let is_loading = state.loading_files.with_untracked(|v| !v.is_empty());
