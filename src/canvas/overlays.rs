@@ -1011,21 +1011,51 @@ pub fn draw_tile_debug_overlay(
     // Draw telemetry panel in bottom-right so it doesn't overlap tile labels.
     let ideal_hop = tile_cache::LOD_CONFIGS[ideal_lod as usize].hop_size;
     let actual_fft = user_fft.max(ideal_hop);
-    let panel_lines = [
+    let used_mb = stats.used_bytes as f64 / 1_048_576.0;
+    let max_mb = stats.max_bytes as f64 / 1_048_576.0;
+    let headroom_mb = stats.max_bytes.saturating_sub(stats.used_bytes) as f64 / 1_048_576.0;
+    let fullness_pct = if stats.max_bytes > 0 {
+        stats.used_bytes as f64 * 100.0 / stats.max_bytes as f64
+    } else {
+        0.0
+    };
+    let pressure = if fullness_pct >= 95.0 {
+        "FULL"
+    } else if fullness_pct >= 90.0 {
+        "HIGH"
+    } else if fullness_pct >= 75.0 {
+        "WARM"
+    } else {
+        "OK"
+    };
+    let panel_lines = vec![
         format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}"),
         format!("visible c:{} f:{} m:{}", stats.visible_cached, stats.visible_in_flight, stats.visible_missing),
         format!("cache {} / {} tiles", stats.total_cached, stats.total_in_flight),
-        format!("mem {:.1} / {:.0} MB", stats.used_bytes as f64 / 1_048_576.0, stats.max_bytes as f64 / 1_048_576.0),
+        format!("mem {used_mb:.1} / {max_mb:.0} MB"),
+        format!("headroom {headroom_mb:.1} MB  {fullness_pct:.0}%  {pressure}"),
         format!("range T{first_tile}..T{last_tile}"),
     ];
-    let label_w = 228.0;
+    let label_w = 248.0;
     let label_h = 14.0 * panel_lines.len() as f64 + 6.0;
     let panel_x = cw - label_w - 6.0;
     let panel_y = (ch - label_h - 6.0).max(3.0);
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
     ctx.fill_rect(panel_x, panel_y, label_w, label_h);
     for (idx, line) in panel_lines.iter().enumerate() {
-        ctx.set_fill_style_str(if idx == 1 && stats.visible_missing > 0 { "#f88" } else { "#fff" });
+        let color = if idx == 1 && stats.visible_missing > 0 {
+            "#f88"
+        } else if idx == 4 {
+            match pressure {
+                "FULL" => "#f66",
+                "HIGH" => "#fa0",
+                "WARM" => "#fd6",
+                _ => "#9f9",
+            }
+        } else {
+            "#fff"
+        };
+        ctx.set_fill_style_str(color);
         let _ = ctx.fill_text(line, panel_x + 4.0, panel_y + 3.0 + idx as f64 * 14.0);
     }
 
