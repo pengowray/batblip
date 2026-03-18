@@ -278,12 +278,15 @@ pub fn Spectrogram() -> impl IntoView {
         };
         let visible_time = (display_w as f64 / zoom) * time_res;
 
-        let file = idx.and_then(|i| files.get(i));
+        // In timeline mode, use primary segment for ref_db/auto-gain/debug;
+        // in single-file mode, use the current file index.
+        let effective_idx = if timeline.is_some() { primary_file_idx } else { idx };
+        let file = effective_idx.and_then(|i| files.get(i));
         let total_cols = file.map(|f| {
             let tc = f.spectrogram.total_columns;
             if tc > 0 { tc } else { f.spectrogram.columns.len() }
         }).unwrap_or(0);
-        let file_idx_val = idx.unwrap_or(0);
+        let file_idx_val = effective_idx.unwrap_or(0);
 
         // Compute reference dB level for mapping absolute-dB tile data to display.
         // When display_auto_gain is ON: peak-normalize using the file's running
@@ -541,11 +544,48 @@ pub fn Spectrogram() -> impl IntoView {
         }
 
         // Tile debug overlay (drawn on top of tiles, under other overlays)
-        if debug_tiles && total_cols > 0 {
-            spectrogram_renderer::draw_tile_debug_overlay(
-                &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
-                state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
-            );
+        if debug_tiles {
+            if let Some(ref tl) = timeline {
+                // Timeline mode: draw debug overlay per segment
+                let px_per_sec = zoom / time_res;
+                let visible_start = scroll;
+                let visible_end = scroll + visible_time;
+                for seg in tl.segments_in_range(visible_start, visible_end) {
+                    let seg_file = match files.get(seg.file_index) {
+                        Some(f) => f,
+                        None => continue,
+                    };
+                    let seg_time_res = seg_file.spectrogram.time_resolution;
+                    let seg_tc = {
+                        let tc = seg_file.spectrogram.total_columns;
+                        if tc > 0 { tc } else { seg_file.spectrogram.columns.len() }
+                    };
+                    if seg_tc == 0 { continue; }
+                    let seg_canvas_start = (seg.timeline_offset_secs - scroll) * px_per_sec;
+                    let seg_canvas_end = ((seg.timeline_offset_secs + seg.duration_secs) - scroll) * px_per_sec;
+                    let clip_left = seg_canvas_start.max(0.0);
+                    let clip_right = seg_canvas_end.min(display_w as f64);
+                    if clip_left >= clip_right { continue; }
+                    let file_scroll = (scroll - seg.timeline_offset_secs).max(0.0);
+                    let file_scroll_col = file_scroll / seg_time_res;
+                    let seg_zoom = px_per_sec * seg_time_res;
+                    ctx.save();
+                    ctx.begin_path();
+                    ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
+                    ctx.clip();
+                    ctx.translate(seg_canvas_start, 0.0).unwrap_or(());
+                    spectrogram_renderer::draw_tile_debug_overlay(
+                        &ctx, canvas, seg.file_index, seg_tc, file_scroll_col, seg_zoom,
+                        state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
+                    );
+                    ctx.restore();
+                }
+            } else if total_cols > 0 {
+                spectrogram_renderer::draw_tile_debug_overlay(
+                    &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
+                    state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
+                );
+            }
         }
 
         // Step 2: Draw overlays on top of the base spectrogram

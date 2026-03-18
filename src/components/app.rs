@@ -858,7 +858,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn MainArea() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let has_file = move || state.current_file_index.get().is_some();
+    let has_file = move || state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
 
     let is_mobile = state.is_mobile.get_untracked();
 

@@ -40,6 +40,15 @@ const CHROMA_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum time (ms) a tile can be in-flight before being considered stuck.
 const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
 
+/// Check if a file is the "current" file (selected or part of the active timeline).
+/// Used to prioritise tile generation — current files skip extra yield delays.
+fn is_current_file(state: &AppState, file_idx: usize) -> bool {
+    state.current_file_index.get_untracked() == Some(file_idx)
+        || state.active_timeline.with_untracked(|tl| {
+            tl.as_ref().map_or(false, |t| t.segments.iter().any(|s| s.file_index == file_idx))
+        })
+}
+
 // ── LOD configuration ────────────────────────────────────────────────────────
 
 pub struct LodConfig {
@@ -647,7 +656,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
                 return;
             }
         }
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -770,7 +779,7 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
             return;
         }
 
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -953,7 +962,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
             return;
         }
 
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -1134,7 +1143,7 @@ pub fn schedule_tile_on_demand(
             return;
         }
 
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -1273,7 +1282,7 @@ pub fn schedule_flow_tile(
                 return;
             }
         }
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -1476,7 +1485,7 @@ pub fn schedule_reassign_tile(
             return;
         }
 
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
@@ -1588,7 +1597,7 @@ pub fn schedule_chroma_tile(
     spawn_local(async move {
         yield_to_browser().await;
 
-        let is_current = state.current_file_index.get_untracked() == Some(file_idx);
+        let is_current = is_current_file(&state, file_idx);
         if !is_current {
             for _ in 0..3 { yield_to_browser().await; }
         }

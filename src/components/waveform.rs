@@ -112,6 +112,17 @@ pub fn Waveform() -> impl IntoView {
         let display_w = rect.width() as u32;
         let display_h = rect.height() as u32;
         if display_w == 0 || display_h == 0 {
+            // Canvas not yet laid out (e.g. just remounted) — schedule
+            // a retry on the next animation frame so the waveform draws
+            // once the browser has computed layout.
+            let state_retry = state;
+            let cb = wasm_bindgen::closure::Closure::once(move || {
+                state_retry.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            });
+            let _ = web_sys::window().unwrap().request_animation_frame(
+                cb.as_ref().unchecked_ref(),
+            );
+            cb.forget();
             return;
         }
         if canvas.width() != display_w || canvas.height() != display_h {
