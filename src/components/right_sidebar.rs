@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::state::{AppState, RightSidebarTab};
 
 use crate::components::file_sidebar::{
-    SpectrogramSettingsPanel, SelectionPanel, SidebarAnalysisPanel,
+    SelectionPanel, SidebarAnalysisPanel,
     MetadataPanel, HarmonicsPanel, NotchPanel, PsdPanel, PulsePanel,
 };
 use crate::components::debug_panel::DebugPanel;
@@ -164,7 +164,6 @@ pub fn RightSidebar() -> impl IntoView {
                 </div>
             </div>
             {move || match state.right_sidebar_tab.get() {
-                RightSidebarTab::Spectrogram => view! { <SpectrogramSettingsPanel /> }.into_any(),
                 RightSidebarTab::Selection => view! { <SelectionPanel /> }.into_any(),
                 RightSidebarTab::Psd => view! { <PsdPanel /> }.into_any(),
                 RightSidebarTab::Analysis => view! { <SidebarAnalysisPanel /> }.into_any(),

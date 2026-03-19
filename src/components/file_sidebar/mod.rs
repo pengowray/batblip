@@ -25,7 +25,7 @@ use files_panel::FilesPanel;
 use config_panel::ConfigPanel;
 use project_panel::ProjectPanel;
 use crate::state::LeftSidebarTab;
-pub(crate) use settings_panel::{SpectrogramSettingsPanel, SelectionPanel};
+pub(crate) use settings_panel::SelectionPanel;
 pub(crate) use analysis::AnalysisPanel as SidebarAnalysisPanel;
 pub(crate) use metadata_panel::MetadataPanel;
 pub(crate) use harmonics::HarmonicsPanel;

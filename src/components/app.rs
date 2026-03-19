@@ -1155,6 +1155,26 @@ fn MainViewButton() -> impl IntoView {
                 }
             }).collect_view()}
 
+            // Reassignment checkbox (spectrogram views)
+            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+                view! {
+                    <hr />
+                    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
+                        title="Sharpen time-frequency localization using the reassignment method (3x FFT cost)">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.reassign_enabled.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.reassign_enabled.set(input.checked());
+                            }
+                        />
+                        "Reassignment"
+                    </label>
+                }
+            })}
+
             // DSP filter rows (only when XformedSpec is active)
             {move || (state.main_view.get() == MainView::XformedSpec).then(|| {
                 view! {

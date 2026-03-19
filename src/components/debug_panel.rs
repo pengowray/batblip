@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use crate::state::AppState;
 
 #[component]
@@ -45,6 +46,22 @@ pub fn DebugPanel() -> impl IntoView {
 
     view! {
         <div class="sidebar-panel debug-panel">
+            // Debug tiles checkbox
+            <div class="setting-row" style="padding: 4px 8px;">
+                <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || state.debug_tiles.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.debug_tiles.set(input.checked());
+                        }
+                    />
+                    "Debug tiles"
+                </label>
+            </div>
+            <hr style="border-color: #444; margin: 4px 0;" />
             // Focus Stack visualization
             <div class="debug-focus-stack">
                 <div class="debug-section-title">"Focus Stack"</div>

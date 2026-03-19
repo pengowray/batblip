@@ -141,7 +141,6 @@ pub enum FlowColorScheme {
 pub enum RightSidebarTab {
     #[default]
     Metadata,
-    Spectrogram,
     Selection,
     Psd,
     Analysis,
@@ -155,7 +154,6 @@ impl RightSidebarTab {
     pub fn label(self) -> &'static str {
         match self {
             Self::Metadata => "Info",
-            Self::Spectrogram => "Display",
             Self::Selection => "Selection",
             Self::Psd => "PSD",
             Self::Analysis => "Analysis",
@@ -168,7 +166,6 @@ impl RightSidebarTab {
 
     pub const ALL: &'static [RightSidebarTab] = &[
         Self::Metadata,
-        Self::Spectrogram,
         Self::Selection,
         Self::Psd,
         Self::Analysis,
