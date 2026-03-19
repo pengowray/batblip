@@ -609,11 +609,16 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 None
             }}
 
+            // WIP notice
+            <div class="project-tauri-hint">
+                "The project feature is still a work in progress. May have bugs and may change in future updates."
+            </div>
+
             // Tauri hint
             {if !state.is_tauri && !has_tauri_metadata {
                 Some(view! {
                     <div class="project-tauri-hint">
-                        "Open in desktop app to enrich with file system dates."
+                        "Desktop version of this app has better date-time handling for files."
                     </div>
                 })
             } else {
