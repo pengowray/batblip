@@ -399,8 +399,9 @@ pub enum GainMode {
     /// Peak normalization: scan first N seconds, boost so peak ≈ −3 dBFS.
     /// Manual slider adds on top.
     AutoPeak,
-    /// Per-chunk adaptive compression: each chunk is independently normalized
-    /// with a noise gate so silence isn't boosted. Manual slider adds on top.
+    /// AGC (Automatic Gain Control): smooth per-sample leveler that targets
+    /// −3 dBFS with attack/release envelope following, noise gate, and limiter.
+    /// Manual slider adds on top.
     Adaptive,
 }
 
@@ -410,7 +411,7 @@ impl GainMode {
             Self::Off => "Off",
             Self::Manual => "Manual",
             Self::AutoPeak => "Peak",
-            Self::Adaptive => "Adaptive",
+            Self::Adaptive => "AGC",
         }
     }
 

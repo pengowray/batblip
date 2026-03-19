@@ -322,7 +322,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                 state.auto_gain.set(true);
                                 state.layer_panel_open.set(None);
                             }
-                        >"Adaptive \u{2014} Per-chunk compression"</button>
+                        >"AGC \u{2014} Automatic gain control"</button>
                         <div class="layer-panel-slider-row" style="margin-top: 6px;">
                             <label>{move || {
                                 let db = state.gain_db.get();
