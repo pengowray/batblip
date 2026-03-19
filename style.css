@@ -2832,6 +2832,12 @@ body.sidebar-resizing {
     letter-spacing: 0.5px;
     padding: 6px 0 3px;
 }
+.project-section-hint {
+    font-weight: 400;
+    text-transform: none;
+    color: #555;
+    font-size: 9px;
+}
 
 .project-file-list {
     border-top: 1px solid #333;
@@ -2841,9 +2847,19 @@ body.sidebar-resizing {
 .project-file-item {
     padding: 4px 0;
     border-bottom: 1px solid #222;
+    cursor: pointer;
+}
+.project-file-item:hover:not(.missing) {
+    background: #1a1a2a;
+}
+.project-file-item.selected {
+    background: #1a2a3a;
+    border-left: 2px solid #4a8;
+    padding-left: 4px;
 }
 .project-file-item.missing {
     opacity: 0.5;
+    cursor: default;
 }
 .project-file-name {
     color: #ccc;

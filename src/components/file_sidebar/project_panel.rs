@@ -410,9 +410,84 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         state.project_dirty.set(true);
     };
 
+    // ── File selection for timeline creation ──
+
+    let selected_proj_indices: RwSignal<Vec<usize>> = RwSignal::new(Vec::new());
+
+    // Map project file index → runtime file index (only for loaded files)
+    let proj_to_runtime: StoredValue<Vec<Option<usize>>> = StoredValue::new(file_statuses.iter().map(|(pf, is_loaded)| {
+        if !is_loaded { return None; }
+        loaded_files.iter().position(|lf| {
+            lf.identity.as_ref().map_or(false, |id| {
+                if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
+                    a == b
+                } else {
+                    pf.identity.filename == id.filename && pf.identity.file_size == id.file_size
+                }
+            })
+        })
+    }).collect());
+
+    let on_create_timeline = move |_: web_sys::MouseEvent| {
+            let sel = selected_proj_indices.get_untracked();
+            let runtime_indices: Vec<usize> = sel.iter()
+                .filter_map(|&pi| proj_to_runtime.with_value(|p2r| p2r.get(pi).copied().flatten()))
+                .collect();
+            if runtime_indices.len() < 2 { return; }
+            let files = state.files.get_untracked();
+            if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
+                let timeline_duration = tv.total_duration_secs;
+                let primary_time_res = tv.segments.first()
+                    .and_then(|s| files.get(s.file_index))
+                    .map(|f| f.spectrogram.time_resolution)
+                    .unwrap_or(1.0);
+                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                // Save to project
+                state.current_project.update(|p| {
+                    let Some(proj) = p else { return };
+                    let entries: Vec<_> = tv.segments.iter().filter_map(|seg| {
+                        let loaded = files.get(seg.file_index)?;
+                        let identity = loaded.identity.as_ref()?;
+                        let proj_idx = proj.find_file(identity)?;
+                        Some(crate::project::TimelineEntry {
+                            file_index: proj_idx,
+                            start_epoch_ms: tv.origin_epoch_ms + seg.timeline_offset_secs * 1000.0,
+                            duration_secs: seg.duration_secs,
+                            multitrack_group_id: None,
+                        })
+                    }).collect();
+                    if !entries.is_empty() {
+                        proj.timelines.push(crate::project::TimelineDefinition {
+                            id: crate::annotations::generate_uuid(),
+                            entries,
+                            label: None,
+                        });
+                        proj.touch();
+                    }
+                });
+                state.project_dirty.set(true);
+
+                state.selected_file_indices.set(runtime_indices);
+                state.active_timeline.set(Some(tv));
+                state.active_timeline_track.set(None);
+                state.current_file_index.set(None);
+                state.suspend_follow();
+                if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
+                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
+                    state.zoom_level.set(fit_zoom);
+                    let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
+                    let from_here_mode = state.play_start_mode.get_untracked() == crate::state::PlayStartMode::FromHere;
+                    state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
+                } else {
+                    state.scroll_offset.set(0.0);
+                }
+                selected_proj_indices.set(Vec::new());
+            }
+    };
+
     // ── Build file items ──
 
-    let file_items: Vec<_> = file_statuses.iter().map(|(pf, is_loaded)| {
+    let file_items: Vec<_> = file_statuses.iter().enumerate().map(|(pi, (pf, is_loaded))| {
         let filename = pf.identity.filename.clone();
         let duration = pf.audio_metadata.as_ref().map(|m| m.duration_secs);
         let sample_rate = pf.audio_metadata.as_ref().map(|m| m.sample_rate);
@@ -422,10 +497,38 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         let from_tauri = pf.metadata_from_tauri;
         let loaded = *is_loaded;
 
-        let status_cls = if loaded { "project-file-item" } else { "project-file-item missing" };
+        let is_selected = move || selected_proj_indices.with(|sel| sel.contains(&pi));
+        let on_click = move |ev: web_sys::MouseEvent| {
+            if !loaded { return; } // Can't select unloaded files
+            let ctrl = ev.ctrl_key() || ev.meta_key();
+            let shift = ev.shift_key();
+
+            if ctrl {
+                selected_proj_indices.update(|sel| {
+                    if let Some(pos) = sel.iter().position(|&x| x == pi) {
+                        sel.remove(pos);
+                    } else {
+                        sel.push(pi);
+                    }
+                });
+            } else if shift {
+                let anchor = selected_proj_indices.with_untracked(|sel| sel.first().copied().unwrap_or(0));
+                let (lo, hi) = if anchor <= pi { (anchor, pi) } else { (pi, anchor) };
+                selected_proj_indices.set((lo..=hi).collect());
+            } else {
+                selected_proj_indices.set(vec![pi]);
+            }
+        };
 
         view! {
-            <div class=status_cls>
+            <div
+                class=move || {
+                    let mut cls = if loaded { "project-file-item".to_string() } else { "project-file-item missing".to_string() };
+                    if is_selected() { cls.push_str(" selected"); }
+                    cls
+                }
+                on:click=on_click
+            >
                 <div class="project-file-name">
                     {if !loaded {
                         Some(view! { <span class="project-file-status" title="Not loaded">{"\u{25CB} "}</span> })
@@ -531,7 +634,31 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
             // File list
             <div class="project-file-list">
-                <div class="project-section-header">"Files"</div>
+                <div class="project-section-header">"Files"
+                    <span class="project-section-hint">" (Ctrl/Shift-click to select)"</span>
+                </div>
+                // Timeline creation bar
+                {move || {
+                    let sel_count = selected_proj_indices.with(|s| s.len());
+                    if sel_count >= 2 {
+                        view! {
+                            <div class="timeline-create-bar">
+                                <span>{format!("{} files selected", sel_count)}</span>
+                                <button class="timeline-create-btn" on:click=on_create_timeline
+                                    title="Create a stitched timeline from selected files"
+                                >"Create Timeline"</button>
+                            </div>
+                        }.into_any()
+                    } else if sel_count == 1 {
+                        view! {
+                            <div class="timeline-create-bar">
+                                <span>"Select more files for timeline"</span>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <span></span> }.into_any()
+                    }
+                }}
                 {file_items}
             </div>
 
@@ -631,7 +758,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         {if timeline_items.is_empty() {
                             Some(view! {
                                 <div class="project-panel-hint" style="margin: 4px 0;">
-                                    "Select files in the Files tab and click Create Timeline."
+                                    "Select files above and click Create Timeline."
                                 </div>
                             })
                         } else {

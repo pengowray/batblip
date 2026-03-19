@@ -9,10 +9,7 @@ use crate::audio::streaming_source;
 use crate::canvas::tile_cache;
 use crate::state::{AppState, FileSortMode, LoadedFile};
 use crate::types::PreviewImage;
-use crate::viewport;
-
 use super::file_groups;
-use crate::timeline::TimelineView;
 use crate::format_time::format_duration_compact;
 
 use super::loading::{read_and_load_file, DemoEntry, fetch_demo_index, load_single_demo};
@@ -405,58 +402,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     };
                     let show_sort = file_vec.len() > 1;
 
-                    let on_create_timeline = move |_: web_sys::MouseEvent| {
-                        let sel = state.selected_file_indices.get_untracked();
-                        if sel.len() < 2 { return; }
-                        let files = state.files.get_untracked();
-                        if let Some(tv) = TimelineView::from_files(&sel, &files) {
-                            let timeline_duration = tv.total_duration_secs;
-                            let primary_time_res = tv.segments.first()
-                                .and_then(|s| files.get(s.file_index))
-                                .map(|f| f.spectrogram.time_resolution)
-                                .unwrap_or(1.0);
-                            let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                            // Save to project if one exists
-                            state.current_project.update(|p| {
-                                let Some(proj) = p else { return };
-                                let entries: Vec<_> = tv.segments.iter().filter_map(|seg| {
-                                    let loaded = files.get(seg.file_index)?;
-                                    let identity = loaded.identity.as_ref()?;
-                                    let proj_idx = proj.find_file(identity)?;
-                                    Some(crate::project::TimelineEntry {
-                                        file_index: proj_idx,
-                                        start_epoch_ms: tv.origin_epoch_ms + seg.timeline_offset_secs * 1000.0,
-                                        duration_secs: seg.duration_secs,
-                                        multitrack_group_id: None,
-                                    })
-                                }).collect();
-                                if !entries.is_empty() {
-                                    proj.timelines.push(crate::project::TimelineDefinition {
-                                        id: crate::annotations::generate_uuid(),
-                                        entries,
-                                        label: None,
-                                    });
-                                    proj.touch();
-                                }
-                            });
-                            state.project_dirty.set(true);
-
-                            state.active_timeline.set(Some(tv));
-                            state.active_timeline_track.set(None);
-                            state.current_file_index.set(None);
-                            state.suspend_follow();
-                            if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
-                                let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
-                                state.zoom_level.set(fit_zoom);
-                                let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
-                                let from_here_mode = state.play_start_mode.get_untracked() == crate::state::PlayStartMode::FromHere;
-                                state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
-                            } else {
-                                state.scroll_offset.set(0.0);
-                            }
-                        }
-                    };
-
                     let on_exit_timeline = move |_: web_sys::MouseEvent| {
                         state.active_timeline.set(None);
                         state.active_timeline_track.set(None);
@@ -474,7 +419,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             } else {
                                 None
                             }}
-                            // Timeline creation / active banner
+                            // Active timeline banner
                             {move || {
                                 if state.active_timeline.with(|t| t.is_some()) {
                                     let seg_count = state.active_timeline.with(|t| {
@@ -494,19 +439,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         </div>
                                     }.into_any()
                                 } else {
-                                    let sel_count = state.selected_file_indices.with(|s| s.len());
-                                    if sel_count >= 2 {
-                                        view! {
-                                            <div class="timeline-create-bar">
-                                                <span>{format!("{} files selected", sel_count)}</span>
-                                                <button class="timeline-create-btn" on:click=on_create_timeline
-                                                    title="Create a stitched timeline from selected files"
-                                                >"Create Timeline"</button>
-                                            </div>
-                                        }.into_any()
-                                    } else {
-                                        view! { <span></span> }.into_any()
-                                    }
+                                    view! { <span></span> }.into_any()
                                 }
                             }}
                             {items}
