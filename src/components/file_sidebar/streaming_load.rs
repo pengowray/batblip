@@ -156,20 +156,21 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     let preview = compute_preview(&audio, 256, 128);
 
     // Check for silence/quiet in head
-    let silence_check = {
+    let (silence_check, cached_peak_db) = {
         use crate::audio::source::ChannelView;
         let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
         ) as usize);
         let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
-            Some(SilenceCheck::Silent)
+            (Some(SilenceCheck::Silent), None)
         } else if peak > 1e-10 {
             let peak_db = 20.0 * (peak as f64).log10();
             let auto_db = -3.0 - peak_db;
-            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -211,6 +212,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
                 last_modified_ms: None,
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
+                cached_peak_db,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -430,20 +432,21 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     let preview = compute_preview(&audio, 256, 128);
 
     // Check for silence/quiet in head
-    let silence_check = {
+    let (silence_check, cached_peak_db) = {
         use crate::audio::source::ChannelView;
         let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
         ) as usize);
         let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
-            Some(SilenceCheck::Silent)
+            (Some(SilenceCheck::Silent), None)
         } else if peak > 1e-10 {
             let peak_db = 20.0 * (peak as f64).log10();
             let auto_db = -3.0 - peak_db;
-            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -485,6 +488,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
                 last_modified_ms: None,
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
+                cached_peak_db,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -782,20 +786,21 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     let preview = compute_preview(&audio, 256, 128);
 
     // Check for silence/quiet in head
-    let silence_check = {
+    let (silence_check, cached_peak_db) = {
         use crate::audio::source::ChannelView;
         let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
         ) as usize);
         let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
-            Some(SilenceCheck::Silent)
+            (Some(SilenceCheck::Silent), None)
         } else if peak > 1e-10 {
             let peak_db = 20.0 * (peak as f64).log10();
             let auto_db = -3.0 - peak_db;
-            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -837,6 +842,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
                 last_modified_ms: None,
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
+                cached_peak_db,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -1133,20 +1139,21 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     let preview = compute_preview(&audio, 256, 128);
 
     // Check for silence/quiet in head
-    let silence_check = {
+    let (silence_check, cached_peak_db) = {
         use crate::audio::source::ChannelView;
         let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
             (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
         ) as usize);
         let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
-            Some(SilenceCheck::Silent)
+            (Some(SilenceCheck::Silent), None)
         } else if peak > 1e-10 {
             let peak_db = 20.0 * (peak as f64).log10();
             let auto_db = -3.0 - peak_db;
-            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -1188,6 +1195,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
                 last_modified_ms: None,
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
+                cached_peak_db,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));

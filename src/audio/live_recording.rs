@@ -75,6 +75,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             last_modified_ms: None,
             identity: None,
             file_handle: None,
+            cached_peak_db: None,
         });
     });
 
@@ -516,6 +517,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
                 last_modified_ms: None,
                 identity: None,
                 file_handle: None,
+                cached_peak_db: None,
             });
         });
         file_index = idx;

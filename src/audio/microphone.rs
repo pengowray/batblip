@@ -1118,6 +1118,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
                 last_modified_ms: None,
                 identity: None,
                 file_handle: None,
+                cached_peak_db: None,
             });
         });
         file_index = idx;

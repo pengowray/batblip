@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use crate::annotations::AnnotationKind;
-use crate::state::{AppState, Selection, PlaybackMode};
+use crate::state::{AppState, GainMode, Selection, PlaybackMode};
 use crate::audio::streaming_playback::{self, PlaybackParams};
 use crate::audio::source::{AudioSource, TimelineAudioSource};
 use crate::viewport;
@@ -398,6 +398,11 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
         zc_factor: state.zc_factor.get_untracked(),
         gain_db: state.gain_db.get_untracked(),
         gain_mode: state.gain_mode.get_untracked(),
+        auto_peak_gain_db: if state.gain_mode.get_untracked() == GainMode::AutoPeak {
+            state.compute_auto_gain()
+        } else {
+            0.0
+        },
         filter_enabled: state.filter_enabled.get_untracked(),
         filter_freq_low: state.filter_freq_low.get_untracked(),
         filter_freq_high: state.filter_freq_high.get_untracked(),

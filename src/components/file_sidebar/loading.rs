@@ -127,7 +127,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(HOP_SIZE);
 
     // Check for silent/quiet files — scan first 30s only
-    let silence_check = {
+    let (silence_check, cached_peak_db) = {
         use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
         let total_len = audio.source.total_samples() as usize;
         let scan_end = total_len.min(
@@ -136,13 +136,14 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         let scan_samples = audio.source.read_region(ChannelView::MonoMix, 0, scan_end);
         let peak = scan_samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
-            Some(SilenceCheck::Silent)
+            (Some(SilenceCheck::Silent), None)
         } else if peak > 1e-10 {
             let peak_db = 20.0 * (peak as f64).log10();
             let auto_db = -3.0 - peak_db;
-            if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None }
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -180,6 +181,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 last_modified_ms: None,
                 identity: None,
                 file_handle: None,
+                cached_peak_db,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));

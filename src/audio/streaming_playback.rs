@@ -66,6 +66,7 @@ pub(crate) struct PlaybackParams {
     pub zc_factor: f64,
     pub gain_db: f64,
     pub gain_mode: GainMode,
+    pub auto_peak_gain_db: f64,
     pub filter_enabled: bool,
     pub filter_freq_low: f64,
     pub filter_freq_high: f64,
@@ -243,26 +244,7 @@ async fn chunk_loop(
     let is_adaptive = params.gain_mode == GainMode::Adaptive;
     let manual_boost = params.gain_db; // slider value, additive for all modes
 
-    let auto_peak_gain: f64 = if params.gain_mode == GainMode::AutoPeak {
-        let is_streaming = streaming_source::is_streaming(source.as_ref());
-        let max_scan = if is_streaming {
-            (source_rate as usize) * 5
-        } else {
-            (source_rate as usize) * 15
-        };
-        let scan_end = end_sample.min(start_sample + max_scan);
-        let scan_len = scan_end - start_sample;
-        let scan_samples = source.read_region(channel_view, start_sample as u64, scan_len);
-        let peak = scan_samples.iter().fold(0.0f32, |mx, s| mx.max(s.abs()));
-        if peak < 1e-10 {
-            0.0
-        } else {
-            let peak_db = 20.0 * (peak as f64).log10();
-            (-3.0 - peak_db).min(60.0)
-        }
-    } else {
-        0.0
-    };
+    let auto_peak_gain: f64 = params.auto_peak_gain_db;
 
     let mode_boost = match params.mode {
         PlaybackMode::PhaseVocoder => PV_MODE_BOOST_DB,
