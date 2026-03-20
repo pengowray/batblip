@@ -174,9 +174,15 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         return;
     }
 
-    // Sync noise profile and touch modified_at before saving
+    // Sync file identity, noise profile, and touch modified_at before saving
     state.annotation_store.update(|store| {
         if let Some(Some(ref mut set)) = store.sets.get_mut(file_idx) {
+            // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
+            if let Some(id) = state.files.with_untracked(|files| {
+                files.get(file_idx).and_then(|f| f.identity.clone())
+            }) {
+                set.file_identity = id;
+            }
             // Capture current NR state into the sidecar
             set.noise_profile = sync_noise_profile_from_state(state);
             set.touch();

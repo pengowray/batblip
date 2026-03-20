@@ -240,7 +240,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     let new_set = state.files.with_untracked(|files| {
                         files.get(idx).map(|f| {
                             let id = f.identity.clone().unwrap_or_else(|| {
-                                crate::file_identity::identity_layer1(&f.name, 0)
+                                crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
                             });
                             AnnotationSet::new_with_metadata(id, &f.audio)
                         })

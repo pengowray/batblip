@@ -363,8 +363,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 }
                             });
                         };
-                        let is_read_only = move || {
-                            state.files.with(|files| files.get(i).map_or(false, |f| f.read_only))
+                        // Returns (read_only, had_sidecar) for the batm badge
+                        let batm_badge_state = move || {
+                            state.files.with(|files| {
+                                files.get(i).map(|f| (f.read_only, f.had_sidecar)).unwrap_or((false, false))
+                            })
                         };
                         // Show unsaved badge on web recordings only
                         let show_unsaved = is_rec && !is_tauri;
@@ -411,6 +414,40 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         } else {
                                             None
                                         }}
+                                        {if is_tauri {
+                                            Some(view! {
+                                                <span
+                                                    class="file-badge file-badge-batm"
+                                                    style="cursor: pointer;"
+                                                    style:display=move || {
+                                                        let (ro, sidecar) = batm_badge_state();
+                                                        if ro || sidecar { "inline" } else { "none" }
+                                                    }
+                                                    on:click=on_toggle_readonly
+                                                    title=move || {
+                                                        let (ro, sidecar) = batm_badge_state();
+                                                        match (ro, sidecar) {
+                                                            (true, true) => "View-only \u{2014} .batm sidecar not being updated. Click to enable editing.",
+                                                            (true, false) => "View-only \u{2014} annotations won\u{2019}t be saved. Click to enable editing.",
+                                                            (false, true) => ".batm sidecar next to audio file is being updated. Click for view-only.",
+                                                            (false, false) => "",
+                                                        }.to_string()
+                                                    }
+                                                >
+                                                    {move || {
+                                                        let (ro, sidecar) = batm_badge_state();
+                                                        match (ro, sidecar) {
+                                                            (true, true) => "[.batm view]",
+                                                            (true, false) => "[view]",
+                                                            (false, true) => "[.batm]",
+                                                            (false, false) => "",
+                                                        }
+                                                    }}
+                                                </span>
+                                            })
+                                        } else {
+                                            None
+                                        }}
                                         {name}
                                     </div>
                                     {if show_unsaved {
@@ -419,20 +456,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             >"\u{2B73}"</button>
                                             <button class="file-mark-saved-btn" on:click=on_mark_saved title="Mark as saved"
                                             >"\u{2713}"</button>
-                                        })
-                                    } else {
-                                        None
-                                    }}
-                                    {if is_tauri {
-                                        Some(view! {
-                                            <button
-                                                class="file-readonly-btn"
-                                                on:click=on_toggle_readonly
-                                                title=move || if is_read_only() { "Read-only (click to enable editing)" } else { "Editable (click for read-only)" }
-                                                style="font-size: 10px; padding: 0 2px; opacity: 0.6; border: none; background: none; cursor: pointer;"
-                                            >
-                                                {move || if is_read_only() { "\u{1F512}" } else { "\u{1F513}" }}
-                                            </button>
                                         })
                                     } else {
                                         None
