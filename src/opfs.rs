@@ -238,11 +238,40 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
 /// Explicitly save a file-adjacent .batm sidecar (Tauri only).
 /// Called when user clicks "Save .batm sidecar". Sets had_sidecar so future auto-saves update it.
 pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
-    use leptos::prelude::{GetUntracked, Update};
+    use leptos::prelude::{GetUntracked, Update, WithUntracked};
 
-    // Sync noise profile and touch modified_at
+    // Get the file path from LoadedFile.identity (authoritative source)
+    let file_path = state.files.with_untracked(|files| {
+        files.get(file_idx).and_then(|f| f.identity.as_ref().and_then(|id| id.file_path.clone()))
+    });
+    let path = match file_path {
+        Some(p) => p,
+        None => { state.show_error_toast("No file path — file was not opened from disk"); return; }
+    };
+
+    // Ensure an AnnotationSet exists, creating one if needed
     state.annotation_store.update(|store| {
+        store.ensure_len(file_idx + 1);
+        if store.sets[file_idx].is_none() {
+            let new_set = state.files.with_untracked(|files| {
+                files.get(file_idx).map(|f| {
+                    let id = f.identity.clone().unwrap_or_else(|| {
+                        crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+                    });
+                    crate::annotations::AnnotationSet::new_with_metadata(id, &f.audio)
+                })
+            });
+            if let Some(set) = new_set {
+                store.sets[file_idx] = Some(set);
+            }
+        }
+        // Sync file identity and noise profile, touch modified_at
         if let Some(Some(ref mut set)) = store.sets.get_mut(file_idx) {
+            if let Some(id) = state.files.with_untracked(|files| {
+                files.get(file_idx).and_then(|f| f.identity.clone())
+            }) {
+                set.file_identity = id;
+            }
             set.noise_profile = sync_noise_profile_from_state(state);
             set.touch();
         }
@@ -251,12 +280,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     let store = state.annotation_store.get_untracked();
     let set = match store.sets.get(file_idx).and_then(|s| s.as_ref()) {
         Some(s) => s.clone(),
-        None => { state.show_error_toast("No annotations to save"); return; }
-    };
-
-    let path = match set.file_identity.file_path {
-        Some(ref p) => p.clone(),
-        None => { state.show_error_toast("No file path — file was not opened from disk"); return; }
+        None => { state.show_error_toast("Failed to create annotation set"); return; }
     };
 
     let yaml = match yaml_serde::to_string(&set) {
