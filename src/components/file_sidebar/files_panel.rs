@@ -41,8 +41,8 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
     let state_for_upload = state.clone();
     let on_upload_click = move |_: web_sys::MouseEvent| {
-        if state.is_tauri {
-            // Tauri: use native file dialog to get real filesystem paths
+        if state.is_tauri && !state.is_mobile.get_untracked() {
+            // Tauri desktop: use native file dialog to get real filesystem paths
             let state = state_for_upload.clone();
             spawn_local(async move {
                 let args = js_sys::Object::new();
