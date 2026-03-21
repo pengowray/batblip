@@ -23,7 +23,7 @@ const PV_HQ_OVERLAP: usize = 8192;
 /// Build PlaybackParams for exporting a region.
 /// When `use_region_focus` is true and the region has frequency bounds,
 /// those bounds drive the selection-based bandpass/heterodyne.
-fn build_export_params(
+pub(crate) fn build_export_params(
     state: &AppState,
     region: Option<&Region>,
     use_region_focus: bool,
@@ -48,7 +48,7 @@ fn build_export_params(
 }
 
 /// Process a time range through the DSP pipeline and return processed f32 samples.
-fn process_region(
+pub(crate) fn process_region(
     source: &dyn AudioSource,
     sample_rate: u32,
     start_time: f64,
@@ -162,7 +162,7 @@ fn process_region(
 }
 
 /// Trigger a browser download of raw bytes.
-fn trigger_browser_download(data: &[u8], filename: &str) {
+pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
     let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
     array.copy_from(data);
 

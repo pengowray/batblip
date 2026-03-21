@@ -1,6 +1,7 @@
 pub(crate) mod file_groups;
 mod files_panel;
 mod config_panel;
+mod export_section;
 mod project_panel;
 pub(crate) use project_panel::save_project_async;
 pub mod settings_panel;

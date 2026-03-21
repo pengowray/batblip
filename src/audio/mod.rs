@@ -9,4 +9,6 @@ pub mod streaming_playback;
 pub mod streaming_mp3;
 pub mod streaming_ogg;
 pub mod streaming_source;
+pub mod video_export;
 pub mod wav_encoder;
+pub mod webcodecs_bindings;

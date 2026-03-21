@@ -373,25 +373,11 @@ fn AnnotationsList() -> impl IntoView {
         Some(build_annotation_tree(&set.annotations))
     };
 
-    let on_export = move |_: web_sys::MouseEvent| {
-        export_annotations(state);
-    };
-
-    let on_save_sidecar = move |_: web_sys::MouseEvent| {
-        if let Some(idx) = state.current_file_index.get_untracked() {
-            crate::opfs::save_sidecar_explicit(state, idx);
-        }
-    };
-
-    let has_file_path = move || {
+    let has_file_path = move || -> Option<bool> {
         let idx = state.current_file_index.get()?;
         let files = state.files.get();
         let file = files.get(idx)?;
         file.identity.as_ref()?.file_path.as_ref().map(|_| true)
-    };
-
-    let on_import = move |_: web_sys::MouseEvent| {
-        import_annotations(state);
     };
 
     let on_group = move |_: web_sys::MouseEvent| {
@@ -453,70 +439,17 @@ fn AnnotationsList() -> impl IntoView {
                 view! { <div></div> }.into_any()
             }
         }}
-        <div class="setting-row" style="gap: 4px; align-items: center;">
-            <button
-                class="sidebar-btn"
-                style="flex: 1;"
-                on:click=move |_| {
-                    crate::audio::export::export_selected(&state);
+        <super::export_section::ExportSection
+            on_export_batm=Callback::new(move |()| export_annotations(state))
+            on_save_sidecar=Callback::new(move |()| {
+                if let Some(idx) = state.current_file_index.get_untracked() {
+                    crate::opfs::save_sidecar_explicit(state, idx);
                 }
-                disabled=move || crate::audio::export::get_export_info(&state).is_none()
-            >
-                {move || {
-                    match crate::audio::export::get_export_info(&state) {
-                        Some(info) => {
-                            let mode_suffix = info.mode_label
-                                .map(|m| format!(" ({m})"))
-                                .unwrap_or_default();
-                            format!("Export {} {} to .wav{}", info.count, info.source_label, mode_suffix)
-                        }
-                        None => "Export to .wav".to_string(),
-                    }
-                }}
-            </button>
-        </div>
-        <div class="setting-row" style="gap: 4px;">
-            {if state.is_tauri {
-                view! {
-                    <button
-                        class="sidebar-btn"
-                        style="flex: 1;"
-                        on:click=on_save_sidecar
-                        disabled=move || has_annotations().is_none() || has_file_path().is_none()
-                        title="Save .batm sidecar next to the audio file"
-                    >
-                        "Save .batm"
-                    </button>
-                    <button
-                        class="sidebar-btn"
-                        style="flex: 1;"
-                        on:click=on_export
-                        disabled=move || has_annotations().is_none()
-                        title="Export .batm to a chosen location"
-                    >
-                        "Save as\u{2026}"
-                    </button>
-                }.into_any()
-            } else {
-                view! {
-                    <button
-                        class="sidebar-btn"
-                        style="flex: 1;"
-                        on:click=on_export
-                        disabled=move || has_annotations().is_none()
-                    >
-                        "Export .batm"
-                    </button>
-                }.into_any()
-            }}
-            <button
-                class="sidebar-btn"
-                style="flex: 1;"
-                on:click=on_import
-            >
-                "Import .batm"
-            </button>
-        </div>
+            })
+            on_import_batm=Callback::new(move |()| import_annotations(state))
+            has_annotations=Signal::derive(has_annotations)
+            has_file_path=Signal::derive(has_file_path)
+        />
     }
 }
 

@@ -126,6 +126,55 @@ pub enum PlaybackMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ExportFormat {
+    #[default]
+    Wav,
+    Mp4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum VideoResolution {
+    #[default]
+    Hd720,
+    Hd1080,
+    MatchCanvas,
+}
+
+impl VideoResolution {
+    pub fn dimensions(self, canvas_w: u32, canvas_h: u32) -> (u32, u32) {
+        match self {
+            Self::Hd720 => (1280, 720),
+            Self::Hd1080 => (1920, 1080),
+            Self::MatchCanvas => (canvas_w, canvas_h),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hd720 => "720p",
+            Self::Hd1080 => "1080p",
+            Self::MatchCanvas => "Match canvas",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum VideoCodec {
+    #[default]
+    H264,
+    Av1,
+}
+
+impl VideoCodec {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::Av1 => "AV1",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum SpectrogramDisplay {
     #[default]
     FlowOptical,
@@ -985,6 +1034,20 @@ pub struct AppState {
 
     // Clean view: hide all overlays while holding backtick
     pub clean_view: RwSignal<bool>,
+
+    // Export UI
+    /// Whether the export section is expanded/collapsed.
+    pub export_section_open: RwSignal<bool>,
+    /// Selected export format: WAV or MP4.
+    pub export_format: RwSignal<ExportFormat>,
+    /// Video export progress (0.0 to 1.0), None = not exporting.
+    pub video_export_progress: RwSignal<Option<f64>>,
+    /// Video export status message.
+    pub video_export_status: RwSignal<Option<String>>,
+    /// Selected video resolution preset.
+    pub video_resolution: RwSignal<VideoResolution>,
+    /// Selected video codec.
+    pub video_codec: RwSignal<VideoCodec>,
 }
 
 fn detect_tauri() -> bool {
@@ -1262,6 +1325,14 @@ impl AppState {
             show_clock_time: RwSignal::new(false),
             focus_stack: RwSignal::new(crate::focus_stack::FocusStack::new()),
             clean_view: RwSignal::new(false),
+
+            // Export UI
+            export_section_open: RwSignal::new(false),
+            export_format: RwSignal::new(ExportFormat::default()),
+            video_export_progress: RwSignal::new(None),
+            video_export_status: RwSignal::new(None),
+            video_resolution: RwSignal::new(VideoResolution::default()),
+            video_codec: RwSignal::new(VideoCodec::default()),
         };
 
         // On mobile, start with sidebar collapsed

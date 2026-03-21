@@ -4292,3 +4292,108 @@ body.sidebar-resizing {
     text-transform: uppercase;
     letter-spacing: 0.3px;
 }
+
+/* ── Export section ──────────────────────────────────────────────── */
+.export-section {
+    margin: 4px 0;
+}
+
+.export-section-header {
+    padding: 6px 16px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.export-section-header:hover {
+    color: #bbb;
+}
+
+.export-toggle-arrow {
+    display: inline-block;
+    font-size: 8px;
+    transition: transform 0.15s ease;
+}
+.export-toggle-arrow.open {
+    transform: rotate(90deg);
+}
+
+.export-section-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+}
+.export-section-body.open {
+    max-height: 400px;
+}
+
+.export-format-row {
+    padding: 4px 16px;
+    gap: 10px;
+    justify-content: flex-start;
+}
+.export-format-label {
+    font-size: 11px;
+    color: #999;
+    margin-right: 2px;
+}
+.export-radio {
+    font-size: 11px;
+    color: #ccc;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.export-radio.disabled {
+    color: #666;
+    cursor: not-allowed;
+}
+.export-radio input[type="radio"] {
+    margin: 0;
+    accent-color: #4a8a5a;
+}
+
+.export-mp4-options {
+    padding: 2px 0;
+}
+.export-option-label {
+    font-size: 11px;
+    color: #999;
+    min-width: 70px;
+    padding-left: 16px;
+}
+
+.export-tooltip {
+    font-size: 10px;
+    color: #888;
+    cursor: help;
+}
+
+.export-progress {
+    padding: 4px 16px;
+}
+.export-progress-bar {
+    height: 6px;
+    background: #1a2a1a;
+    border: 1px solid #3a5a3a;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.export-progress-fill {
+    height: 100%;
+    background: #4a8a5a;
+    transition: width 0.15s ease;
+}
+.export-progress-text {
+    font-size: 10px;
+    color: #888;
+    margin-top: 2px;
+    text-align: center;
+}
