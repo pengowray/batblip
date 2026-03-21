@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "trunk-dev",
+      "runtimeExecutable": "trunk",
+      "runtimeArgs": ["serve", "--release", "--port", "21347"],
+      "port": 21347
+    },
+    {
+      "name": "trunk-tauri",
+      "runtimeExecutable": "trunk",
+      "runtimeArgs": ["serve", "--release", "--port", "21259"],
+      "port": 21259
+    }
+  ]
+}
