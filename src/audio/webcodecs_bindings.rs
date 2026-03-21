@@ -35,10 +35,10 @@ pub async fn is_video_config_supported(codec: &str, width: u32, height: u32) -> 
                     codec: "{codec}",
                     width: {width},
                     height: {height},
-                    bitrate: 1_000_000,
+                    bitrate: 1000000,
                 }});
                 return !!support.supported;
-            }} catch(e) {{ return false; }}
+            }} catch(e) {{ console.warn('isConfigSupported error:', e); return false; }}
         }})()"#,
     );
     match js_sys::eval(&code) {
@@ -176,15 +176,58 @@ pub fn create_audio_encoder(
     js_sys::Reflect::construct(&ctor, &js_sys::Array::of1(&init))
 }
 
-/// Configure the audio encoder for AAC-LC.
+/// WebCodecs codec string for AAC-LC.
+pub const AAC_WEBCODECS_CODEC: &str = "mp4a.40.2";
+/// mp4-muxer short name for AAC.
+pub const AAC_MUXER_CODEC: &str = "aac";
+/// WebCodecs codec string for Opus.
+pub const OPUS_WEBCODECS_CODEC: &str = "opus";
+/// mp4-muxer short name for Opus.
+pub const OPUS_MUXER_CODEC: &str = "opus";
+
+/// Check whether an audio codec configuration is supported.
+/// `codec` is the WebCodecs codec string (e.g. "mp4a.40.2" or "opus").
+pub async fn is_audio_config_supported(codec: &str, sample_rate: u32, channels: u32) -> bool {
+    let code = format!(
+        r#"(async () => {{
+            if (typeof AudioEncoder === 'undefined') return false;
+            try {{
+                const support = await AudioEncoder.isConfigSupported({{
+                    codec: "{codec}",
+                    sampleRate: {sample_rate},
+                    numberOfChannels: {channels},
+                    bitrate: 128000,
+                }});
+                return !!support.supported;
+            }} catch(e) {{ console.warn('AudioEncoder.isConfigSupported error:', e); return false; }}
+        }})()"#,
+    );
+    match js_sys::eval(&code) {
+        Ok(promise) => {
+            let promise: js_sys::Promise = match promise.dyn_into() {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+            match wasm_bindgen_futures::JsFuture::from(promise).await {
+                Ok(val) => val.as_bool().unwrap_or(false),
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+/// Configure the audio encoder.
+/// `codec` is the WebCodecs codec string (e.g. "mp4a.40.2" or "opus").
 pub fn configure_audio_encoder(
     encoder: &JsValue,
+    codec: &str,
     sample_rate: u32,
     channels: u32,
     bitrate: u32,
 ) -> Result<(), JsValue> {
     let config = Object::new();
-    Reflect::set(&config, &"codec".into(), &"mp4a.40.2".into())?;
+    Reflect::set(&config, &"codec".into(), &codec.into())?;
     Reflect::set(&config, &"sampleRate".into(), &sample_rate.into())?;
     Reflect::set(&config, &"numberOfChannels".into(), &channels.into())?;
     Reflect::set(&config, &"bitrate".into(), &bitrate.into())?;
@@ -242,16 +285,34 @@ pub fn create_array_buffer_target() -> Result<JsValue, JsValue> {
     js_sys::Reflect::construct(&ctor, &js_sys::Array::new())
 }
 
+/// Map a WebCodecs video codec string to the mp4-muxer short name.
+/// mp4-muxer expects: "avc", "hevc", "vp9", "av1" (not the full WebCodecs codec strings).
+pub fn muxer_video_codec(webcodecs_codec: &str) -> &'static str {
+    if webcodecs_codec.starts_with("avc") {
+        "avc"
+    } else if webcodecs_codec.starts_with("av01") {
+        "av1"
+    } else if webcodecs_codec.starts_with("hvc") || webcodecs_codec.starts_with("hev") {
+        "hevc"
+    } else if webcodecs_codec.starts_with("vp09") || webcodecs_codec.starts_with("vp9") {
+        "vp9"
+    } else {
+        "avc" // fallback
+    }
+}
+
 /// Create a `Muxer` from the mp4-muxer library.
 ///
 /// `target` is the `ArrayBufferTarget`.
-/// `video`/`audio` configs are optional track configurations.
+/// `video_codec` should be a WebCodecs codec string (e.g. "avc1.42001f") — it will be
+/// mapped to the mp4-muxer short name (e.g. "avc") automatically.
+/// `audio` is optional: (muxer_codec, sample_rate) — use "aac" or "opus".
 pub fn create_muxer(
     target: &JsValue,
     video_codec: &str,
     video_width: u32,
     video_height: u32,
-    audio_codec: Option<(&str, u32)>, // (codec, sample_rate)
+    audio_codec: Option<(&str, u32)>, // (muxer_codec like "aac", sample_rate)
 ) -> Result<JsValue, JsValue> {
     let ns = Reflect::get(&js_sys::global(), &"Mp4Muxer".into())?;
     let ctor = Reflect::get(&ns, &"Muxer".into())?;
@@ -261,8 +322,9 @@ pub fn create_muxer(
     Reflect::set(&opts, &"target".into(), target)?;
     Reflect::set(&opts, &"fastStart".into(), &"in-memory".into())?;
 
+    let muxer_vcodec = muxer_video_codec(video_codec);
     let video = Object::new();
-    Reflect::set(&video, &"codec".into(), &video_codec.into())?;
+    Reflect::set(&video, &"codec".into(), &muxer_vcodec.into())?;
     Reflect::set(&video, &"width".into(), &video_width.into())?;
     Reflect::set(&video, &"height".into(), &video_height.into())?;
     Reflect::set(&opts, &"video".into(), &video)?;

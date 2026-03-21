@@ -6,7 +6,7 @@ use leptos::prelude::*;
 use crate::audio::export;
 use crate::audio::video_export;
 use crate::audio::webcodecs_bindings as wc;
-use crate::state::{AppState, ExportFormat, VideoCodec, VideoResolution};
+use crate::state::{AppState, AudioCodecOption, ExportFormat, VideoCodec, VideoResolution, VideoViewMode};
 
 /// Collapsible export section component.
 /// Expects `AppState` in context and the batm handler closures as props.
@@ -21,6 +21,20 @@ pub fn ExportSection(
     let state = expect_context::<AppState>();
 
     let webcodecs_available = wc::has_video_encoder() && wc::has_mp4_muxer();
+    let audio_encoder_available = wc::has_audio_encoder();
+
+    // Probe specific audio codec support asynchronously (48kHz mono is our standard output rate)
+    let aac_supported = RwSignal::new(false);
+    let opus_supported = RwSignal::new(false);
+    if audio_encoder_available {
+        leptos::task::spawn_local(async move {
+            let aac = wc::is_audio_config_supported(wc::AAC_WEBCODECS_CODEC, 48000, 1).await;
+            let opus = wc::is_audio_config_supported(wc::OPUS_WEBCODECS_CODEC, 48000, 1).await;
+            aac_supported.set(aac);
+            opus_supported.set(opus);
+            log::info!("Audio codec probe: AAC={aac}, Opus={opus}");
+        });
+    }
 
     // Export button text (reactive)
     let export_button_text = move || {
@@ -122,6 +136,27 @@ pub fn ExportSection(
                         Some(view! {
                             <div class="export-mp4-options">
                                 <div class="setting-row" style="gap: 4px; align-items: center;">
+                                    <span class="export-option-label">"View:"</span>
+                                    <select
+                                        class="sidebar-select"
+                                        on:change=move |ev| {
+                                            let val = event_target_value(&ev);
+                                            let mode = match val.as_str() {
+                                                "scroll" => VideoViewMode::ScrollingView,
+                                                _ => VideoViewMode::StaticPlayhead,
+                                            };
+                                            state.video_view_mode.set(mode);
+                                        }
+                                    >
+                                        <option value="static" selected=move || state.video_view_mode.get() == VideoViewMode::StaticPlayhead>
+                                            "Static + playhead"
+                                        </option>
+                                        <option value="scroll" selected=move || state.video_view_mode.get() == VideoViewMode::ScrollingView>
+                                            "Scrolling"
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="setting-row" style="gap: 4px; align-items: center;">
                                     <span class="export-option-label">"Resolution:"</span>
                                     <select
                                         class="sidebar-select"
@@ -148,7 +183,7 @@ pub fn ExportSection(
                                     </select>
                                 </div>
                                 <div class="setting-row" style="gap: 4px; align-items: center;">
-                                    <span class="export-option-label">"Codec:"</span>
+                                    <span class="export-option-label">"Video:"</span>
                                     <select
                                         class="sidebar-select"
                                         on:change=move |ev| {
@@ -165,6 +200,62 @@ pub fn ExportSection(
                                         </option>
                                         <option value="av1" selected=move || state.video_codec.get() == VideoCodec::Av1>
                                             "AV1"
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="setting-row" style="gap: 4px; align-items: center;">
+                                    <span class="export-option-label">"Audio:"</span>
+                                    <select
+                                        class="sidebar-select"
+                                        on:change=move |ev| {
+                                            let val = event_target_value(&ev);
+                                            let opt = match val.as_str() {
+                                                "aac" => AudioCodecOption::Aac,
+                                                "opus" => AudioCodecOption::Opus,
+                                                "none" => AudioCodecOption::NoAudio,
+                                                _ => AudioCodecOption::Auto,
+                                            };
+                                            state.video_audio_codec.set(opt);
+                                        }
+                                    >
+                                        <option
+                                            value="auto"
+                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Auto
+                                        >
+                                            {move || {
+                                                let aac = aac_supported.get();
+                                                let opus = opus_supported.get();
+                                                match (aac, opus) {
+                                                    (true, true) => "Auto (AAC/Opus)".to_string(),
+                                                    (true, false) => "Auto (AAC)".to_string(),
+                                                    (false, true) => "Auto (Opus)".to_string(),
+                                                    (false, false) => if audio_encoder_available {
+                                                        "Auto (checking\u{2026})".to_string()
+                                                    } else {
+                                                        "Auto (unavailable)".to_string()
+                                                    },
+                                                }
+                                            }}
+                                        </option>
+                                        <option
+                                            value="aac"
+                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Aac
+                                            disabled=move || !aac_supported.get()
+                                        >
+                                            {move || if aac_supported.get() { "AAC" } else { "AAC (unavailable)" }}
+                                        </option>
+                                        <option
+                                            value="opus"
+                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Opus
+                                            disabled=move || !opus_supported.get()
+                                        >
+                                            {move || if opus_supported.get() { "Opus" } else { "Opus (unavailable)" }}
+                                        </option>
+                                        <option
+                                            value="none"
+                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::NoAudio
+                                        >
+                                            "No audio"
                                         </option>
                                     </select>
                                 </div>
@@ -187,23 +278,34 @@ pub fn ExportSection(
                     </button>
                 </div>
 
-                // Progress bar (video export only)
+                // Progress bar and status text
                 {move || {
-                    state.video_export_progress.get().map(|progress| {
-                        let status = state.video_export_status.get()
-                            .unwrap_or_else(|| "Exporting...".to_string());
-                        view! {
+                    let progress = state.video_export_progress.get();
+                    let status = state.video_export_status.get();
+
+                    if progress.is_some() || status.is_some() {
+                        let status_text = status.unwrap_or_else(|| "Exporting...".to_string());
+                        let is_error = status_text.starts_with("Export failed");
+                        Some(view! {
                             <div class="export-progress">
-                                <div class="export-progress-bar">
-                                    <div
-                                        class="export-progress-fill"
-                                        style=move || format!("width: {}%", (progress * 100.0) as u32)
-                                    ></div>
+                                {progress.map(|p| view! {
+                                    <div class="export-progress-bar">
+                                        <div
+                                            class="export-progress-fill"
+                                            style=move || format!("width: {}%", (p * 100.0) as u32)
+                                        ></div>
+                                    </div>
+                                })}
+                                <div
+                                    class=if is_error { "export-progress-text export-error" } else { "export-progress-text" }
+                                >
+                                    {status_text}
                                 </div>
-                                <div class="export-progress-text">{status}</div>
                             </div>
-                        }
-                    })
+                        })
+                    } else {
+                        None
+                    }
                 }}
 
                 // .batm section

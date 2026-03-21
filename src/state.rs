@@ -175,6 +175,28 @@ impl VideoCodec {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum AudioCodecOption {
+    /// Automatically pick the best available codec (AAC preferred, then Opus).
+    #[default]
+    Auto,
+    /// Force AAC audio.
+    Aac,
+    /// Force Opus audio.
+    Opus,
+    /// No audio track in the exported video.
+    NoAudio,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum VideoViewMode {
+    /// Keep the spectrogram static, only move the playhead line.
+    #[default]
+    StaticPlayhead,
+    /// Scroll the spectrogram so the playhead stays near the left quarter.
+    ScrollingView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum SpectrogramDisplay {
     #[default]
     FlowOptical,
@@ -1048,6 +1070,10 @@ pub struct AppState {
     pub video_resolution: RwSignal<VideoResolution>,
     /// Selected video codec.
     pub video_codec: RwSignal<VideoCodec>,
+    /// Selected audio codec for video export.
+    pub video_audio_codec: RwSignal<AudioCodecOption>,
+    /// Video view mode: static playhead vs scrolling.
+    pub video_view_mode: RwSignal<VideoViewMode>,
 }
 
 fn detect_tauri() -> bool {
@@ -1333,6 +1359,8 @@ impl AppState {
             video_export_status: RwSignal::new(None),
             video_resolution: RwSignal::new(VideoResolution::default()),
             video_codec: RwSignal::new(VideoCodec::default()),
+            video_audio_codec: RwSignal::new(AudioCodecOption::default()),
+            video_view_mode: RwSignal::new(VideoViewMode::default()),
         };
 
         // On mobile, start with sidebar collapsed

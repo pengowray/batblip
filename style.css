@@ -4397,3 +4397,6 @@ body.sidebar-resizing {
     margin-top: 2px;
     text-align: center;
 }
+.export-progress-text.export-error {
+    color: #e88;
+}
