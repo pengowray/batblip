@@ -182,6 +182,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 identity: None,
                 file_handle: None,
                 cached_peak_db,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });
@@ -202,6 +203,9 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         state, file_index, name_check.clone(), bytes.len() as u64, Some(bytes.to_vec()),
         data_offset, data_size, None,
     );
+
+    // Schedule async full-file peak scan (for files > 30s)
+    crate::audio::peak::start_full_peak_scan(state, file_index);
 
     // Notify user about silent/quiet files
     if let Some(check) = silence_check {

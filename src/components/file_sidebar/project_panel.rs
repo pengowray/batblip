@@ -20,6 +20,8 @@ fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
         bits_per_sample: Some(f.audio.metadata.bits_per_sample),
         data_offset: f.audio.metadata.data_offset,
         data_size: f.audio.metadata.data_size,
+        peak_db_30s: f.cached_peak_db,
+        peak_db_full: f.cached_full_peak_db,
     }
 }
 

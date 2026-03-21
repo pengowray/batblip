@@ -508,6 +508,7 @@ pub fn App() -> impl IntoView {
                 let settings = FileSettings {
                     gain_mode: state.gain_mode.get_untracked(),
                     gain_db: state.gain_db.get_untracked(),
+                    gain_db_stash: state.gain_db_stash.get_untracked(),
                     notch_enabled: state.notch_enabled.get_untracked(),
                     notch_bands: state.notch_bands.get_untracked(),
                     notch_profile_name: state.notch_profile_name.get_untracked(),
@@ -552,6 +553,7 @@ pub fn App() -> impl IntoView {
                     state.gain_mode.set(s.gain_mode);
                     state.auto_gain.set(s.gain_mode.is_auto());
                     state.gain_db.set(s.gain_db);
+                    state.gain_db_stash.set(s.gain_db_stash);
                     state.notch_enabled.set(s.notch_enabled);
                     state.notch_bands.set(s.notch_bands.clone());
                     state.notch_profile_name.set(s.notch_profile_name.clone());

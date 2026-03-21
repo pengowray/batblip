@@ -213,6 +213,12 @@ pub struct AudioFileMetadata {
     /// Byte length of audio data region.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub data_size: Option<u64>,
+    /// Peak level (dBFS) of first 30s of unmodified audio.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub peak_db_30s: Option<f64>,
+    /// Peak level (dBFS) of entire unmodified audio file.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub peak_db_full: Option<f64>,
 }
 
 /// Per-file annotation collection — serialized to .batm sidecar files (YAML).
@@ -265,7 +271,12 @@ impl AnnotationSet {
     }
 
     /// Create a new AnnotationSet with audio metadata populated from a LoadedFile.
-    pub fn new_with_metadata(file_identity: FileIdentity, audio: &crate::types::AudioData) -> Self {
+    pub fn new_with_metadata(
+        file_identity: FileIdentity,
+        audio: &crate::types::AudioData,
+        peak_db_30s: Option<f64>,
+        peak_db_full: Option<f64>,
+    ) -> Self {
         let mut set = Self::new(file_identity);
         set.audio_metadata = Some(AudioFileMetadata {
             sample_rate: audio.sample_rate,
@@ -276,6 +287,8 @@ impl AnnotationSet {
             bits_per_sample: Some(audio.metadata.bits_per_sample),
             data_offset: audio.metadata.data_offset,
             data_size: audio.metadata.data_size,
+            peak_db_30s,
+            peak_db_full,
         });
         set
     }

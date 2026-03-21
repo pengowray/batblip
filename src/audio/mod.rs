@@ -1,4 +1,5 @@
 pub mod export;
+pub mod peak;
 pub mod guano;
 pub mod live_recording;
 pub mod loader;

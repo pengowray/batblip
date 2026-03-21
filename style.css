@@ -2694,6 +2694,59 @@ body.sidebar-resizing {
     font-variant-numeric: tabular-nums;
 }
 
+/* Peak source segmented radio buttons */
+.peak-source-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 4px 10px;
+}
+.peak-source-label {
+    font-size: 11px;
+    color: #777;
+    margin-right: 6px;
+    white-space: nowrap;
+}
+.peak-src-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid #444;
+    background: #1a1a1a;
+    color: #999;
+    cursor: pointer;
+    margin-left: -1px;
+}
+.peak-src-btn:first-of-type {
+    border-radius: 3px 0 0 3px;
+    margin-left: 0;
+}
+.peak-src-btn:last-of-type {
+    border-radius: 0 3px 3px 0;
+}
+.peak-src-btn:hover {
+    background: #252525;
+    color: #ddd;
+}
+.peak-src-btn.sel {
+    background: #234;
+    color: #6da;
+    border-color: #6da;
+    z-index: 1;
+    position: relative;
+}
+.peak-src-btn.disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Boost slider label */
+.slider-label {
+    font-size: 11px;
+    color: #666;
+    margin-right: 2px;
+}
+
 .het-text-row {
     cursor: pointer;
 }

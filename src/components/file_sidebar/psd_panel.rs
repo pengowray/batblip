@@ -242,7 +242,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                             let id = f.identity.clone().unwrap_or_else(|| {
                                 crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
                             });
-                            AnnotationSet::new_with_metadata(id, &f.audio)
+                            AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
                         })
                     });
                     if let Some(set) = new_set {

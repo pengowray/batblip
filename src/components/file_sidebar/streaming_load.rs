@@ -213,6 +213,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
                 cached_peak_db,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });
@@ -222,6 +223,9 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
         });
         file_index = idx;
     }
+
+    // Schedule async full-file peak scan (for files > 30s)
+    crate::audio::peak::start_full_peak_scan(state, file_index);
 
     // Notify user about silent/quiet files
     if let Some(check) = silence_check {
@@ -491,6 +495,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
                 cached_peak_db,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });
@@ -500,6 +505,9 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
         });
         file_index = idx;
     }
+
+    // Schedule async full-file peak scan (for files > 30s)
+    crate::audio::peak::start_full_peak_scan(state, file_index);
 
     if let Some(check) = silence_check {
         match check {
@@ -847,6 +855,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
                 cached_peak_db,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });
@@ -856,6 +865,9 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
         });
         file_index = idx;
     }
+
+    // Schedule async full-file peak scan (for files > 30s)
+    crate::audio::peak::start_full_peak_scan(state, file_index);
 
     if let Some(check) = silence_check {
         match check {
@@ -1202,6 +1214,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
                 identity: None,
                 file_handle: Some(FileHandle::WebFile(file.clone())),
                 cached_peak_db,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });
@@ -1211,6 +1224,9 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
         });
         file_index = idx;
     }
+
+    // Schedule async full-file peak scan (for files > 30s)
+    crate::audio::peak::start_full_peak_scan(state, file_index);
 
     if let Some(check) = silence_check {
         match check {

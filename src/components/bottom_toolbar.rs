@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, CanvasTool, GainMode, LayerPanel, ListenMode, PlaybackMode, PlayStartMode, RecordMode};
+use crate::state::{AppState, CanvasTool, GainMode, LayerPanel, ListenMode, PeakSource, PlaybackMode, PlayStartMode, RecordMode};
 use crate::audio::{microphone, playback};
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::audio::source::ChannelView;
@@ -392,7 +392,36 @@ pub fn BottomToolbar() -> impl IntoView {
                                 state.layer_panel_open.set(None);
                             }
                         >"AGC \u{2014} Automatic gain control"</button>
+                        <Show when=move || state.gain_mode.get() == GainMode::AutoPeak>
+                            <div class="peak-source-row">
+                                <span class="peak-source-label">"Peak from:"</span>
+                                <button class=move || if state.peak_source.get() == PeakSource::First30s { "peak-src-btn sel" } else { "peak-src-btn" }
+                                    on:click=move |_| state.peak_source.set(PeakSource::First30s)
+                                    title="Peak from first 30 seconds"
+                                >"30s"</button>
+                                <button class=move || if state.peak_source.get() == PeakSource::FullWave { "peak-src-btn sel" } else { "peak-src-btn" }
+                                    on:click=move |_| state.peak_source.set(PeakSource::FullWave)
+                                    title="Peak from entire file"
+                                >"Full"</button>
+                                <button class=move || {
+                                    let base = if state.peak_source.get() == PeakSource::Selection { "peak-src-btn sel" } else { "peak-src-btn" };
+                                    if state.selection.get().is_none() { format!("{} disabled", base) } else { base.to_string() }
+                                }
+                                    on:click=move |_| {
+                                        if state.selection.get_untracked().is_some() {
+                                            state.peak_source.set(PeakSource::Selection);
+                                        }
+                                    }
+                                    title="Peak from current selection"
+                                >"Sel"</button>
+                                <button class=move || if state.peak_source.get() == PeakSource::Processed { "peak-src-btn sel" } else { "peak-src-btn" }
+                                    on:click=move |_| state.peak_source.set(PeakSource::Processed)
+                                    title="Peak after DSP processing"
+                                >"DSP"</button>
+                            </div>
+                        </Show>
                         <div class="layer-panel-slider-row" style="margin-top: 6px;">
+                            <span class="slider-label">"Boost"</span>
                             <label>{move || {
                                 let db = state.gain_db.get();
                                 let pv = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
@@ -409,6 +438,9 @@ pub fn BottomToolbar() -> impl IntoView {
                                     if state.gain_mode.get_untracked() == GainMode::Off && val > 0.0 {
                                         state.gain_mode.set(GainMode::Manual);
                                     }
+                                }
+                                on:dblclick=move |_| {
+                                    state.gain_db.set(0.0);
                                 }
                             />
                         </div>

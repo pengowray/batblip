@@ -76,6 +76,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             identity: None,
             file_handle: None,
             cached_peak_db: None,
+            cached_full_peak_db: None,
             read_only: false,
             had_sidecar: false,
         });
@@ -520,6 +521,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
                 identity: None,
                 file_handle: None,
                 cached_peak_db: None,
+                cached_full_peak_db: None,
                 read_only: false,
                 had_sidecar: false,
             });

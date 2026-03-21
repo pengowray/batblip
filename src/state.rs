@@ -11,6 +11,8 @@ use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 pub struct FileSettings {
     pub gain_mode: GainMode,
     pub gain_db: f64,
+    /// Stashed gain for the other HFR state (swapped on HFR toggle).
+    pub gain_db_stash: f64,
     pub notch_enabled: bool,
     pub notch_bands: Vec<crate::dsp::notch::NoiseBand>,
     pub notch_profile_name: String,
@@ -25,6 +27,7 @@ impl Default for FileSettings {
         Self {
             gain_mode: GainMode::Off,
             gain_db: 0.0,
+            gain_db_stash: 0.0,
             notch_enabled: false,
             notch_bands: Vec::new(),
             notch_profile_name: String::new(),
@@ -59,6 +62,8 @@ pub struct LoadedFile {
     pub file_handle: Option<crate::audio::streaming_source::FileHandle>,
     /// Cached peak level (dBFS) of first 30s. None = not yet computed (e.g. streaming still loading).
     pub cached_peak_db: Option<f64>,
+    /// Cached peak level (dBFS) of entire file. None = not yet computed.
+    pub cached_full_peak_db: Option<f64>,
     /// Read-only mode: annotations are ephemeral, no auto-save to central store or sidecar.
     pub read_only: bool,
     /// A file-adjacent .batm sidecar existed when this file was loaded.
@@ -496,6 +501,31 @@ impl GainMode {
     }
 }
 
+/// Where the peak is measured for AutoPeak gain mode.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum PeakSource {
+    /// Raw audio, first 30 seconds (or full file if shorter).
+    #[default]
+    First30s,
+    /// Raw audio, entire file.
+    FullWave,
+    /// Raw audio, current selection range only.
+    Selection,
+    /// Post-DSP peak (after bandpass/HFR/NR chain), computed on demand.
+    Processed,
+}
+
+impl PeakSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::First30s => "30s",
+            Self::FullWave => "Full",
+            Self::Selection => "Sel",
+            Self::Processed => "DSP",
+        }
+    }
+}
+
 /// Which floating layer panel is currently open (only one at a time).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayerPanel {
@@ -735,10 +765,18 @@ pub struct AppState {
     pub sidebar_width: RwSignal<f64>,
     // Gain
     pub gain_db: RwSignal<f64>,
+    /// Stashed gain_db for the other HFR state (swapped on HFR toggle).
+    pub gain_db_stash: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
     pub gain_mode: RwSignal<GainMode>,
     /// Remembers last auto-gain mode so toggle restores it (default: Adaptive).
     pub gain_mode_last_auto: RwSignal<GainMode>,
+    /// Where to measure peak for AutoPeak gain mode.
+    pub peak_source: RwSignal<PeakSource>,
+    /// Cache for recently computed selection peak values.
+    pub selection_peak_cache: RwSignal<crate::audio::peak::PeakCache>,
+    /// Whether a peak scan is currently in progress (for UI indicator).
+    pub peak_scanning: RwSignal<bool>,
     // Waveform view gain (visual only, independent of audio gain)
     pub wave_view_gain_db: RwSignal<f64>,
     pub wave_view_auto_gain: RwSignal<bool>,
@@ -1164,9 +1202,13 @@ impl AppState {
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
+            gain_db_stash: RwSignal::new(0.0),
             auto_gain: RwSignal::new(false),
             gain_mode: RwSignal::new(GainMode::Off),
             gain_mode_last_auto: RwSignal::new(GainMode::AutoPeak),
+            peak_source: RwSignal::new(PeakSource::First30s),
+            selection_peak_cache: RwSignal::new(crate::audio::peak::PeakCache::default()),
+            peak_scanning: RwSignal::new(false),
             wave_view_gain_db: RwSignal::new(0.0),
             wave_view_auto_gain: RwSignal::new(false),
 
@@ -1546,10 +1588,64 @@ impl AppState {
     pub fn compute_auto_gain(&self) -> f64 {
         let files = self.files.get();
         let idx = self.current_file_index.get();
-        let Some(file) = idx.and_then(|i| files.get(i)) else { return 0.0 };
-        let Some(peak_db) = file.cached_peak_db else { return 0.0 };
+        let Some(file_index) = idx else { return 0.0 };
+        let Some(file) = files.get(file_index) else { return 0.0 };
+
+        let peak_db = match self.peak_source.get() {
+            PeakSource::First30s => file.cached_peak_db,
+            PeakSource::FullWave => {
+                // Fall back to 30s peak while full scan is in progress.
+                // If playing, prefer the 30s peak to avoid mid-play gain jumps
+                // when the full scan completes.
+                if self.is_playing.get_untracked() && file.cached_full_peak_db.is_none() {
+                    file.cached_peak_db
+                } else {
+                    file.cached_full_peak_db.or(file.cached_peak_db)
+                }
+            }
+            PeakSource::Selection => {
+                self.lookup_selection_peak(file_index, file).or(file.cached_peak_db)
+            }
+            PeakSource::Processed => {
+                // Post-DSP peak: for now fall back to raw peak.
+                // Full implementation requires running the DSP chain on a sample window.
+                file.cached_peak_db
+            }
+        };
+        let Some(peak_db) = peak_db else { return 0.0 };
         // Cap at +60 dB to avoid extreme amplification of very quiet recordings
         (-3.0 - peak_db).min(60.0)
+    }
+
+    /// Look up cached selection peak, or trigger an async scan if not cached.
+    /// Returns None if no selection or not yet computed.
+    /// Does not start new scans while audio is playing to avoid mid-play gain jumps.
+    fn lookup_selection_peak(&self, file_index: usize, file: &LoadedFile) -> Option<f64> {
+        let sel = self.selection.get()?;
+        let sr = file.audio.sample_rate as f64;
+        let start_sample = (sel.time_start * sr) as u64;
+        let end_sample = (sel.time_end * sr) as u64;
+        if end_sample <= start_sample { return None; }
+
+        let key = (file_index, start_sample, end_sample);
+
+        // Check cache (reactive read so we re-run when cache updates)
+        if let Some(&peak_db) = self.selection_peak_cache.get().get(&key) {
+            return peak_db;
+        }
+
+        // Don't start new scans while playing — avoid mid-play gain jumps
+        if self.is_playing.get_untracked() {
+            return None;
+        }
+
+        // Not cached — kick off async scan
+        crate::audio::peak::start_selection_peak_scan(
+            *self, file_index, start_sample, end_sample,
+        );
+
+        // Return None for now; will re-run when cache is updated
+        None
     }
 
     // ── Focus Stack helpers ─────────────────────────────────────────────
@@ -1721,8 +1817,14 @@ impl AppState {
         }
     }
 
-    /// Toggle HFR on/off. Saves/restores playback mode and bandpass.
+    /// Toggle HFR on/off. Saves/restores playback mode, bandpass, and gain.
     pub fn toggle_hfr(&self) {
+        // Swap gain_db between HFR-on and HFR-off so we don't blast eardrums
+        let current_gain = self.gain_db.get_untracked();
+        let stashed_gain = self.gain_db_stash.get_untracked();
+        self.gain_db.set(stashed_gain);
+        self.gain_db_stash.set(current_gain);
+
         let stack = self.focus_stack.get_untracked();
         if stack.hfr_enabled() {
             // Turning off: save current mode

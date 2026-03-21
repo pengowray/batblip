@@ -268,7 +268,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
                     let id = f.identity.clone().unwrap_or_else(|| {
                         crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
                     });
-                    crate::annotations::AnnotationSet::new_with_metadata(id, &f.audio)
+                    crate::annotations::AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
                 })
             });
             if let Some(set) = new_set {
@@ -319,19 +319,34 @@ pub fn save_annotations_to_opfs(state: crate::state::AppState, file_idx: usize) 
 fn apply_loaded_sidecar(state: crate::state::AppState, file_idx: usize, loaded: crate::annotations::AnnotationSet) {
     use leptos::prelude::Update;
 
-    // If the sidecar has a noise profile, store it in the file's per-file settings
-    if let Some(ref profile) = loaded.noise_profile {
+    // If the sidecar has a noise profile, store it in the file's per-file settings.
+    // Also restore cached peak values from sidecar metadata if not yet computed.
+    let has_noise_profile = loaded.noise_profile.is_some();
+    let peak_30s = loaded.audio_metadata.as_ref().and_then(|m| m.peak_db_30s);
+    let peak_full = loaded.audio_metadata.as_ref().and_then(|m| m.peak_db_full);
+
+    if has_noise_profile || peak_30s.is_some() || peak_full.is_some() {
         state.files.update(|files| {
             if let Some(f) = files.get_mut(file_idx) {
-                f.settings.notch_bands = profile.bands.clone();
-                f.settings.notch_profile_name = profile.name.clone();
-                f.settings.notch_harmonic_suppression = profile.harmonic_suppression;
-                if !profile.bands.is_empty() {
-                    f.settings.notch_enabled = true;
+                // Restore peak values from sidecar if not yet computed
+                if f.cached_peak_db.is_none() {
+                    f.cached_peak_db = peak_30s;
                 }
-                if let Some(ref floor) = profile.noise_floor {
-                    f.settings.noise_reduce_floor = Some(floor.clone());
-                    f.settings.noise_reduce_enabled = true;
+                if f.cached_full_peak_db.is_none() {
+                    f.cached_full_peak_db = peak_full;
+                }
+                // Restore noise profile settings
+                if let Some(ref profile) = loaded.noise_profile {
+                    f.settings.notch_bands = profile.bands.clone();
+                    f.settings.notch_profile_name = profile.name.clone();
+                    f.settings.notch_harmonic_suppression = profile.harmonic_suppression;
+                    if !profile.bands.is_empty() {
+                        f.settings.notch_enabled = true;
+                    }
+                    if let Some(ref floor) = profile.noise_floor {
+                        f.settings.noise_reduce_floor = Some(floor.clone());
+                        f.settings.noise_reduce_enabled = true;
+                    }
                 }
             }
         });
