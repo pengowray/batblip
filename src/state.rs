@@ -1245,7 +1245,7 @@ impl AppState {
             nav_index: RwSignal::new(0),
             bookmarks: RwSignal::new(Vec::new()),
             show_bookmark_popup: RwSignal::new(false),
-            play_start_mode: RwSignal::new(PlayStartMode::All),
+            play_start_mode: RwSignal::new(PlayStartMode::Auto),
             record_mode: RwSignal::new(if detect_tauri() { RecordMode::ToFile } else { RecordMode::ToMemory }),
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),

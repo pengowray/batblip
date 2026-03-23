@@ -608,7 +608,7 @@ pub fn App() -> impl IntoView {
                         PlayStartMode::Auto => {
                             if playback::effective_selection(&state_kb).is_some() {
                                 playback::play(&state_kb);
-                            } else if state_kb.scroll_offset.get_untracked() == 0.0 {
+                            } else if state_kb.scroll_offset.get_untracked() <= 0.0 {
                                 playback::play_from_start(&state_kb);
                             } else {
                                 playback::play_from_here(&state_kb);

@@ -79,7 +79,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 let _ann = state.selected_annotation_ids.get();
                 if playback::effective_selection(&state).is_some() {
                     "Sel".to_string()
-                } else if state.scroll_offset.get() == 0.0 {
+                } else if state.scroll_offset.get() <= 0.0 {
                     "All".to_string()
                 } else {
                     "Here".to_string()
@@ -105,7 +105,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 PlayStartMode::Auto => {
                     if playback::effective_selection(&state).is_some() {
                         playback::play(&state);
-                    } else if state.scroll_offset.get_untracked() == 0.0 {
+                    } else if state.scroll_offset.get_untracked() <= 0.0 {
                         playback::play_from_start(&state);
                     } else {
                         playback::play_from_here(&state);
