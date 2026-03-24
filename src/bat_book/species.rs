@@ -447,6 +447,284 @@ pub const PTEROPUS_SCAPULATUS: BatSpecies = BatSpecies {
     echolocates: false,
 };
 
+// ── Additional Australia-wide species ──────────────────────────────────────
+
+pub const PTEROPUS_ALECTO: BatSpecies = BatSpecies {
+    id: "pteropus_alecto",
+    name: "Black Flying-fox",
+    scientific_name: "Pteropus alecto",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "Does not echolocate. Large flying-fox of tropical and subtropical northern Australia. Roosts in large colonies in mangroves, rainforest, and paperbark swamps.",
+    echolocates: false,
+};
+
+pub const PTEROPUS_CONSPICILLATUS: BatSpecies = BatSpecies {
+    id: "pteropus_conspicillatus",
+    name: "Spectacled Flying-fox",
+    scientific_name: "Pteropus conspicillatus",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "Does not echolocate. Endangered (EPBC Act). Restricted to Wet Tropics and Cape York in far north Queensland. Key rainforest pollinator and seed disperser.",
+    echolocates: false,
+};
+
+pub const RHINOLOPHUS_ROBERTSI: BatSpecies = BatSpecies {
+    id: "rhinolophus_robertsi",
+    name: "Large-eared Horseshoe Bat",
+    scientific_name: "Rhinolophus robertsi",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 40_000.0,
+    description: "Lowest echolocation frequency of any rhinolophid bat (~28\u{2013}34 kHz CF). Cave-roosting in warm humid caves and old mines. Restricted to tropical north Queensland. Vulnerable (EPBC Act).",
+    echolocates: true,
+};
+
+pub const HIPPOSIDEROS_ATER: BatSpecies = BatSpecies {
+    id: "hipposideros_ater",
+    name: "Dusky Leaf-nosed Bat",
+    scientific_name: "Hipposideros ater",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 128_000.0,
+    freq_hi_hz: 140_000.0,
+    description: "Very high-frequency CF echolocation (~130\u{2013}138 kHz). Small hipposiderid of tropical woodlands and monsoon forests in northern Australia. Roosts in caves, mines, and tree hollows.",
+    echolocates: true,
+};
+
+pub const RHINONICTERIS_AURANTIA: BatSpecies = BatSpecies {
+    id: "rhinonicteris_aurantia",
+    name: "Orange Leaf-nosed Bat",
+    scientific_name: "Rhinonicteris aurantia",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 112_000.0,
+    freq_hi_hz: 122_000.0,
+    description: "High-frequency CF echolocation (~114\u{2013}121 kHz) with geographic variation between Pilbara and Top End populations. Obligate cave-dweller requiring hot humid roosts. Vulnerable (EPBC Act).",
+    echolocates: true,
+};
+
+pub const HIPPOSIDEROS_DIADEMA_AU: BatSpecies = BatSpecies {
+    id: "hipposideros_diadema_au",
+    name: "Diadem Leaf-nosed Bat",
+    scientific_name: "Hipposideros diadema",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 52_000.0,
+    freq_hi_hz: 68_000.0,
+    description: "Largest Australian hipposiderid with striking pale shoulder markings. CF ~58\u{2013}63 kHz. Cave-roosting in tropical rainforest of far north Queensland. Long-distance forager.",
+    echolocates: true,
+};
+
+pub const MACRODERMA_GIGAS: BatSpecies = BatSpecies {
+    id: "macroderma_gigas",
+    name: "Ghost Bat",
+    scientific_name: "Macroderma gigas",
+    family: "Megadermatidae",
+    call_type: "FM",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 56_000.0,
+    description: "Australia's only megadermatid and largest carnivorous bat. Very quiet, broadband FM calls (20\u{2013}56 kHz). Hunts vertebrate prey including other bats, lizards, and frogs. Cave-roosting. Vulnerable (EPBC Act).",
+    echolocates: true,
+};
+
+pub const SACCOLAIMUS_SACCOLAIMUS: BatSpecies = BatSpecies {
+    id: "saccolaimus_saccolaimus",
+    name: "Bare-rumped Sheathtail Bat",
+    scientific_name: "Saccolaimus saccolaimus",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 24_000.0,
+    description: "Narrow-band QCF search calls averaging ~20 kHz. Large sheathtail bat of tropical woodlands in far north Queensland and Top End. Tree-hollow roosting. Critically Endangered (EPBC Act).",
+    echolocates: true,
+};
+
+pub const TAPHOZOUS_GEORGIANUS: BatSpecies = BatSpecies {
+    id: "taphozous_georgianus",
+    name: "Common Sheathtail Bat",
+    scientific_name: "Taphozous georgianus",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 28_000.0,
+    description: "QCF search calls peaking ~25 kHz. Widespread across northern and western Australia. Roosts in caves, rock crevices, and abandoned mines. Fast, direct flight in open habitats.",
+    echolocates: true,
+};
+
+pub const TAPHOZOUS_AUSTRALIS: BatSpecies = BatSpecies {
+    id: "taphozous_australis",
+    name: "Coastal Sheathtail Bat",
+    scientific_name: "Taphozous australis",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 23_000.0,
+    freq_hi_hz: 27_000.0,
+    description: "Flat to slightly sloped QCF calls at 23\u{2013}27 kHz. Restricted to coastal caves and boulder piles along the Queensland and Northern Territory coasts. Rare and poorly known.",
+    echolocates: true,
+};
+
+pub const TAPHOZOUS_TROUGHTONI: BatSpecies = BatSpecies {
+    id: "taphozous_troughtoni",
+    name: "Troughton's Sheathtail Bat",
+    scientific_name: "Taphozous troughtoni",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 19_000.0,
+    freq_hi_hz: 25_000.0,
+    description: "Low-frequency QCF calls below 25 kHz. Roosts in sandstone caves and rocky escarpments in inland Queensland and western NSW. Rarely recorded; poorly known ecology.",
+    echolocates: true,
+};
+
+pub const MICRONOMUS_NORFOLKENSIS: BatSpecies = BatSpecies {
+    id: "micronomus_norfolkensis",
+    name: "East Coast Free-tailed Bat",
+    scientific_name: "Micronomus norfolkensis",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "QCF search calls at ~32\u{2013}35 kHz. Small free-tailed bat of coastal eastern Australia from SE Queensland to southern NSW. Roosts in tree hollows and under bark. Vulnerable (EPBC Act).",
+    echolocates: true,
+};
+
+pub const CHAEREPHON_JOBENSIS: BatSpecies = BatSpecies {
+    id: "chaerephon_jobensis",
+    name: "Northern Free-tailed Bat",
+    scientific_name: "Chaerephon jobensis",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 16_000.0,
+    freq_hi_hz: 25_000.0,
+    description: "Very loud, low-frequency QCF calls (16\u{2013}23 kHz) often audible to humans. Large free-tailed bat of tropical northern Australia. Fast, high-altitude forager over woodland and open habitats.",
+    echolocates: true,
+};
+
+pub const OZIMOPS_LUMSDENAE: BatSpecies = BatSpecies {
+    id: "ozimops_lumsdenae",
+    name: "Northern Free-tailed Bat",
+    scientific_name: "Ozimops lumsdenae",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 21_000.0,
+    freq_hi_hz: 27_000.0,
+    description: "Low-frequency QCF calls peaking ~24 kHz. Largest Ozimops species. Formerly Mormopterus beccarii (in part). Widespread across tropical and subtropical northern Australia. Tree-hollow roosting.",
+    echolocates: true,
+};
+
+pub const MINIOPTERUS_AUSTRALIS: BatSpecies = BatSpecies {
+    id: "miniopterus_australis",
+    name: "Little Bent-winged Bat",
+    scientific_name: "Miniopterus australis",
+    family: "Miniopteridae",
+    call_type: "FM",
+    freq_lo_hz: 57_000.0,
+    freq_hi_hz: 64_000.0,
+    description: "High-frequency FM calls (57\u{2013}64 kHz). Smaller than the Eastern Bent-winged Bat. Cave-roosting in eastern Australia from Cape York to northern NSW. Often found in mixed-species colonies with Miniopterus orianae.",
+    echolocates: true,
+};
+
+pub const CHALINOLOBUS_NIGROGRISEUS: BatSpecies = BatSpecies {
+    id: "chalinolobus_nigrogriseus",
+    name: "Hoary Wattled Bat",
+    scientific_name: "Chalinolobus nigrogriseus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 26_000.0,
+    freq_hi_hz: 36_000.0,
+    description: "FM calls with geographic variation (26\u{2013}36 kHz). Found across northern and eastern Australia and Papua New Guinea. Roosts in tree hollows. Medium-sized wattled bat of open woodland and forest edges.",
+    echolocates: true,
+};
+
+pub const VESPADELUS_TROUGHTONI: BatSpecies = BatSpecies {
+    id: "vespadelus_troughtoni",
+    name: "Eastern Cave Bat",
+    scientific_name: "Vespadelus troughtoni",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "FM/QCF calls at ~49\u{2013}53 kHz. Cave-roosting bat of eastern Australia from Cape York to central NSW. Found in sandstone overhangs, caves, and mine tunnels in woodland and dry forest.",
+    echolocates: true,
+};
+
+pub const VESPADELUS_FINLAYSONI: BatSpecies = BatSpecies {
+    id: "vespadelus_finlaysoni",
+    name: "Finlayson's Cave Bat",
+    scientific_name: "Vespadelus finlaysoni",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "Steep FM/QCF calls at ~53 kHz. Small bat of arid and semi-arid inland Australia. Roosts in caves, mines, rock crevices, and buildings. Tolerates very hot, dry conditions.",
+    echolocates: true,
+};
+
+pub const CHALINOLOBUS_DWYERI: BatSpecies = BatSpecies {
+    id: "chalinolobus_dwyeri",
+    name: "Large-eared Pied Bat",
+    scientific_name: "Chalinolobus dwyeri",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 48_000.0,
+    description: "Broadband FM calls. Distinctive black and white fur pattern. Roosts in sandstone cliff overhangs and caves near fertile areas. Restricted to eastern Australia. Vulnerable (EPBC Act).",
+    echolocates: true,
+};
+
+pub const PIPISTRELLUS_WESTRALIS: BatSpecies = BatSpecies {
+    id: "pipistrellus_westralis",
+    name: "Northern Pipistrelle",
+    scientific_name: "Pipistrellus westralis",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 42_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "FM calls peaking ~45\u{2013}50 kHz. One of Australia's smallest bats (~3 g). Found along northern coasts from WA through NT to Queensland. Roosts in mangroves, tree hollows, and buildings.",
+    echolocates: true,
+};
+
+pub const NYCTOPHILUS_ARNHEMENSIS: BatSpecies = BatSpecies {
+    id: "nyctophilus_arnhemensis",
+    name: "Northern Long-eared Bat",
+    scientific_name: "Nyctophilus arnhemensis",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 75_000.0,
+    description: "Very quiet broadband FM gleaning calls, similar to other Nyctophilus. Found in tropical woodlands and monsoon forests of northern Australia (Arnhem Land, Kimberley, Cape York).",
+    echolocates: true,
+};
+
+pub const NYCTOPHILUS_WALKERI: BatSpecies = BatSpecies {
+    id: "nyctophilus_walkeri",
+    name: "Pygmy Long-eared Bat",
+    scientific_name: "Nyctophilus walkeri",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 40_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Very quiet broadband FM calls. Australia's smallest long-eared bat (~4 g). Found in sandstone escarpments and monsoon forests of the Top End and Kimberley. Gleaning insectivore.",
+    echolocates: true,
+};
+
+pub const PHONISCUS_PAPUENSIS: BatSpecies = BatSpecies {
+    id: "phoniscus_papuensis",
+    name: "Golden-tipped Bat",
+    scientific_name: "Phoniscus papuensis",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 155_000.0,
+    description: "Extremely broadband FM calls (60\u{2013}155 kHz) for detecting stationary prey. Specialist predator of orb-weaving spiders. Roosts in abandoned bird nests. Rare along eastern Australia from Cape York to southern NSW.",
+    echolocates: true,
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Species: Europe
 // ══════════════════════════════════════════════════════════════════════════════
