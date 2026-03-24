@@ -2112,6 +2112,335 @@ const SOUTH_AMERICA_BOOK: &[BookEntryDef] = &[
     },
 ];
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Africa — species-level entries sorted by commonness
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Sources:
+// - Monadjem et al. (2017, 2020), Taylor et al. (2012), Jacobs et al. (2007–2017)
+// - Webala et al. (2019), Happold & Happold (2013), ACR
+
+const AFRICA_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::SCOTOPHILUS_DINGANII,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Most common vespertilionid in sub-Saharan Africa. Two cryptic phonic forms with peaks at ~33 kHz and ~44 kHz. Hockey-stick FM-QCF call shape. Roosts in roofs and buildings across a wide range of habitats."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NEOROMICIA_CAPENSIS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Ubiquitous across southern Africa. Peak frequency ~38 kHz. FM-QCF hockey-stick calls. Roosts in buildings. One of the most frequently recorded species on bat detectors in South Africa."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CHAEREPHON_PUMILUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Extremely common across sub-Saharan Africa. Narrowband QCF calls peaking ~25 kHz. Forms large colonies in roofs of buildings. Geographic variation in call frequency documented."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TADARIDA_AEGYPTIACA,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Throughout Africa and into the Middle East. Long narrowband QCF calls peaking ~18\u{2013}23 kHz. High-flying open-air forager. Very loud calls detectable at long range."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HIPPOSIDEROS_CAFFER,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Most widespread African hipposiderid. High CF calls (peak ~132\u{2013}141 kHz). Frequency varies geographically; East/Central Africa populations ~10 kHz higher than southern. Caves, mines, buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTERIS_THEBAICA,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Most widespread African slit-faced bat. Very low intensity broadband FM calls (\u{201c}whispering bat\u{201d}). Multi-harmonic with peaks at 50, 73, 90, 113 kHz. Gleaner that uses passive listening. Very difficult to detect on bat detectors."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MINIOPTERUS_NATALENSIS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Southern and East Africa. Peak ~59 kHz. FM-QCF hockey-stick calls. Forms large cave colonies of thousands. Key cave-roosting species, often sympatric with Rhinolophus."),
+        name: None,
+    },
+    // ── Very Common (non-echolocating) ────────────────────────────
+    BookEntryDef {
+        species: &species::ROUSETTUS_AEGYPTIACUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Only African fruit bat with true echolocation\u{2014}using tongue clicks (broadband, ~50\u{2013}100 \u{b5}s duration, 12\u{2013}70 kHz). Caves and mines across sub-Saharan Africa and Egypt. Very large colonies."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EIDOLON_HELVUM,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Most widespread African megabat. Massive migratory colonies of up to 1 million individuals (Kasanka, Zambia). Critical seed disperser for tropical forests. Uses vision and smell only."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPOMOPHORUS_WAHLBERGI,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("East and southern Africa savannas. Males produce loud honking display calls audible at considerable distance. Common in gardens and fruit orchards. No echolocation."),
+        name: None,
+    },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_CLIVOSUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in caves across southern and eastern Africa. CF peak varies geographically (~90\u{2013}92 kHz in southern Africa, ~80\u{2013}100 kHz across full range). Often roosts alongside Miniopterus colonies."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_SIMULATOR,
+        commonness: Some(Commonness::Common),
+        description: Some("Southern and eastern Africa savannas. CF peak ~80 kHz. Often sympatric with R. swinnyi and R. clivosus. Savanna woodland specialist."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_HILDEBRANDTII,
+        commonness: Some(Commonness::Common),
+        description: Some("Large horseshoe bat of east and southern Africa. CF peak varies 32\u{2013}46 kHz across a species complex (Taylor et al. 2012). Unusually low frequency for a rhinolophid due to large body size."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_FUMIGATUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Sub-Saharan Africa woodlands and savanna. CF peak shows strong geographic variation: ~53\u{2013}59 kHz (southern), ~62\u{2013}66 kHz (Cameroon), ~45\u{2013}50 kHz (Uganda). Multiple cryptic species likely."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_CAPENSIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Endemic to South Africa (Western, Eastern, Northern Cape). CF peak ~83\u{2013}86 kHz. Inhabits coastal caves and rocky outcrops. Well-studied acoustically."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HIPPOSIDEROS_RUBER,
+        commonness: Some(Commonness::Common),
+        description: Some("West and Central Africa forests. CF peak ~127\u{2013}131 kHz. Cryptic species pair with H. caffer\u{2014}distinguishable by lower call frequency. Often sympatric."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::SCOTOPHILUS_VIRIDIS,
+        commonness: Some(Commonness::Common),
+        description: Some("East and southern African savannas. Peak ~40\u{2013}47 kHz (geographically variable). Smaller than S. dinganii. Roosts in buildings and tree hollows."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::SCOTOPHILUS_LEUCOGASTER,
+        commonness: Some(Commonness::Common),
+        description: Some("Sahel and West Africa savannas. Peak ~32\u{2013}35 kHz. Largest Scotophilus in Africa. Roosts in buildings and palm trees."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_HESPERIDUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Sub-Saharan Africa. Peak ~45\u{2013}48 kHz. Small bat frequently detected around human habitation and streetlights. Similar call to P. kuhlii."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::AFRONYCTERIS_NANUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Sub-Saharan Africa. Peak ~43 kHz. FM calls lasting 4\u{2013}5 ms. Named for roosting in furled banana leaves. One of Africa's smallest bats (3\u{2013}5 g)."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_RUEPPELLII,
+        commonness: Some(Commonness::Common),
+        description: Some("North Africa, Sahel, East Africa, and into the Middle East. Peak ~40\u{2013}44 kHz. Associated with arid habitats and waterways."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_TRICOLOR,
+        commonness: Some(Commonness::Common),
+        description: Some("Southern and East Africa. Broadband FM sweep peaking ~48 kHz. Cave- and mine-roosting. Distinctive tricolored fur pattern."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_KUHLII,
+        commonness: Some(Commonness::Common),
+        description: Some("North Africa and Mediterranean margin. Peak ~38\u{2013}42 kHz. Common around streetlights in urban areas. Range expanding."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOPS_CONDYLURUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Sub-Saharan Africa savannas. FM-QCF calls peaking ~25\u{2013}28 kHz. Roosts in buildings and tree hollows. Often in mixed colonies with Chaerephon pumilus."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::SAUROMYS_PETROPHILUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Southern Africa. Narrowband QCF calls peaking ~30 kHz. Roosts in rock crevices. Distinctively flattened skull for squeezing into narrow cracks."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TAPHOZOUS_MAURITIANUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Sub-Saharan Africa and Madagascar. Multiharmonic CF search calls with FM approach calls. Fundamental at 11\u{2013}13 kHz (often audible to humans). Roosts on exposed walls and tree trunks."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TAPHOZOUS_PERFORATUS,
+        commonness: Some(Commonness::Common),
+        description: Some("North and East Africa, arid regions. QCF calls peaking ~25\u{2013}28 kHz. Roosts in tombs, ancient ruins, and rock faces."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MINIOPTERUS_FRATERCULUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Southern Africa. Peak ~71 kHz (12 kHz higher than M. natalensis). Smaller species. Cave-roosting. Distinguished from M. natalensis by higher call frequency."),
+        name: None,
+    },
+    // ── Common (non-echolocating) ────────────────────────────────
+    BookEntryDef {
+        species: &species::HYPSIGNATHUS_MONSTROSUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Central and West Africa forests. Largest African bat (wingspan to 90 cm). Males have enlarged larynx and rostrum for loud lek-display calls. No echolocation."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPOMOPS_FRANQUETI,
+        commonness: Some(Commonness::Common),
+        description: Some("Central and West Africa tropical forests. Males produce repetitive metallic calls during display. Important pollinator and seed disperser. No echolocation."),
+        name: None,
+    },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_SWINNYI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Eastern South Africa, Eswatini, Zimbabwe. High CF peak ~107 kHz. Clutter forager in dense vegetation. Less common than sympatric R. simulator."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_BLASII,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("North Africa and East Africa. CF peak ~86 kHz. Mediterranean-type habitats and caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_DARLINGI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Southern Africa woodlands (Zimbabwe, Mozambique, South Africa). Small species with CF peak ~86\u{2013}88 kHz. Rocky habitats and caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HIPPOSIDEROS_VITTATUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("East and southern Africa. Large species with unusually low CF ~60 kHz for a hipposiderid. Caves and large rock overhangs."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_WELWITSCHII,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Sub-Saharan Africa woodlands. Lower peak ~34 kHz than M. tricolor. Short broadband FM calls. Unusual among African Myotis for roosting in foliage."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPTESICUS_HOTTENTOTUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Southern Africa rocky areas. Peak ~30\u{2013}35 kHz. FM-QCF calls. Distinctive long free tail. Roosts in rock crevices."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::GLAUCONYCTERIS_VARIEGATA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Sub-Saharan Africa savanna and woodland. Broadband FM sweeps 70\u{2013}30 kHz. Distinctive reticulated wing markings. Slow, fluttery flight."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTICEINOPS_SCHLIEFFENI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Sub-Saharan Africa savannas. Peak ~42 kHz. FM-QCF calls. Often one of the first bats to emerge at dusk. Roosts in buildings and under tree bark."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOPS_MIDAS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Sub-Saharan Africa. Very low frequency QCF peaking ~13\u{2013}16 kHz. Large molossid (40\u{2013}60 g). Calls partially audible to humans. High, fast flight above the canopy."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::OTOMOPS_MARTIENSSENI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("East and southern Africa. Very low frequency calls (~11\u{2013}14 kHz), audible to humans. Very large molossid. Caves and buildings. Individual call signatures documented."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CHAEREPHON_ANSORGEI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("West, Central, and East Africa forests. QCF calls peaking ~28\u{2013}32 kHz. Forest edge and canopy forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TADARIDA_FULMINANS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("East Africa and Madagascar. Low frequency QCF peaking ~16\u{2013}18 kHz. Large species with long narrow wings for fast open-air flight."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CHAEREPHON_CHAPINI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Central and East Africa. QCF calls peaking ~25\u{2013}28 kHz. Forest and forest edge habitat. Similar call to C. pumilus but more forest-associated."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::COLEURA_AFRA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("East Africa coast. Low-duty-cycle QCF calls peaking at ~33 kHz. Near Threatened. Colonial in coastal caves and rock shelters."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTERIS_GRANDIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Central and West Africa forests. Largest nycterid. Very low intensity broadband FM. Remarkable predator\u{2014}hunts fish, frogs, and smaller bats."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTERIS_MACROTIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("West and Central Africa forests. Low-intensity broadband FM similar to N. thebaica but larger. Gleaner in forest understory."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MINIOPTERUS_INFLATUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Central and East Africa. Larger species with lower peak ~52\u{2013}55 kHz than M. natalensis. Caves in forested areas."),
+        name: None,
+    },
+    // ── Rare ─────────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::HIPPOSIDEROS_GIGAS,
+        commonness: Some(Commonness::Rare),
+        description: Some("West and Central Africa forests. Largest hipposiderid; CF ~60\u{2013}63 kHz. Caves near forest. Rarely encountered."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CLOEOTIS_PERCIVALI,
+        commonness: Some(Commonness::Rare),
+        description: Some("Holds the record for the highest known bat echolocation frequency (~212 kHz). Southern and East Africa caves and mines. Tiny bat (3\u{2013}5 g). Requires very high sample rate detectors (>400 kHz) to record."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LAEPHOTIS_BOTSWANAE,
+        commonness: Some(Commonness::Rare),
+        description: Some("Central and southern Africa. Peak ~37 kHz. Broadband FM. Large ears suggest some gleaning behavior. One of Africa's least-known bat species."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::KERIVOULA_ARGENTATA,
+        commonness: Some(Commonness::Rare),
+        description: Some("East and southern Africa. Very high frequency, low-intensity FM calls (~90\u{2013}118 kHz). Clutter specialist in dense vegetation. Very difficult to detect on standard bat detectors."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::KERIVOULA_LANOSA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Sub-Saharan Africa forests. Very high frequency broadband FM (~95\u{2013}105 kHz peak). Forest interior specialist. Rarely captured or recorded."),
+        name: None,
+    },
+];
+
 /// Get the bat book manifest for a given region.
 ///
 /// Non-echolocating species are always sorted to the end (stable sort preserves
@@ -2125,6 +2454,7 @@ pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
         BatBookRegion::UK => UK_BOOK,
         BatBookRegion::NorthAmerica => NORTH_AMERICA_BOOK,
         BatBookRegion::SouthAmerica => SOUTH_AMERICA_BOOK,
+        BatBookRegion::Africa => AFRICA_BOOK,
         _ => GLOBAL_BOOK,
     };
     let mut entries: Vec<_> = book.iter().map(|e| e.materialize()).collect();

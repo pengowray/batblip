@@ -3151,3 +3151,646 @@ pub const EPTESICUS_DIMINUTUS: BatSpecies = BatSpecies {
     description: "Small Eptesicus of southern Brazil, Paraguay, Argentina. Peak ~50 kHz. FM-QCF. Forest edges and open areas.",
     echolocates: true,
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Africa — species-level entries
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Sources:
+// - Monadjem et al. (2017) Acta Chiropt.: Acoustic Call Library for Swaziland
+// - Monadjem et al. (2020) Bats of Southern and Central Africa (Wits Univ. Press)
+// - Taylor et al. (2012) PLoS ONE: Rhinolophus hildebrandtii complex
+// - Webala et al. (2019) J Bat Research & Conservation: Hipposideridae & Rhinonycteridae of Kenya
+// - Jacobs et al. (2007, 2013, 2016, 2017): Echolocation allometry & geographic variation
+// - Happold & Happold (2013) Mammals of Africa Vol. IV
+// - ACR (African Chiroptera Report)
+// - Fenton & Bell (1981): Cloeotis percivali 212 kHz
+// - Holland et al. (2004): Rousettus aegyptiacus click echolocation
+
+// ── Rhinolophidae ──
+
+pub const RHINOLOPHUS_CLIVOSUS: BatSpecies = BatSpecies {
+    id: "rhinolophus_clivosus",
+    name: "Geoffroy's Horseshoe Bat",
+    scientific_name: "Rhinolophus clivosus",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 86_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Widespread in caves across southern and eastern Africa. CF peak varies geographically (~90\u{2013}92 kHz). Often roosts with Miniopterus.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_CAPENSIS: BatSpecies = BatSpecies {
+    id: "rhinolophus_capensis",
+    name: "Cape Horseshoe Bat",
+    scientific_name: "Rhinolophus capensis",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 80_000.0,
+    freq_hi_hz: 88_000.0,
+    description: "Endemic to South Africa (Western, Eastern, Northern Cape). CF peak ~83\u{2013}86 kHz. Coastal caves and rocky outcrops.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_SIMULATOR: BatSpecies = BatSpecies {
+    id: "rhinolophus_simulator",
+    name: "Bushveld Horseshoe Bat",
+    scientific_name: "Rhinolophus simulator",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 76_000.0,
+    freq_hi_hz: 84_000.0,
+    description: "Southern and eastern Africa savannas. CF peak ~80 kHz. Often sympatric with R. swinnyi.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_SWINNYI: BatSpecies = BatSpecies {
+    id: "rhinolophus_swinnyi",
+    name: "Swinny's Horseshoe Bat",
+    scientific_name: "Rhinolophus swinnyi",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 102_000.0,
+    freq_hi_hz: 112_000.0,
+    description: "Eastern South Africa, Eswatini, Zimbabwe. High CF peak ~107 kHz. Clutter forager in dense vegetation.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_HILDEBRANDTII: BatSpecies = BatSpecies {
+    id: "rhinolophus_hildebrandtii",
+    name: "Hildebrandt's Horseshoe Bat",
+    scientific_name: "Rhinolophus hildebrandtii",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 32_000.0,
+    freq_hi_hz: 46_000.0,
+    description: "Large horseshoe bat of east and southern Africa. CF peak varies 32\u{2013}46 kHz (species complex). Low frequency for a rhinolophid due to large body size.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_FUMIGATUS: BatSpecies = BatSpecies {
+    id: "rhinolophus_fumigatus",
+    name: "R\u{fc}ppell's Horseshoe Bat",
+    scientific_name: "Rhinolophus fumigatus",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 45_000.0,
+    freq_hi_hz: 66_000.0,
+    description: "Sub-Saharan Africa woodlands and savanna. CF peak geographically variable: ~53\u{2013}59 kHz (southern), ~62\u{2013}66 kHz (Cameroon).",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_BLASII: BatSpecies = BatSpecies {
+    id: "rhinolophus_blasii",
+    name: "Blasius's Horseshoe Bat",
+    scientific_name: "Rhinolophus blasii",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 82_000.0,
+    freq_hi_hz: 90_000.0,
+    description: "North Africa and East Africa. CF peak ~86 kHz. Mediterranean-type habitats and caves.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_DARLINGI: BatSpecies = BatSpecies {
+    id: "rhinolophus_darlingi",
+    name: "Darling's Horseshoe Bat",
+    scientific_name: "Rhinolophus darlingi",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 82_000.0,
+    freq_hi_hz: 92_000.0,
+    description: "Southern Africa woodlands (Zimbabwe, Mozambique, South Africa). Small species; CF peak ~86\u{2013}88 kHz. Rocky habitats and caves.",
+    echolocates: true,
+};
+
+// ── Hipposideridae ──
+
+pub const HIPPOSIDEROS_CAFFER: BatSpecies = BatSpecies {
+    id: "hipposideros_caffer",
+    name: "Sundevall's Roundleaf Bat",
+    scientific_name: "Hipposideros caffer",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 128_000.0,
+    freq_hi_hz: 153_000.0,
+    description: "Most widespread African hipposiderid. High CF calls; frequency varies geographically. Caves, mines, buildings.",
+    echolocates: true,
+};
+
+pub const HIPPOSIDEROS_RUBER: BatSpecies = BatSpecies {
+    id: "hipposideros_ruber",
+    name: "Noack's Roundleaf Bat",
+    scientific_name: "Hipposideros ruber",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 121_000.0,
+    freq_hi_hz: 136_000.0,
+    description: "West and Central Africa forests. CF ~127 kHz. Often sympatric with H. caffer; distinguishable by lower frequency. Cryptic species pair.",
+    echolocates: true,
+};
+
+pub const HIPPOSIDEROS_VITTATUS: BatSpecies = BatSpecies {
+    id: "hipposideros_vittatus",
+    name: "Striped Roundleaf Bat",
+    scientific_name: "Hipposideros vittatus",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 56_000.0,
+    freq_hi_hz: 66_000.0,
+    description: "East and southern Africa. Large species; low CF ~60 kHz for a hipposiderid. Caves and large rock overhangs.",
+    echolocates: true,
+};
+
+pub const HIPPOSIDEROS_GIGAS: BatSpecies = BatSpecies {
+    id: "hipposideros_gigas",
+    name: "Giant Roundleaf Bat",
+    scientific_name: "Hipposideros gigas",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 56_000.0,
+    freq_hi_hz: 66_000.0,
+    description: "West and Central Africa forests. Largest hipposiderid; CF ~60\u{2013}63 kHz. Caves near forest.",
+    echolocates: true,
+};
+
+pub const CLOEOTIS_PERCIVALI: BatSpecies = BatSpecies {
+    id: "cloeotis_percivali",
+    name: "Percival's Short-eared Trident Bat",
+    scientific_name: "Cloeotis percivali",
+    family: "Hipposideridae",
+    call_type: "CF",
+    freq_lo_hz: 190_000.0,
+    freq_hi_hz: 215_000.0,
+    description: "Highest known bat echolocation frequency (~212 kHz). Southern and East Africa caves and mines. Tiny bat (3\u{2013}5 g). Requires >400 kHz sample rate detectors.",
+    echolocates: true,
+};
+
+// ── Vespertilionidae ──
+
+pub const SCOTOPHILUS_DINGANII: BatSpecies = BatSpecies {
+    id: "scotophilus_dinganii",
+    name: "Yellow-bellied House Bat",
+    scientific_name: "Scotophilus dinganii",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 58_000.0,
+    description: "Most common vespertilionid in sub-Saharan Africa. Two cryptic forms: ~33 kHz and ~44 kHz peak. Roosts in buildings. Hockey-stick call shape.",
+    echolocates: true,
+};
+
+pub const SCOTOPHILUS_VIRIDIS: BatSpecies = BatSpecies {
+    id: "scotophilus_viridis",
+    name: "Green House Bat",
+    scientific_name: "Scotophilus viridis",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "East and southern African savannas. Peak ~40\u{2013}47 kHz. Smaller than S. dinganii. Roosts in buildings and tree hollows.",
+    echolocates: true,
+};
+
+pub const SCOTOPHILUS_LEUCOGASTER: BatSpecies = BatSpecies {
+    id: "scotophilus_leucogaster",
+    name: "White-bellied House Bat",
+    scientific_name: "Scotophilus leucogaster",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 25_000.0,
+    freq_hi_hz: 45_000.0,
+    description: "Sahel and West Africa savannas. Peak ~32\u{2013}35 kHz. Larger than S. dinganii. Roosts in buildings and palm trees.",
+    echolocates: true,
+};
+
+pub const NEOROMICIA_CAPENSIS: BatSpecies = BatSpecies {
+    id: "neoromicia_capensis",
+    name: "Cape Serotine",
+    scientific_name: "Neoromicia capensis",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "Ubiquitous across southern Africa. Peak ~38 kHz. Hockey-stick FM-QCF calls. Roosts in buildings. One of the most frequently recorded species.",
+    echolocates: true,
+};
+
+pub const PIPISTRELLUS_HESPERIDUS: BatSpecies = BatSpecies {
+    id: "pipistrellus_hesperidus",
+    name: "Dusky Pipistrelle",
+    scientific_name: "Pipistrellus hesperidus",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 65_000.0,
+    description: "Sub-Saharan Africa. Peak ~45\u{2013}48 kHz. Small bat frequently detected around human habitation and streetlights.",
+    echolocates: true,
+};
+
+pub const AFRONYCTERIS_NANUS: BatSpecies = BatSpecies {
+    id: "afronycteris_nanus",
+    name: "Banana Bat",
+    scientific_name: "Afronycteris nanus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 60_000.0,
+    description: "Sub-Saharan Africa. Peak ~43 kHz. FM calls lasting 4\u{2013}5 ms. Named for roosting in furled banana leaves. Small (3\u{2013}5 g).",
+    echolocates: true,
+};
+
+pub const PIPISTRELLUS_RUEPPELLII: BatSpecies = BatSpecies {
+    id: "pipistrellus_rueppellii",
+    name: "R\u{fc}ppell's Pipistrelle",
+    scientific_name: "Pipistrellus rueppellii",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 60_000.0,
+    description: "North Africa, Sahel, East Africa, Middle East. Peak ~40\u{2013}44 kHz. Associated with arid habitats and waterways.",
+    echolocates: true,
+};
+
+pub const MYOTIS_TRICOLOR: BatSpecies = BatSpecies {
+    id: "myotis_tricolor",
+    name: "Temminck's Myotis",
+    scientific_name: "Myotis tricolor",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Southern and East Africa. Broadband FM sweep. Peak ~48 kHz. Caves and mines. Distinctive tricolored fur.",
+    echolocates: true,
+};
+
+pub const MYOTIS_WELWITSCHII: BatSpecies = BatSpecies {
+    id: "myotis_welwitschii",
+    name: "Welwitsch's Myotis",
+    scientific_name: "Myotis welwitschii",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 25_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "Sub-Saharan Africa woodlands. Lower peak ~34 kHz than M. tricolor. Short broadband FM calls. Roosts in foliage.",
+    echolocates: true,
+};
+
+pub const EPTESICUS_HOTTENTOTUS: BatSpecies = BatSpecies {
+    id: "eptesicus_hottentotus",
+    name: "Long-tailed House Bat",
+    scientific_name: "Eptesicus hottentotus",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 50_000.0,
+    description: "Southern Africa rocky areas. Peak ~30\u{2013}35 kHz. Distinctive long free tail. Roosts in rock crevices.",
+    echolocates: true,
+};
+
+pub const LAEPHOTIS_BOTSWANAE: BatSpecies = BatSpecies {
+    id: "laephotis_botswanae",
+    name: "Botswana Long-eared Bat",
+    scientific_name: "Laephotis botswanae",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 52_000.0,
+    description: "Central and southern Africa. Peak ~37 kHz. Broadband FM. Large ears suggest some gleaning behavior. Poorly known species.",
+    echolocates: true,
+};
+
+pub const GLAUCONYCTERIS_VARIEGATA: BatSpecies = BatSpecies {
+    id: "glauconycteris_variegata",
+    name: "Variegated Butterfly Bat",
+    scientific_name: "Glauconycteris variegata",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 70_000.0,
+    description: "Sub-Saharan Africa savanna and woodland. Broadband FM sweeps 70\u{2013}30 kHz. Distinctive wing markings. Slow fluttery flight.",
+    echolocates: true,
+};
+
+pub const KERIVOULA_ARGENTATA: BatSpecies = BatSpecies {
+    id: "kerivoula_argentata",
+    name: "Damara Woolly Bat",
+    scientific_name: "Kerivoula argentata",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 118_000.0,
+    description: "East and southern Africa. Very high frequency, low-intensity FM calls (~90\u{2013}118 kHz). Clutter specialist in dense vegetation. Difficult to detect.",
+    echolocates: true,
+};
+
+pub const KERIVOULA_LANOSA: BatSpecies = BatSpecies {
+    id: "kerivoula_lanosa",
+    name: "Lesser Woolly Bat",
+    scientific_name: "Kerivoula lanosa",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 120_000.0,
+    description: "Sub-Saharan Africa forests. Very high frequency broadband FM. Forest interior specialist. Similar to K. argentata but slightly different peak.",
+    echolocates: true,
+};
+
+pub const NYCTICEINOPS_SCHLIEFFENI: BatSpecies = BatSpecies {
+    id: "nycticeinops_schlieffeni",
+    name: "Schlieffen's Twilight Bat",
+    scientific_name: "Nycticeinops schlieffeni",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 60_000.0,
+    description: "Sub-Saharan Africa savannas. Peak ~42 kHz. Often one of the first bats to emerge at dusk. Roosts in buildings and tree bark.",
+    echolocates: true,
+};
+
+// ── Molossidae ──
+
+pub const TADARIDA_AEGYPTIACA: BatSpecies = BatSpecies {
+    id: "tadarida_aegyptiaca",
+    name: "Egyptian Free-tailed Bat",
+    scientific_name: "Tadarida aegyptiaca",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 12_000.0,
+    freq_hi_hz: 28_000.0,
+    description: "Throughout Africa and into the Middle East. Long narrowband QCF calls, peak ~18\u{2013}23 kHz. High-flying open-air forager. Very loud calls detectable at long range.",
+    echolocates: true,
+};
+
+pub const CHAEREPHON_PUMILUS: BatSpecies = BatSpecies {
+    id: "chaerephon_pumilus",
+    name: "Little Free-tailed Bat",
+    scientific_name: "Chaerephon pumilus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 32_000.0,
+    description: "Sub-Saharan Africa, extremely common. Peak ~25 kHz. Often roosts in roofs of buildings in large colonies. Geographic variation in call frequency.",
+    echolocates: true,
+};
+
+pub const MOPS_CONDYLURUS: BatSpecies = BatSpecies {
+    id: "mops_condylurus",
+    name: "Angolan Free-tailed Bat",
+    scientific_name: "Mops condylurus",
+    family: "Molossidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "Sub-Saharan Africa savannas. Peak ~25\u{2013}28 kHz. Roosts in buildings and tree hollows. Often in mixed colonies with Chaerephon pumilus.",
+    echolocates: true,
+};
+
+pub const MOPS_MIDAS: BatSpecies = BatSpecies {
+    id: "mops_midas",
+    name: "Midas Free-tailed Bat",
+    scientific_name: "Mops midas",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 10_000.0,
+    freq_hi_hz: 22_000.0,
+    description: "Sub-Saharan Africa. Very low frequency QCF, peak ~13\u{2013}16 kHz. Large molossid (40\u{2013}60 g). Calls partially audible to humans. High, fast flight.",
+    echolocates: true,
+};
+
+pub const OTOMOPS_MARTIENSSENI: BatSpecies = BatSpecies {
+    id: "otomops_martiensseni",
+    name: "Large-eared Free-tailed Bat",
+    scientific_name: "Otomops martiensseni",
+    family: "Molossidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 8_000.0,
+    freq_hi_hz: 18_000.0,
+    description: "East and southern Africa. Very low frequency calls (~11\u{2013}14 kHz), audible to humans. Very large molossid. Caves and buildings. Individual call signatures documented.",
+    echolocates: true,
+};
+
+pub const SAUROMYS_PETROPHILUS: BatSpecies = BatSpecies {
+    id: "sauromys_petrophilus",
+    name: "Roberts's Flat-headed Bat",
+    scientific_name: "Sauromys petrophilus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 38_000.0,
+    description: "Southern Africa. Peak ~30 kHz. Narrow bandwidth QCF. Roosts in rock crevices. Flattened skull for squeezing into narrow cracks.",
+    echolocates: true,
+};
+
+pub const CHAEREPHON_ANSORGEI: BatSpecies = BatSpecies {
+    id: "chaerephon_ansorgei",
+    name: "Ansorge's Free-tailed Bat",
+    scientific_name: "Chaerephon ansorgei",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 38_000.0,
+    description: "West, Central, and East Africa forests. Peak ~28\u{2013}32 kHz. Forest edge and canopy forager.",
+    echolocates: true,
+};
+
+pub const TADARIDA_FULMINANS: BatSpecies = BatSpecies {
+    id: "tadarida_fulminans",
+    name: "Madagascan Large Free-tailed Bat",
+    scientific_name: "Tadarida fulminans",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 12_000.0,
+    freq_hi_hz: 25_000.0,
+    description: "East Africa and Madagascar. Low frequency QCF, peak ~16\u{2013}18 kHz. Large species. Long narrow wings for fast open-air flight.",
+    echolocates: true,
+};
+
+pub const CHAEREPHON_CHAPINI: BatSpecies = BatSpecies {
+    id: "chaerephon_chapini",
+    name: "Chapin's Free-tailed Bat",
+    scientific_name: "Chaerephon chapini",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "Central and East Africa. Peak ~25\u{2013}28 kHz. Forest and forest edge. Similar to C. pumilus but forest-associated.",
+    echolocates: true,
+};
+
+// ── Emballonuridae ──
+
+pub const TAPHOZOUS_MAURITIANUS: BatSpecies = BatSpecies {
+    id: "taphozous_mauritianus",
+    name: "Mauritian Tomb Bat",
+    scientific_name: "Taphozous mauritianus",
+    family: "Emballonuridae",
+    call_type: "CF-FM",
+    freq_lo_hz: 11_000.0,
+    freq_hi_hz: 30_000.0,
+    description: "Sub-Saharan Africa and Madagascar. Multiharmonic CF search calls with FM approach calls. Fundamental at 11\u{2013}13 kHz. Roosts on walls and tree trunks.",
+    echolocates: true,
+};
+
+pub const TAPHOZOUS_PERFORATUS: BatSpecies = BatSpecies {
+    id: "taphozous_perforatus",
+    name: "Egyptian Tomb Bat",
+    scientific_name: "Taphozous perforatus",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "North and East Africa, arid regions. QCF calls peaking ~25\u{2013}28 kHz. Roosts in tombs, ruins, rock faces.",
+    echolocates: true,
+};
+
+pub const COLEURA_AFRA: BatSpecies = BatSpecies {
+    id: "coleura_afra",
+    name: "African Sheath-tailed Bat",
+    scientific_name: "Coleura afra",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 40_000.0,
+    description: "East Africa coast, caves and rock shelters. Low-duty-cycle QCF calls peaking at ~33 kHz. Near Threatened. Colonial in coastal caves.",
+    echolocates: true,
+};
+
+// ── Nycteridae ──
+
+pub const NYCTERIS_THEBAICA: BatSpecies = BatSpecies {
+    id: "nycteris_thebaica",
+    name: "Egyptian Slit-faced Bat",
+    scientific_name: "Nycteris thebaica",
+    family: "Nycteridae",
+    call_type: "FM",
+    freq_lo_hz: 40_000.0,
+    freq_hi_hz: 120_000.0,
+    description: "Most widespread African nycterid. Very low intensity broadband FM calls (\u{201c}whispering bat\u{201d}). Gleaner; uses passive listening. Very difficult to detect on bat detectors.",
+    echolocates: true,
+};
+
+pub const NYCTERIS_GRANDIS: BatSpecies = BatSpecies {
+    id: "nycteris_grandis",
+    name: "Large Slit-faced Bat",
+    scientific_name: "Nycteris grandis",
+    family: "Nycteridae",
+    call_type: "FM",
+    freq_lo_hz: 17_000.0,
+    freq_hi_hz: 114_000.0,
+    description: "Central and West Africa forests. Largest nycterid. Very low intensity broadband FM. Hunts vertebrate prey (fish, frogs, smaller bats).",
+    echolocates: true,
+};
+
+pub const NYCTERIS_MACROTIS: BatSpecies = BatSpecies {
+    id: "nycteris_macrotis",
+    name: "Large-eared Slit-faced Bat",
+    scientific_name: "Nycteris macrotis",
+    family: "Nycteridae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 110_000.0,
+    description: "West and Central Africa forests. Low-intensity broadband FM similar to N. thebaica but larger. Gleaner in forest understory.",
+    echolocates: true,
+};
+
+// ── Miniopteridae ──
+
+pub const MINIOPTERUS_NATALENSIS: BatSpecies = BatSpecies {
+    id: "miniopterus_natalensis",
+    name: "Natal Long-fingered Bat",
+    scientific_name: "Miniopterus natalensis",
+    family: "Miniopteridae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 52_000.0,
+    freq_hi_hz: 85_000.0,
+    description: "Southern and East Africa. Peak ~59 kHz. Large cave colonies (thousands). FM-QCF hockey-stick calls. Key cave-roosting species.",
+    echolocates: true,
+};
+
+pub const MINIOPTERUS_FRATERCULUS: BatSpecies = BatSpecies {
+    id: "miniopterus_fraterculus",
+    name: "Lesser Long-fingered Bat",
+    scientific_name: "Miniopterus fraterculus",
+    family: "Miniopteridae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Southern Africa. Peak ~71 kHz (12 kHz higher than M. natalensis). Smaller species. Cave-roosting.",
+    echolocates: true,
+};
+
+pub const MINIOPTERUS_INFLATUS: BatSpecies = BatSpecies {
+    id: "miniopterus_inflatus",
+    name: "Greater Long-fingered Bat",
+    scientific_name: "Miniopterus inflatus",
+    family: "Miniopteridae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 45_000.0,
+    freq_hi_hz: 75_000.0,
+    description: "Central and East Africa. Larger species; lower peak ~52\u{2013}55 kHz than M. natalensis. Caves in forested areas.",
+    echolocates: true,
+};
+
+// ── Pteropodidae (non-echolocating, except Rousettus) ──
+
+pub const ROUSETTUS_AEGYPTIACUS: BatSpecies = BatSpecies {
+    id: "rousettus_aegyptiacus",
+    name: "Egyptian Rousette",
+    scientific_name: "Rousettus aegyptiacus",
+    family: "Pteropodidae",
+    call_type: "clicks",
+    freq_lo_hz: 12_000.0,
+    freq_hi_hz: 70_000.0,
+    description: "Only African fruit bat with true echolocation (tongue clicks). Broadband clicks ~50\u{2013}100 \u{b5}s duration. Caves and mines. Very large colonies.",
+    echolocates: true,
+};
+
+pub const EIDOLON_HELVUM: BatSpecies = BatSpecies {
+    id: "eidolon_helvum",
+    name: "Straw-coloured Fruit Bat",
+    scientific_name: "Eidolon helvum",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "Most widespread African megabat. Massive colonies (up to 1 million). Important seed disperser. Uses vision and smell only.",
+    echolocates: false,
+};
+
+pub const EPOMOPHORUS_WAHLBERGI: BatSpecies = BatSpecies {
+    id: "epomophorus_wahlbergi",
+    name: "Wahlberg's Epauletted Fruit Bat",
+    scientific_name: "Epomophorus wahlbergi",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "East and southern Africa savannas. Males produce loud honking display calls (audible). No echolocation. Common in gardens.",
+    echolocates: false,
+};
+
+pub const HYPSIGNATHUS_MONSTROSUS: BatSpecies = BatSpecies {
+    id: "hypsignathus_monstrosus",
+    name: "Hammer-headed Fruit Bat",
+    scientific_name: "Hypsignathus monstrosus",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "Central and West Africa forests. Largest African bat (wingspan to 90 cm). Males have enlarged larynx for loud lek-display calls. No echolocation.",
+    echolocates: false,
+};
+
+pub const EPOMOPS_FRANQUETI: BatSpecies = BatSpecies {
+    id: "epomops_franqueti",
+    name: "Franquet's Epauletted Fruit Bat",
+    scientific_name: "Epomops franqueti",
+    family: "Pteropodidae",
+    call_type: "none",
+    freq_lo_hz: 0.0,
+    freq_hi_hz: 0.0,
+    description: "Central and West Africa tropical forests. Males produce repetitive metallic calls during display. Important pollinator and seed disperser.",
+    echolocates: false,
+};
