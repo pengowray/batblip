@@ -334,29 +334,8 @@ pub fn on_mousedown(
 ) {
     if ev.button() != 0 { return; }
 
-    // Check for spec handle drag first (FF or HET — takes priority over tool)
-    // FF handles only start drag when clicking within the center handle zone.
-    if let Some(handle) = state.spec_hover_handle.get_untracked() {
-        let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
-        let allow_drag = if is_ff {
-            if let Some((px_x, _, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-                if let Some(canvas_el) = canvas_ref.get() {
-                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-                    is_in_ff_drag_zone(px_x, canvas.width() as f64)
-                } else { false }
-            } else { false }
-        } else {
-            true // HET handles drag from anywhere
-        };
-        if allow_drag {
-            state.spec_drag_handle.set(Some(handle));
-            state.is_dragging.set(true);
-            ev.prevent_default();
-            return;
-        }
-    }
-
-    // Check for annotation resize handle drag (takes priority over axis/tool drags)
+    // Check for annotation resize handle drag first (selected annotations take
+    // priority over FF/HET handles when they overlap)
     if let Some((ref ann_id, handle_pos)) = state.annotation_hover_handle.get_untracked() {
         // Check if the annotation is locked
         let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
@@ -385,6 +364,28 @@ pub fn on_mousedown(
                 }
             }
             state.annotation_drag_handle.set(Some((ann_id.clone(), handle_pos)));
+            state.is_dragging.set(true);
+            ev.prevent_default();
+            return;
+        }
+    }
+
+    // Check for spec handle drag (FF or HET — takes priority over axis/tool drags)
+    // FF handles only start drag when clicking within the center handle zone.
+    if let Some(handle) = state.spec_hover_handle.get_untracked() {
+        let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
+        let allow_drag = if is_ff {
+            if let Some((px_x, _, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+                if let Some(canvas_el) = canvas_ref.get() {
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    is_in_ff_drag_zone(px_x, canvas.width() as f64)
+                } else { false }
+            } else { false }
+        } else {
+            true // HET handles drag from anywhere
+        };
+        if allow_drag {
+            state.spec_drag_handle.set(Some(handle));
             state.is_dragging.set(true);
             ev.prevent_default();
             return;
@@ -1070,34 +1071,8 @@ pub fn on_touchstart(
 
     let touch = touches.get(0).unwrap();
 
-    // Check for spec handle drag first — hit-test at touch position
-    if let Some((px_x, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
-        if let Some(canvas_el) = canvas_ref.get() {
-            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-            let cw = canvas.width() as f64;
-            let ch = canvas.height() as f64;
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
-            let file = idx.and_then(|i| files.get(i));
-            let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-            let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
-            let handle = hit_test_spec_handles(
-                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
-            );
-            if let Some(handle) = handle {
-                let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
-                if !is_ff || is_in_ff_drag_zone(px_x, cw) {
-                    state.spec_drag_handle.set(Some(handle));
-                    state.is_dragging.set(true);
-                    ev.prevent_default();
-                    return;
-                }
-            }
-        }
-    }
-
-    // Check for annotation resize handle drag (touch)
+    // Check for annotation resize handle drag first (touch) — selected annotations
+    // take priority over FF/HET handles when they overlap
     if let Some((px_x, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
         if let Some(canvas_el) = canvas_ref.get() {
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -1148,6 +1123,33 @@ pub fn on_touchstart(
                             return;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Check for spec handle drag — hit-test at touch position
+    if let Some((px_x, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+        if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let cw = canvas.width() as f64;
+            let ch = canvas.height() as f64;
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            let file = idx.and_then(|i| files.get(i));
+            let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+            let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
+            let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+            let handle = hit_test_spec_handles(
+                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
+            );
+            if let Some(handle) = handle {
+                let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
+                if !is_ff || is_in_ff_drag_zone(px_x, cw) {
+                    state.spec_drag_handle.set(Some(handle));
+                    state.is_dragging.set(true);
+                    ev.prevent_default();
+                    return;
                 }
             }
         }
