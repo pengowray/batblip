@@ -81,6 +81,38 @@ pub fn BatBookStrip() -> impl IntoView {
         }
     };
 
+    // ── Auto-select species once per file ──────────────────────────────
+    // Tracks (file_index, species_id) so we only auto-select once per file.
+    let auto_selected_for: RwSignal<Option<(usize, String)>> = RwSignal::new(None);
+
+    Effect::new(move |_| {
+        let is_open = state.bat_book_open.get();
+        let resolved = state.bat_book_auto_resolved.get();
+        let file_idx = state.current_file_index.get();
+
+        let Some(idx) = file_idx else { return };
+        let Some(ref res) = resolved else { return };
+        let Some(ref species_id) = res.matched_species_id else { return };
+
+        // Only auto-select when the book is open and in Auto mode
+        if !is_open { return; }
+        if state.bat_book_mode.get_untracked() != BatBookMode::Auto { return; }
+
+        // Don't re-select if we already did for this file+species
+        if auto_selected_for.get_untracked() == Some((idx, species_id.clone())) {
+            return;
+        }
+        auto_selected_for.set(Some((idx, species_id.clone())));
+
+        // Select the species
+        state.bat_book_selected_ids.set(vec![species_id.clone()]);
+        state.bat_book_last_clicked_id.set(Some(species_id.clone()));
+        state.bat_book_ref_open.set(true);
+        if state.bat_book_auto_focus.get_untracked() {
+            apply_bat_book_ff(&state);
+        }
+    });
+
     // The auto-matched species entry (if any) to show before the divider
     let auto_matched_entry = Memo::new(move |_| {
         let resolved = state.bat_book_auto_resolved.get()?;
