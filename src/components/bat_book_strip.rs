@@ -119,6 +119,13 @@ pub fn BatBookStrip() -> impl IntoView {
                         "\u{2699}"
                     </button>
                     <Show when=move || region_menu_open.get()>
+                        // Invisible full-screen backdrop to catch outside clicks
+                        <div class="bat-book-menu-backdrop"
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                region_menu_open.set(false);
+                            }
+                        ></div>
                         <RegionMenu region_menu_open=region_menu_open />
                     </Show>
                 </div>
