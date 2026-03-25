@@ -494,6 +494,7 @@ pub fn App() -> impl IntoView {
 
     // Save/restore per-file settings (gain, noise filter) when switching files.
     // Files in the same sequence group share settings.
+    // Also resets HFR to OFF for each new file.
     {
         let prev_idx: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
         Effect::new(move |_| {
@@ -501,6 +502,18 @@ pub fn App() -> impl IntoView {
 
             let old_idx = prev_idx.get();
             prev_idx.set(new_idx);
+
+            // If HFR is on and we're switching files, swap gain back to
+            // "normal" orientation before saving the outgoing file settings.
+            let was_hfr = old_idx.is_some()
+                && old_idx != new_idx
+                && state.focus_stack.get_untracked().hfr_enabled();
+            if was_hfr {
+                let current_gain = state.gain_db.get_untracked();
+                let stashed_gain = state.gain_db_stash.get_untracked();
+                state.gain_db.set(stashed_gain);
+                state.gain_db_stash.set(current_gain);
+            }
 
             // Save current settings to the outgoing file
             if let Some(oi) = old_idx {
@@ -541,6 +554,14 @@ pub fn App() -> impl IntoView {
                 // Save outgoing file's annotations
                 if let Some(oi) = old_idx {
                     crate::opfs::save_annotations(state, oi);
+                }
+                // Reset HFR and focus stack for the new file (HFR defaults to OFF).
+                state.focus_stack.set(crate::focus_stack::FocusStack::new());
+                if was_hfr {
+                    state.playback_mode.set(PlaybackMode::Normal);
+                    state.bandpass_mode.set(crate::state::BandpassMode::Off);
+                    state.min_display_freq.set(None);
+                    state.max_display_freq.set(None);
                 }
             }
 

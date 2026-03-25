@@ -118,20 +118,38 @@ pub fn HfrButton() -> impl IntoView {
 
     // ── Ensure default user range when HFR is first enabled with no range ──
     // If the focus stack has no user range set yet when HFR turns on,
-    // set a sensible default (18kHz–Nyquist).
+    // check for a species in the file's metadata and use its frequency range.
+    // Falls back to 18kHz–Nyquist if no species match.
     Effect::new(move || {
         let stack = state.focus_stack.get();
         if stack.hfr_enabled() {
             let eff = stack.effective_range();
             if !eff.is_active() {
-                // No range set yet — provide default
+                // No range set yet — try species from metadata, then fall back
                 let files = state.files.get();
                 let idx = state.current_file_index.get();
-                let nyquist = idx
-                    .and_then(|i| files.get(i))
+                let file = idx.and_then(|i| files.get(i));
+                let nyquist = file
                     .map(|f| f.spectrogram.max_freq)
                     .unwrap_or(96_000.0);
-                state.set_ff_range(18_000.0, nyquist);
+
+                let species_range = file.and_then(|f| {
+                    use crate::bat_book::auto_resolve;
+                    let favourites = state.bat_book_favourites.get_untracked();
+                    let resolved = auto_resolve::resolve_auto(Some(f), &favourites);
+                    let species_id = resolved.matched_species_id?;
+                    let entry = auto_resolve::find_entry_in_manifest(
+                        resolved.region, &species_id,
+                    ).or_else(|| auto_resolve::find_entry_any_book(&species_id))?;
+                    if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
+                        Some((entry.freq_lo_hz, entry.freq_hi_hz.min(nyquist)))
+                    } else {
+                        None
+                    }
+                });
+
+                let (lo, hi) = species_range.unwrap_or((18_000.0, nyquist));
+                state.set_ff_range(lo, hi);
             }
         }
     });
