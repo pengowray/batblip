@@ -901,7 +901,7 @@ pub fn App() -> impl IntoView {
                 let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
                 // Filter to audio-ish extensions
                 let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-                if !matches!(ext.as_str(), "wav" | "flac" | "ogg" | "mp3") {
+                if !matches!(ext.as_str(), "wav" | "w4v" | "flac" | "ogg" | "mp3") {
                     log::info!("Skipping non-audio drop: {name}");
                     continue;
                 }

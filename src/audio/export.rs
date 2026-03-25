@@ -351,6 +351,8 @@ pub fn export_selected(state: &AppState) {
     // Strip extension from source filename for export naming
     let base_name = file.name.trim_end_matches(".wav")
         .trim_end_matches(".WAV")
+        .trim_end_matches(".w4v")
+        .trim_end_matches(".W4V")
         .trim_end_matches(".flac")
         .trim_end_matches(".FLAC")
         .trim_end_matches(".ogg")

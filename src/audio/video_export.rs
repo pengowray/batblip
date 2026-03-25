@@ -571,6 +571,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let file = state.current_file().unwrap();
     let base_name = file.name
         .trim_end_matches(".wav").trim_end_matches(".WAV")
+        .trim_end_matches(".w4v").trim_end_matches(".W4V")
         .trim_end_matches(".flac").trim_end_matches(".FLAC")
         .trim_end_matches(".ogg").trim_end_matches(".OGG")
         .trim_end_matches(".mp3").trim_end_matches(".MP3");

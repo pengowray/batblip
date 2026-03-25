@@ -37,11 +37,12 @@ pub fn file_info(path: &str) -> Result<AudioFileInfo, String> {
     }
 
     match &bytes[0..4] {
+        b"RIFF" if is_w4v(&bytes) => w4v_info(&bytes, file_size),
         b"RIFF" => wav_info(&bytes, file_size),
         b"fLaC" => flac_info(&bytes, file_size),
         b"OggS" => ogg_info(&bytes, file_size),
         _ if is_mp3(&bytes) => mp3_info(&bytes, file_size),
-        _ => Err("Unknown audio format (expected WAV, FLAC, OGG, or MP3)".into()),
+        _ => Err("Unknown audio format (expected WAV, W4V, FLAC, OGG, or MP3)".into()),
     }
 }
 
@@ -56,6 +57,7 @@ pub fn decode_full(path: &str) -> Result<FullDecodeResult, String> {
     }
 
     match &bytes[0..4] {
+        b"RIFF" if is_w4v(&bytes) => decode_w4v(&bytes, file_size),
         b"RIFF" => decode_wav(&bytes, file_size),
         b"fLaC" => decode_flac(&bytes, file_size),
         b"OggS" => decode_ogg(&bytes, file_size),
@@ -70,6 +72,30 @@ fn is_mp3(bytes: &[u8]) -> bool {
     }
     if bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0 {
         return true;
+    }
+    false
+}
+
+/// Wildlife Acoustics W4V format tag.
+const W4V_FORMAT_TAG: u16 = 0x5741;
+const W4V_BLOCK_SAMPLES: usize = 512;
+const W4V_BLOCK_HEADER: usize = 8;
+
+fn is_w4v(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return false;
+    }
+    let mut pos = 12usize;
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            bytes[pos + 4..pos + 8].try_into().unwrap_or([0; 4]),
+        ) as usize;
+        if chunk_id == b"fmt " && chunk_size >= 2 && pos + 10 <= bytes.len() {
+            let format_tag = u16::from_le_bytes([bytes[pos + 8], bytes[pos + 9]]);
+            return format_tag == W4V_FORMAT_TAG;
+        }
+        pos = pos + 8 + ((chunk_size + 1) & !1);
     }
     false
 }
@@ -344,6 +370,153 @@ fn decode_mp3(bytes: &[u8], file_size: usize) -> Result<FullDecodeResult, String
             bits_per_sample: 16,
             is_float: false,
             format: "MP3".into(),
+            file_size,
+        },
+        samples,
+    })
+}
+
+// ── W4V (Wildlife Acoustics) ───────────────────────────────────────
+
+fn parse_w4v_riff(bytes: &[u8]) -> Result<(u32, u16, u16, u64, u64, u64), String> {
+    // Returns (sample_rate, channels, block_align, data_offset, data_size, fact_samples)
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return Err("Not a RIFF/WAVE file".into());
+    }
+    let mut pos = 12usize;
+    let mut fmt_info: Option<(u32, u16, u16)> = None;
+    let mut data_offset: Option<u64> = None;
+    let mut data_size: Option<u64> = None;
+    let mut fact_samples: u64 = 0;
+
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            bytes[pos + 4..pos + 8].try_into().map_err(|_| "chunk size")?,
+        ) as u64;
+        let body = pos + 8;
+        let fits = body as u64 + chunk_size <= bytes.len() as u64;
+
+        match chunk_id {
+            b"fmt " if chunk_size >= 14 && fits => {
+                let f = &bytes[body..];
+                let sr = u32::from_le_bytes([f[4], f[5], f[6], f[7]]);
+                let ch = u16::from_le_bytes([f[2], f[3]]);
+                let ba = u16::from_le_bytes([f[12], f[13]]);
+                fmt_info = Some((sr, ch, ba));
+            }
+            b"fact" if chunk_size >= 4 && fits => {
+                let f = &bytes[body..];
+                fact_samples = u32::from_le_bytes([f[0], f[1], f[2], f[3]]) as u64;
+            }
+            b"data" => {
+                data_offset = Some(body as u64);
+                data_size = Some(chunk_size);
+                break;
+            }
+            _ => {}
+        }
+        pos = body + ((chunk_size as usize + 1) & !1);
+    }
+
+    let (sr, ch, ba) = fmt_info.ok_or("No fmt chunk")?;
+    let d_off = data_offset.ok_or("No data chunk")?;
+    let d_sz = data_size.ok_or("No data chunk")?;
+    let fact = if fact_samples > 0 {
+        fact_samples
+    } else {
+        (d_sz / ba as u64) * W4V_BLOCK_SAMPLES as u64
+    };
+    Ok((sr, ch, ba, d_off, d_sz, fact))
+}
+
+fn decode_w4v_blocks(bytes: &[u8], block_align: u16, data_offset: u64, data_size: u64) -> Vec<f32> {
+    let ba = block_align as usize;
+    let data_bytes = ba - W4V_BLOCK_HEADER;
+    let bits = data_bytes * 8 / W4V_BLOCK_SAMPLES;
+    let num_blocks = data_size as usize / ba;
+    let start = data_offset as usize;
+    let sign_bit = 1usize << (bits - 1);
+    let mask = (1usize << bits) - 1;
+
+    let mut samples = Vec::with_capacity(num_blocks * W4V_BLOCK_SAMPLES);
+
+    for bi in 0..num_blocks {
+        let off = start + bi * ba;
+        if off + ba > bytes.len() {
+            break;
+        }
+        let block = &bytes[off..off + ba];
+        let predictor = i16::from_le_bytes([block[0], block[1]]) as i32;
+        let scale = block[2] as i32;
+        let data = &block[W4V_BLOCK_HEADER..];
+
+        let mut bit_pos = 0usize;
+        for _ in 0..W4V_BLOCK_SAMPLES {
+            let byte_idx = bit_pos / 8;
+            let bit_off = bit_pos % 8;
+
+            let raw = if byte_idx + 1 < data.len() {
+                let two = ((data[byte_idx] as usize) << 8) | (data[byte_idx + 1] as usize);
+                let shift = 16usize.wrapping_sub(bits + bit_off);
+                if shift < 16 {
+                    (two >> shift) & mask
+                } else if byte_idx + 2 < data.len() {
+                    let three = (two << 8) | (data[byte_idx + 2] as usize);
+                    (three >> (24 - bits - bit_off)) & mask
+                } else {
+                    0
+                }
+            } else if byte_idx < data.len() {
+                let shift = 8usize.wrapping_sub(bits + bit_off);
+                if shift < 8 { (data[byte_idx] as usize >> shift) & mask } else { 0 }
+            } else {
+                0
+            };
+            bit_pos += bits;
+
+            let signed_val = if raw & sign_bit != 0 {
+                raw as i32 - (1i32 << bits)
+            } else {
+                raw as i32
+            };
+            let s = (predictor + signed_val * scale).clamp(-32768, 32767);
+            samples.push(s as f32 / 32768.0);
+        }
+    }
+    samples
+}
+
+fn w4v_info(bytes: &[u8], file_size: usize) -> Result<AudioFileInfo, String> {
+    let (sr, ch, _ba, _d_off, _d_sz, fact) = parse_w4v_riff(bytes)?;
+    let mono_samples = fact as usize / ch.max(1) as usize;
+    Ok(AudioFileInfo {
+        sample_rate: sr,
+        channels: ch as u32,
+        duration_secs: mono_samples as f64 / sr as f64,
+        total_mono_samples: mono_samples,
+        bits_per_sample: 16,
+        is_float: false,
+        format: "W4V".into(),
+        file_size,
+    })
+}
+
+fn decode_w4v(bytes: &[u8], file_size: usize) -> Result<FullDecodeResult, String> {
+    let (sr, ch, ba, d_off, d_sz, _fact) = parse_w4v_riff(bytes)?;
+    let all_samples = decode_w4v_blocks(bytes, ba, d_off, d_sz);
+    let samples = mix_to_mono(&all_samples, ch as u32);
+    let duration_secs = samples.len() as f64 / sr as f64;
+
+    Ok(FullDecodeResult {
+        info: AudioFileInfo {
+            sample_rate: sr,
+            channels: ch as u32,
+            duration_secs,
+            total_mono_samples: samples.len(),
+            bits_per_sample: 16,
+            is_float: false,
+            format: "W4V".into(),
             file_size,
         },
         samples,

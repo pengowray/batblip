@@ -165,7 +165,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
             <input
                 node_ref=file_input_ref
                 type="file"
-                accept=".wav,.flac,.mp3,.ogg"
+                accept=".wav,.w4v,.flac,.mp3,.ogg"
                 multiple=true
                 style="display:none"
                 on:change=on_file_input_change
@@ -232,6 +232,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         let display_name = entry.en.clone().unwrap_or_else(|| {
                                             entry.filename
                                                 .trim_end_matches(".wav")
+                                                .trim_end_matches(".w4v")
                                                 .trim_end_matches(".flac")
                                                 .trim_end_matches(".mp3")
                                                 .to_string()

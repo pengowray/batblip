@@ -334,18 +334,19 @@ pub fn parse_mp3_header(header_bytes: &[u8], file_size: u64) -> Result<Mp3Header
     })
 }
 
-/// Load audio from raw file bytes. Detects WAV, FLAC, OGG, or MP3 by header magic bytes.
+/// Load audio from raw file bytes. Detects WAV, W4V, FLAC, OGG, or MP3 by header magic bytes.
 pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     if bytes.len() < 4 {
         return Err("File too small".into());
     }
 
     match &bytes[0..4] {
+        b"RIFF" | b"RF64" if is_w4v(bytes) => load_w4v(bytes),
         b"RIFF" | b"RF64" => load_wav(bytes),
         b"fLaC" => load_flac(bytes),
         b"OggS" => load_ogg(bytes),
         _ if is_mp3(bytes) => load_mp3(bytes),
-        _ => Err("Unknown file format (expected WAV, FLAC, OGG, or MP3)".into()),
+        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, or MP3)".into()),
     }
 }
 
@@ -363,6 +364,221 @@ pub fn is_mp3(bytes: &[u8]) -> bool {
 
 pub fn is_ogg(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[0..4] == b"OggS"
+}
+
+/// Wildlife Acoustics W4V format tag (0x5741 = "AW" in ASCII).
+const W4V_FORMAT_TAG: u16 = 0x5741;
+/// Samples per W4V compressed block.
+const W4V_BLOCK_SAMPLES: usize = 512;
+/// Size of the per-block header (predictor i16 + scale u8 + 5 reserved bytes).
+const W4V_BLOCK_HEADER: usize = 8;
+
+/// Check if RIFF/WAVE bytes use the W4V (Wildlife Acoustics) format tag.
+pub fn is_w4v(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return false;
+    }
+    // Scan for fmt chunk and check format tag
+    let mut pos = 12usize;
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            bytes[pos + 4..pos + 8].try_into().unwrap_or([0; 4]),
+        ) as usize;
+        if chunk_id == b"fmt " && chunk_size >= 2 && pos + 10 <= bytes.len() {
+            let format_tag = u16::from_le_bytes([bytes[pos + 8], bytes[pos + 9]]);
+            return format_tag == W4V_FORMAT_TAG;
+        }
+        pos = pos + 8 + ((chunk_size + 1) & !1);
+    }
+    false
+}
+
+/// Parsed W4V header.
+#[derive(Clone, Debug)]
+pub struct W4vHeader {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub block_align: u16,
+    pub bits_per_coded_sample: u8,
+    pub data_offset: u64,
+    pub data_size: u64,
+    pub total_frames: u64,
+    pub guano: Option<GuanoMetadata>,
+}
+
+/// Parse W4V (Wildlife Acoustics compressed WAV) header.
+pub fn parse_w4v_header(bytes: &[u8]) -> Result<W4vHeader, String> {
+    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+        return Err("Not a RIFF/WAVE file".into());
+    }
+
+    let mut pos = 12usize;
+    let mut fmt_info: Option<(u32, u16, u16)> = None; // (sample_rate, channels, block_align)
+    let mut data_offset: Option<u64> = None;
+    let mut data_size: Option<u64> = None;
+    let mut fact_samples: Option<u64> = None;
+    let mut guano: Option<GuanoMetadata> = None;
+
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(
+            bytes[pos + 4..pos + 8].try_into().map_err(|_| "Invalid chunk size")?,
+        ) as u64;
+        let body_start = pos + 8;
+        let body_end_u64 = body_start as u64 + chunk_size;
+        let chunk_fits = body_end_u64 <= bytes.len() as u64;
+
+        match chunk_id {
+            b"fmt " => {
+                if chunk_size < 14 || !chunk_fits {
+                    return Err("fmt chunk too small or truncated".into());
+                }
+                let body_end = body_end_u64 as usize;
+                let fmt = &bytes[body_start..body_end];
+                let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+                if format_tag != W4V_FORMAT_TAG {
+                    return Err(format!("Not a W4V file (format tag 0x{:04X})", format_tag));
+                }
+                let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+                let sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+                let block_align = u16::from_le_bytes([fmt[12], fmt[13]]);
+                fmt_info = Some((sample_rate, channels, block_align));
+            }
+            b"fact" => {
+                if chunk_size >= 4 && chunk_fits {
+                    let f = &bytes[body_start..];
+                    fact_samples = Some(u32::from_le_bytes([f[0], f[1], f[2], f[3]]) as u64);
+                }
+            }
+            b"data" => {
+                data_offset = Some(body_start as u64);
+                data_size = Some(chunk_size);
+                if guano.is_some() || !chunk_fits {
+                    break;
+                }
+                let aligned = ((chunk_size + 1) & !1) as usize;
+                pos = body_start + aligned;
+                continue;
+            }
+            b"guan" => {
+                if chunk_fits {
+                    let body_end = body_end_u64 as usize;
+                    guano = guano::parse_guano_chunk(&bytes[body_start..body_end]);
+                }
+            }
+            _ => {}
+        }
+        let aligned = ((chunk_size + 1) & !1) as usize;
+        match body_start.checked_add(aligned) {
+            Some(next) if next > pos => pos = next,
+            _ => break,
+        }
+    }
+
+    let (sample_rate, channels, block_align) =
+        fmt_info.ok_or("No fmt chunk found in W4V header")?;
+    let data_offset = data_offset.ok_or("No data chunk found in W4V header")?;
+    let data_size = data_size.ok_or("No data chunk found in W4V header")?;
+
+    if block_align as usize <= W4V_BLOCK_HEADER {
+        return Err("W4V block_align too small".into());
+    }
+    let data_bytes_per_block = block_align as usize - W4V_BLOCK_HEADER;
+    let bits_per_coded_sample = (data_bytes_per_block * 8 / W4V_BLOCK_SAMPLES) as u8;
+    if bits_per_coded_sample < 2 || bits_per_coded_sample > 16 {
+        return Err(format!("W4V: unexpected bits per coded sample: {}", bits_per_coded_sample));
+    }
+
+    let total_frames = if let Some(n) = fact_samples {
+        n
+    } else {
+        let num_blocks = data_size / block_align as u64;
+        num_blocks * W4V_BLOCK_SAMPLES as u64
+    };
+
+    Ok(W4vHeader {
+        sample_rate,
+        channels,
+        block_align,
+        bits_per_coded_sample,
+        data_offset,
+        data_size,
+        total_frames,
+        guano,
+    })
+}
+
+/// Decode W4V compressed audio blocks to f32 samples.
+/// W4V uses block floating-point quantization: each block has a DC predictor
+/// and a scale factor, with N-bit two's complement coded values.
+/// Bit packing is MSB-first within each block's data section.
+fn decode_w4v_blocks(bytes: &[u8], header: &W4vHeader) -> Vec<f32> {
+    let block_align = header.block_align as usize;
+    let bits = header.bits_per_coded_sample as usize;
+    let num_blocks = header.data_size as usize / block_align;
+    let data_start = header.data_offset as usize;
+    let max_val = 32768.0f32;
+    let sign_bit = 1usize << (bits - 1);
+    let mask = (1usize << bits) - 1;
+
+    let mut samples = Vec::with_capacity(num_blocks * W4V_BLOCK_SAMPLES);
+
+    for bi in 0..num_blocks {
+        let block_off = data_start + bi * block_align;
+        if block_off + block_align > bytes.len() {
+            break;
+        }
+        let block = &bytes[block_off..block_off + block_align];
+
+        // 8-byte header: i16 predictor, u8 scale, 5 reserved bytes
+        let predictor = i16::from_le_bytes([block[0], block[1]]) as i32;
+        let scale = block[2] as i32;
+        let data = &block[W4V_BLOCK_HEADER..];
+
+        // Extract N-bit values, MSB-first packing
+        let mut bit_pos = 0usize;
+        for _ in 0..W4V_BLOCK_SAMPLES {
+            let byte_idx = bit_pos / 8;
+            let bit_off = bit_pos % 8;
+
+            // Read enough bits from MSB-first packed data
+            let raw = if byte_idx + 1 < data.len() {
+                let two_bytes = ((data[byte_idx] as usize) << 8) | (data[byte_idx + 1] as usize);
+                let shift = 16 - bits - bit_off;
+                if shift < 16 {
+                    (two_bytes >> shift) & mask
+                } else if byte_idx + 2 < data.len() {
+                    let three_bytes = (two_bytes << 8) | (data[byte_idx + 2] as usize);
+                    (three_bytes >> (24 - bits - bit_off)) & mask
+                } else {
+                    0
+                }
+            } else if byte_idx < data.len() {
+                let shift = 8usize.wrapping_sub(bits + bit_off);
+                if shift < 8 {
+                    (data[byte_idx] as usize >> shift) & mask
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            bit_pos += bits;
+
+            // Two's complement: if sign bit set, value is negative
+            let signed_val = if raw & sign_bit != 0 {
+                raw as i32 - (1i32 << bits)
+            } else {
+                raw as i32
+            };
+
+            let sample_i16 = (predictor + signed_val * scale).clamp(-32768, 32767);
+            samples.push(sample_i16 as f32 / max_val);
+        }
+    }
+
+    samples
 }
 
 pub struct OggHeader {
@@ -481,6 +697,33 @@ fn normalize_riff(bytes: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(data);
     Some(out)
+}
+
+fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
+    let header = parse_w4v_header(bytes)?;
+    let all_samples = decode_w4v_blocks(bytes, &header);
+    let channels = header.channels as u32;
+    let sample_rate = header.sample_rate;
+
+    let (samples, source) = build_source(all_samples, channels, sample_rate);
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+    Ok(AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: bytes.len(),
+            format: "W4V",
+            bits_per_sample: 16, // original uncompressed depth
+            is_float: false,
+            guano: header.guano,
+            data_offset: Some(header.data_offset),
+            data_size: Some(header.data_size),
+        },
+    })
 }
 
 fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
