@@ -754,12 +754,16 @@ fn count_cached_for_species(root: &std::path::Path, genus: &str, sp: &str) -> u3
 }
 
 /// Find the audio file corresponding to a .xc.json stem in a sounds directory.
-/// Tries common audio extensions.
+/// Scans the directory for any file matching the stem with a non-.xc.json extension.
 fn find_audio_file(sounds_dir: &std::path::Path, stem: &str) -> Option<PathBuf> {
-    for ext in &["wav", "mp3", "flac", "ogg"] {
-        let path = sounds_dir.join(format!("{stem}.{ext}"));
-        if path.exists() {
-            return Some(path);
+    if let Ok(entries) = std::fs::read_dir(sounds_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(without_ext) = name.rsplit_once('.').map(|(s, _)| s) {
+                if without_ext == stem && !name.ends_with(".xc.json") {
+                    return Some(entry.path());
+                }
+            }
         }
     }
     None
