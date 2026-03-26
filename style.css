@@ -4481,6 +4481,12 @@ body.sidebar-resizing {
     min-width: 0;
 }
 
+.ref-panel-count {
+    font-weight: 400;
+    color: #888;
+    font-size: 10px;
+}
+
 .ref-panel-close {
     background: none;
     border: none;

@@ -139,7 +139,17 @@ pub fn BatBookRefPanel() -> impl IntoView {
                         let n = entries.len();
                         if n > 1 {
                             let fi = focused_index.get();
-                            format!("{} of {} selections", fi + 1, n)
+                            if fi == 0 {
+                                // Haven't scrolled yet
+                                view! {
+                                    <span class="ref-panel-count">{format!("{n} selections")}</span>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <span class="ref-panel-count">{format!("{} / {}", fi + 1, n)}</span>
+                                    " selections"
+                                }.into_any()
+                            }
                         } else if n == 1 {
                             let region = state.bat_book_region.get();
                             let manifest = get_manifest(region);
@@ -149,9 +159,13 @@ pub fn BatBookRefPanel() -> impl IntoView {
                                 .and_then(|id| manifest.entries.iter().position(|e| e.id == id.as_str()))
                                 .map(|i| i + 1)
                                 .unwrap_or(0);
-                            format!("{} \u{2014} {} of {}", region.short_label(), pos, total)
+                            view! {
+                                {region.short_label()}
+                                " "
+                                <span class="ref-panel-count">{format!("{pos} / {total}")}</span>
+                            }.into_any()
                         } else {
-                            String::new()
+                            view! { <span></span> }.into_any()
                         }
                     }}
                 </span>
