@@ -11,6 +11,8 @@ pub struct TrackInfo {
 pub struct SequenceInfo {
     /// Shared prefix identifying the sequence (e.g. "260212" or "site")
     pub sequence_key: String,
+    /// Track label within the sequence (e.g. "5", "3-4", ""). Empty string for non-multitrack.
+    pub track_label: String,
     /// Ordering number within the sequence
     pub sequence_number: u32,
     /// Gap in seconds since the previous file in the sequence ended.
@@ -183,7 +185,7 @@ pub fn compute_all_groups(
 
     // Sort each sequence group by sequence number and compute gaps
     let mut sequence_infos: Vec<Option<SequenceInfo>> = vec![None; names.len()];
-    for ((prefix, _track_label), mut members) in seq_groups {
+    for ((prefix, track_label), mut members) in seq_groups {
         if members.len() < 2 {
             continue;
         }
@@ -199,6 +201,7 @@ pub fn compute_all_groups(
 
             sequence_infos[file_idx] = Some(SequenceInfo {
                 sequence_key: prefix.clone(),
+                track_label: track_label.clone(),
                 sequence_number: seq_num,
                 gap_from_prev_secs: gap,
             });

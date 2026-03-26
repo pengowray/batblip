@@ -277,10 +277,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         .and_then(|idx| group_infos.get(idx))
                         .and_then(|g| g.track.as_ref())
                         .map(|ti| ti.group_key.clone());
-                    let active_seq_key: Option<String> = current_idx.get()
+                    let active_seq_key: Option<(String, String)> = current_idx.get()
                         .and_then(|idx| group_infos.get(idx))
                         .and_then(|g| g.sequence.as_ref())
-                        .map(|s| s.sequence_key.clone());
+                        .map(|s| (s.sequence_key.clone(), s.track_label.clone()));
 
                     // Compute sorted display order
                     let sort_mode = state.file_sort_mode.get();
@@ -302,7 +302,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
                         // Determine if group badges should show for this file
                         let show_groups = seq_badge.as_ref()
-                            .map(|s| Some(&s.sequence_key) == active_seq_key.as_ref())
+                            .map(|s| active_seq_key.as_ref()
+                                .map(|(k, t)| k == &s.sequence_key && t == &s.track_label)
+                                .unwrap_or(false))
                             .unwrap_or(false)
                             || track_badge.as_ref()
                             .map(|t| Some(&t.group_key) == active_group_key.as_ref())

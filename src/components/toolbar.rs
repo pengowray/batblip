@@ -89,10 +89,11 @@ pub fn Toolbar() -> impl IntoView {
         let groups = file_groups::compute_all_groups(&names, &files);
         let cur_seq = groups.get(idx)?.sequence.as_ref()?;
         let key = cur_seq.sequence_key.clone();
+        let tlabel = cur_seq.track_label.clone();
         let mut matches: Vec<(usize, String, u32)> = groups.iter().enumerate()
             .filter_map(|(i, g)| {
                 let s = g.sequence.as_ref()?;
-                if s.sequence_key == key {
+                if s.sequence_key == key && s.track_label == tlabel {
                     Some((i, files[i].name.clone(), s.sequence_number))
                 } else {
                     None
