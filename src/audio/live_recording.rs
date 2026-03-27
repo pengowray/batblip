@@ -224,7 +224,11 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             // Only clear waterfall when fully done (not when switching from listen to record)
             live_waterfall::clear();
         }
-        state.mic_live_file_idx.set(None);
+        // Note: do NOT clear mic_live_file_idx here — the finalization functions
+        // (finalize_recording_tauri / finalize_live_recording) are responsible for that.
+        // Clearing it here causes a race: this loop exits as soon as mic_recording is false,
+        // but the async stop command hasn't returned yet, so finalize_recording_tauri
+        // sees mic_live_file_idx=None and creates a duplicate file.
         state.mic_live_data_cols.set(0);
         state.mic_recording_target_scroll.set(0.0);
     });
