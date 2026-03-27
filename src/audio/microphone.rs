@@ -827,6 +827,7 @@ async fn toggle_record_tauri(state: &AppState) {
             Err(e) => {
                 log::error!("mic_stop_recording failed: {}", e);
                 state.status_message.set(Some(format!("Recording failed: {}", e)));
+                cleanup_failed_recording(state);
             }
         }
 
@@ -866,6 +867,7 @@ async fn stop_all_tauri(state: &AppState) {
             }
             Err(e) => {
                 log::error!("mic_stop_recording failed: {}", e);
+                cleanup_failed_recording(state);
             }
         }
     }
@@ -914,6 +916,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
 
     if samples.is_empty() {
         log::warn!("No samples in recording result");
+        cleanup_failed_recording(&state);
         return;
     }
 
@@ -1391,6 +1394,7 @@ async fn toggle_record_usb(state: &AppState) {
             Err(e) => {
                 log::error!("usb_stop_recording failed: {}", e);
                 state.status_message.set(Some(format!("Recording failed: {}", e)));
+                cleanup_failed_recording(state);
             }
         }
 
@@ -1429,6 +1433,7 @@ async fn stop_all_usb(state: &AppState) {
             }
             Err(e) => {
                 log::error!("usb_stop_recording failed: {}", e);
+                cleanup_failed_recording(state);
             }
         }
     }
@@ -1693,6 +1698,8 @@ async fn stop_recording(state: &AppState) {
         _ => {
             if let Some((samples, sr)) = stop_recording_web(state) {
                 finalize_live_recording(samples, sr, *state);
+            } else {
+                cleanup_failed_recording(state);
             }
             if !state.mic_listening.get_untracked() {
                 maybe_close_mic_web(state);
@@ -1734,6 +1741,8 @@ pub fn stop_all(state: &AppState) {
             if state.mic_recording.get_untracked() {
                 if let Some((samples, sr)) = stop_recording_web(state) {
                     finalize_live_recording(samples, sr, *state);
+                } else {
+                    cleanup_failed_recording(state);
                 }
             }
             state.mic_listening.set(false);
@@ -1750,5 +1759,5 @@ pub use crate::audio::wav_encoder::{encode_wav, download_wav};
 pub(crate) use crate::audio::live_recording::{
     start_live_recording, spawn_live_processing_loop,
     spawn_smooth_scroll_animation, finalize_live_recording,
-    spawn_spectrogram_computation,
+    spawn_spectrogram_computation, cleanup_failed_recording,
 };

@@ -10,6 +10,48 @@ use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
 use std::sync::Arc;
 
+/// Clean up the live recording file when finalization fails (empty samples,
+/// command error, etc.).  If the file has no audio data and no preview,
+/// removes it entirely and fixes `current_file_index`.  Otherwise marks it
+/// as not-recording so the overview doesn't say "Recording…" forever.
+pub(crate) fn cleanup_failed_recording(state: &AppState) {
+    let live_idx = state.mic_live_file_idx.get_untracked();
+    state.mic_live_file_idx.set(None);
+
+    let Some(idx) = live_idx else { return };
+
+    let is_empty = state.files.with_untracked(|files| {
+        files.get(idx).map_or(true, |f| f.audio.samples.is_empty() && f.preview.is_none())
+    });
+
+    if is_empty {
+        // Remove the phantom live file
+        state.files.update(|files| {
+            if idx < files.len() {
+                files.remove(idx);
+            }
+        });
+        // Adjust current_file_index after removal
+        let len = state.files.with_untracked(|f| f.len());
+        match state.current_file_index.get_untracked() {
+            Some(ci) if ci == idx => {
+                state.current_file_index.set(if len > 0 { Some(idx.min(len - 1)) } else { None });
+            }
+            Some(ci) if ci > idx => {
+                state.current_file_index.set(Some(ci - 1));
+            }
+            _ => {}
+        }
+    } else {
+        // File has partial data — keep it but stop the recording indicator
+        state.files.update(|files| {
+            if let Some(f) = files.get_mut(idx) {
+                f.is_recording = false;
+            }
+        });
+    }
+}
+
 /// Create a live LoadedFile at recording start for real-time visualization.
 /// Returns the file index where the live file was inserted.
 pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
@@ -224,6 +266,18 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         let target_scroll = (recording_time - visible_time).max(0.0);
                         state.mic_recording_target_scroll.set(target_scroll);
                     }
+                }
+            } else if is_recording && last_processed_col == 0 {
+                // No audio chunks have arrived yet — update file duration from
+                // wall-clock time so the overview can show elapsed recording time
+                // instead of static "Recording…" text.
+                if let Some(start) = state.mic_recording_start_time.get_untracked() {
+                    let elapsed = (js_sys::Date::now() - start) / 1000.0;
+                    state.files.update(|files| {
+                        if let Some(f) = files.get_mut(file_index) {
+                            f.audio.duration_secs = elapsed;
+                        }
+                    });
                 }
             }
         }

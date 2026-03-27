@@ -320,6 +320,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let bookmarks = state.bookmarks.get();
         let main_canvas_w = state.spectrogram_canvas_width.get();
         let cv = state.channel_view.get();
+        // Subscribe to recording state so overview redraws on start/stop
+        let _mic_recording = state.mic_recording.get();
         let auto_gain = state.auto_gain.get();
         let gain_db = if auto_gain { state.compute_auto_gain() } else { state.gain_db.get() };
         // Re-read canvas dimensions when sidebar layout changes
@@ -523,14 +525,29 @@ pub fn OverviewPanel() -> impl IntoView {
                             &bm_tuples, gain_db, clean_view,
                         );
                     } else if file.is_recording {
-                        // Recording but no samples yet
+                        // Recording — no samples/preview yet; show elapsed time + VU bar
                         ctx.set_fill_style_str("#1a1a1a");
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
+                        let elapsed = file.audio.duration_secs;
+                        let text = if elapsed >= 1.0 {
+                            let mins = elapsed as u32 / 60;
+                            let secs = elapsed as u32 % 60;
+                            format!("\u{25CF} Recording {}:{:02}", mins, secs)
+                        } else {
+                            "\u{25CF} Recording\u{2026}".to_string()
+                        };
                         ctx.set_fill_style_str("#f66");
                         ctx.set_font("11px system-ui");
                         ctx.set_text_align("center");
                         ctx.set_text_baseline("middle");
-                        let _ = ctx.fill_text("Recording\u{2026}", w as f64 / 2.0, h as f64 / 2.0);
+                        let _ = ctx.fill_text(&text, w as f64 / 2.0, h as f64 / 2.0);
+                        // VU meter bar at bottom edge
+                        let peak = state.mic_peak_level.get_untracked();
+                        if peak > 0.01 {
+                            let bar_w = (peak as f64 * w as f64).min(w as f64);
+                            ctx.set_fill_style_str("#f44");
+                            ctx.fill_rect(0.0, h as f64 - 2.0, bar_w, 2.0);
+                        }
                     } else {
                         ctx.set_fill_style_str("#333");
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
