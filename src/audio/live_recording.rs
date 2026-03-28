@@ -449,7 +449,16 @@ pub(crate) fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state
             let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, is_mobile, mic_name.as_deref(), &extra);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
-                if try_tauri_save(&wav_data, &filename).await {
+                if is_mobile {
+                    // Android: save directly to shared storage (Recordings/Oversample)
+                    crate::audio::wav_encoder::save_wav_to_shared(&wav_data, &filename).await;
+                    state.files.update(|files| {
+                        if let Some(f) = files.get_mut(file_index) {
+                            f.is_recording = false;
+                        }
+                    });
+                } else if try_tauri_save(&wav_data, &filename).await.is_some() {
+                    // Desktop: save to internal app data
                     state.files.update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
                             f.is_recording = false;
@@ -589,7 +598,16 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
             let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, is_mobile, mic_name.as_deref(), &extra);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
-                if try_tauri_save(&wav_data, &filename).await {
+                if is_mobile {
+                    // Android: save directly to shared storage (Recordings/Oversample)
+                    crate::audio::wav_encoder::save_wav_to_shared(&wav_data, &filename).await;
+                    state.files.update(|files| {
+                        if let Some(f) = files.get_mut(file_index) {
+                            f.is_recording = false;
+                        }
+                    });
+                } else if try_tauri_save(&wav_data, &filename).await.is_some() {
+                    // Desktop: save to internal app data
                     state.files.update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
                             f.is_recording = false;

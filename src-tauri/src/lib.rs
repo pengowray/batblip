@@ -605,6 +605,7 @@ fn native_playback_status(state: tauri::State<PlaybackMutex>) -> PlaybackStatus 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri::plugin::Builder::<_, ()>::new("usb-audio").build())
+        .plugin(tauri::plugin::Builder::<_, ()>::new("media-store").build())
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))

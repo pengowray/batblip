@@ -1053,6 +1053,17 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
     state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.scroll_offset.set(0.0);
 
+    // Copy to shared storage on Android (Recordings/Oversample) in background
+    if !saved_path.is_empty() && state.is_mobile.get_untracked() {
+        let sp = saved_path.clone();
+        let fn_ = state.files.with_untracked(|files| {
+            files.get(file_index).map(|f| f.name.clone()).unwrap_or_default()
+        });
+        wasm_bindgen_futures::spawn_local(async move {
+            crate::audio::wav_encoder::move_to_shared_storage(&sp, &fn_).await;
+        });
+    }
+
     // Async chunked spectrogram computation with final normalization
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }

@@ -3,16 +3,25 @@ fn main() {
         println!("cargo:rustc-link-lib=c++_shared");
     }
     tauri_build::try_build(
-        tauri_build::Attributes::new().plugin(
-            "usb-audio",
-            tauri_build::InlinedPlugin::new().commands(&[
-                "listUsbDevices",
-                "requestUsbPermission",
-                "getUsbDeviceInfo",
-                "openUsbDevice",
-                "closeUsbDevice",
-            ]),
-        ),
+        tauri_build::Attributes::new()
+            .plugin(
+                "usb-audio",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "listUsbDevices",
+                    "requestUsbPermission",
+                    "getUsbDeviceInfo",
+                    "openUsbDevice",
+                    "closeUsbDevice",
+                ]),
+            )
+            .plugin(
+                "media-store",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "saveToSharedStorage",
+                    "saveWavBytes",
+                    "exportFile",
+                ]),
+            ),
     )
     .expect("failed to run tauri-build");
 }

@@ -2145,6 +2145,54 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Enables the exportFile command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-exportFile",
+          "markdownDescription": "Enables the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the migrateRecordings command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-migrateRecordings",
+          "markdownDescription": "Enables the migrateRecordings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the saveToSharedStorage command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-saveToSharedStorage",
+          "markdownDescription": "Enables the saveToSharedStorage command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the saveWavBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-saveWavBytes",
+          "markdownDescription": "Enables the saveWavBytes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exportFile command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-exportFile",
+          "markdownDescription": "Denies the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the migrateRecordings command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-migrateRecordings",
+          "markdownDescription": "Denies the migrateRecordings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the saveToSharedStorage command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-saveToSharedStorage",
+          "markdownDescription": "Denies the saveToSharedStorage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the saveWavBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-saveWavBytes",
+          "markdownDescription": "Denies the saveWavBytes command without any pre-configured scope."
+        },
+        {
           "description": "Enables the closeUsbDevice command without any pre-configured scope.",
           "type": "string",
           "const": "usb-audio:allow-closeUsbDevice",

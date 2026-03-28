@@ -9,6 +9,9 @@
     "usb-audio:allow-requestUsbPermission",
     "usb-audio:allow-getUsbDeviceInfo",
     "usb-audio:allow-openUsbDevice",
-    "usb-audio:allow-closeUsbDevice"
+    "usb-audio:allow-closeUsbDevice",
+    "media-store:allow-saveToSharedStorage",
+    "media-store:allow-saveWavBytes",
+    "media-store:allow-exportFile"
   ]
 }

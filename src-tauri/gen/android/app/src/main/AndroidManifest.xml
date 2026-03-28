@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Shared storage write access for saving recordings (API 24-28 only; not needed on 29+) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <!-- USB bat microphone support (not required — works without USB host hardware) -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 

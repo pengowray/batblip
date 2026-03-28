@@ -8,13 +8,19 @@ private const val TAG = "MainActivity"
 
 class MainActivity : TauriActivity() {
   private var usbAudioPlugin: UsbAudioPlugin? = null
+  private var mediaStorePlugin: MediaStorePlugin? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
-    // Register USB audio plugin before super.onCreate (which initializes the WebView)
-    val plugin = UsbAudioPlugin(this)
-    usbAudioPlugin = plugin
-    pluginManager.load(null, "usb-audio", plugin, "{}")
+    // Register plugins before super.onCreate (which initializes the WebView)
+    val usbPlugin = UsbAudioPlugin(this)
+    usbAudioPlugin = usbPlugin
+    pluginManager.load(null, "usb-audio", usbPlugin, "{}")
+
+    val msPlugin = MediaStorePlugin(this)
+    mediaStorePlugin = msPlugin
+    pluginManager.load(null, "media-store", msPlugin, "{}")
+
     super.onCreate(savedInstanceState)
     // Note: We do NOT override the WebChromeClient. The generated RustWebChromeClient
     // already handles RESOURCE_AUDIO_CAPTURE by requesting RECORD_AUDIO + MODIFY_AUDIO_SETTINGS
@@ -29,7 +35,15 @@ class MainActivity : TauriActivity() {
   ) {
     Log.i(TAG, "onRequestPermissionsResult: code=$requestCode, results=${grantResults.toList()}")
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-    // Forward to USB audio plugin for RECORD_AUDIO permission handling
+    // Forward to plugins for permission handling
     usbAudioPlugin?.handlePermissionResult(requestCode, grantResults)
+    mediaStorePlugin?.handlePermissionResult(requestCode, grantResults)
+  }
+
+  @Suppress("DEPRECATION")
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    // Forward SAF picker results to media store plugin
+    mediaStorePlugin?.handleActivityResult(requestCode, resultCode, data)
   }
 }

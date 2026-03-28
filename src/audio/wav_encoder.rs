@@ -96,18 +96,69 @@ pub fn download_wav(samples: &[f32], sample_rate: u32, filename: &str, is_tauri:
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Try to save recording via Tauri IPC (web mode). Returns true on success.
-pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> bool {
+/// Move a WAV file from internal storage to shared storage (Recordings/Oversample)
+/// via the Kotlin MediaStore plugin. Deletes the internal copy after success.
+/// Only meaningful on Android.
+pub(crate) async fn move_to_shared_storage(internal_path: &str, filename: &str) {
+    use crate::tauri_bridge::tauri_invoke;
+
+    let args = js_sys::Object::new();
+    js_sys::Reflect::set(&args, &JsValue::from_str("internalPath"), &JsValue::from_str(internal_path)).ok();
+    js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
+    js_sys::Reflect::set(&args, &JsValue::from_str("deleteInternal"), &JsValue::TRUE).ok();
+
+    match tauri_invoke("plugin:media-store|saveToSharedStorage", &args.into()).await {
+        Ok(result) => {
+            let path = js_sys::Reflect::get(&result, &JsValue::from_str("path"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            log::info!("Moved to shared storage: {}", path);
+        }
+        Err(e) => {
+            log::warn!("Failed to move to shared storage: {}", e);
+        }
+    }
+}
+
+/// Save WAV bytes directly to shared storage (Recordings/Oversample)
+/// via the Kotlin MediaStore plugin. Skips internal storage entirely.
+/// Only meaningful on Android.
+pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
+    use crate::tauri_bridge::tauri_invoke;
+
+    let args = js_sys::Object::new();
+    js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
+
+    let array = js_sys::Uint8Array::new_with_length(wav_data.len() as u32);
+    array.copy_from(wav_data);
+    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
+
+    match tauri_invoke("plugin:media-store|saveWavBytes", &args.into()).await {
+        Ok(result) => {
+            let path = js_sys::Reflect::get(&result, &JsValue::from_str("path"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            log::info!("Saved to shared storage: {}", path);
+        }
+        Err(e) => {
+            log::warn!("Failed to save to shared storage: {}", e);
+        }
+    }
+}
+
+
+/// Try to save recording via Tauri IPC (web mode).
+/// Returns the saved path on success, or None on failure.
+pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> Option<String> {
     use crate::tauri_bridge::get_tauri_internals;
 
-    let tauri = match get_tauri_internals() {
-        Some(t) => t,
-        None => return false,
-    };
+    let tauri = get_tauri_internals()?;
 
     let invoke = match js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")) {
         Ok(f) if f.is_function() => js_sys::Function::from(f),
-        _ => return false,
+        _ => return None,
     };
 
     let args = js_sys::Object::new();
@@ -123,21 +174,22 @@ pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> bool {
             if let Ok(promise) = promise_val.dyn_into::<js_sys::Promise>() {
                 match JsFuture::from(promise).await {
                     Ok(path) => {
-                        log::info!("Saved recording to: {:?}", path.as_string());
-                        true
+                        let path_str = path.as_string();
+                        log::info!("Saved recording to: {:?}", path_str);
+                        path_str
                     }
                     Err(e) => {
                         log::error!("Tauri save failed: {:?}", e);
-                        false
+                        None
                     }
                 }
             } else {
-                false
+                None
             }
         }
         Err(e) => {
             log::error!("Tauri invoke failed: {:?}", e);
-            false
+            None
         }
     }
 }
