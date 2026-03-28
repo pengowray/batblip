@@ -2145,10 +2145,28 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancelRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-cancelRecordingEntry",
+          "markdownDescription": "Enables the cancelRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the createRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-createRecordingEntry",
+          "markdownDescription": "Enables the createRecordingEntry command without any pre-configured scope."
+        },
+        {
           "description": "Enables the exportFile command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:allow-exportFile",
           "markdownDescription": "Enables the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the finalizeRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-finalizeRecordingEntry",
+          "markdownDescription": "Enables the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
           "description": "Enables the migrateRecordings command without any pre-configured scope.",
@@ -2169,10 +2187,28 @@
           "markdownDescription": "Enables the saveWavBytes command without any pre-configured scope."
         },
         {
+          "description": "Denies the cancelRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-cancelRecordingEntry",
+          "markdownDescription": "Denies the cancelRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the createRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-createRecordingEntry",
+          "markdownDescription": "Denies the createRecordingEntry command without any pre-configured scope."
+        },
+        {
           "description": "Denies the exportFile command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:deny-exportFile",
           "markdownDescription": "Denies the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the finalizeRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-finalizeRecordingEntry",
+          "markdownDescription": "Denies the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
           "description": "Denies the migrateRecordings command without any pre-configured scope.",
