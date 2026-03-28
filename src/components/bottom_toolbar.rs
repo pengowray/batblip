@@ -967,6 +967,66 @@ pub fn BottomToolbar() -> impl IntoView {
                             </div>
                         </Show>
 
+                        // ── Pitch Shift settings ──
+                        <Show when=move || state.listen_mode.get() == ListenMode::PitchShift>
+                            <hr />
+                            <div class="layer-panel-title">"Pitch Shift"</div>
+                            <div class="layer-panel-slider-row het-text-row">
+                                <label>"Factor"</label>
+                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.ps_factor.get())}</span>
+                            </div>
+                            <div class="layer-panel-slider-row">
+                                <input type="range" min="2" max="40" step="1"
+                                    prop:value=move || state.ps_factor.get().to_string()
+                                    on:input=move |ev| {
+                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
+                                            state.ps_factor.set(val);
+                                        }
+                                    }
+                                />
+                            </div>
+                        </Show>
+
+                        // ── Phase Vocoder settings ──
+                        <Show when=move || state.listen_mode.get() == ListenMode::PhaseVocoder>
+                            <hr />
+                            <div class="layer-panel-title">"Phase Vocoder"</div>
+                            <div class="layer-panel-slider-row het-text-row">
+                                <label>"Factor"</label>
+                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.pv_factor.get())}</span>
+                            </div>
+                            <div class="layer-panel-slider-row">
+                                <input type="range" min="2" max="40" step="1"
+                                    prop:value=move || state.pv_factor.get().to_string()
+                                    on:input=move |ev| {
+                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
+                                            state.pv_factor.set(val);
+                                        }
+                                    }
+                                />
+                            </div>
+                        </Show>
+
+                        // ── Zero Crossing settings ──
+                        <Show when=move || state.listen_mode.get() == ListenMode::ZeroCrossing>
+                            <hr />
+                            <div class="layer-panel-title">"Zero Crossing"</div>
+                            <div class="layer-panel-slider-row het-text-row">
+                                <label>"Division"</label>
+                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.zc_factor.get())}</span>
+                            </div>
+                            <div class="layer-panel-slider-row">
+                                <input type="range" min="2" max="32" step="1"
+                                    prop:value=move || state.zc_factor.get().to_string()
+                                    on:input=move |ev| {
+                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
+                                            state.zc_factor.set(val);
+                                        }
+                                    }
+                                />
+                            </div>
+                        </Show>
+
                         // ── Bandpass filter ──
                         <hr />
                         <div class="layer-panel-title">"Bandpass Filter"</div>

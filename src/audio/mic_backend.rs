@@ -9,8 +9,11 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
-use crate::state::{AppState, MicAcquisitionState, MicBackend};
+use crate::state::{AppState, ListenMode, MicAcquisitionState, MicBackend};
 use crate::dsp::heterodyne::RealtimeHet;
+use crate::dsp::pitch_shift::pitch_shift_realtime;
+use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
+use crate::dsp::zc_divide::zc_divide;
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
 use std::cell::RefCell;
 
@@ -143,6 +146,53 @@ impl TauriRecordingResult {
             duration_secs,
             samples,
         })
+    }
+}
+
+// ── Live listen DSP dispatch ──────────────────────────────────────────
+
+/// Apply the selected listen mode DSP to a chunk of mic input.
+/// For Heterodyne, uses the stateful `RealtimeHet` processor.
+/// For other modes, uses the batch DSP functions directly.
+fn process_listen_audio(
+    input: &[f32],
+    mode: ListenMode,
+    sample_rate: u32,
+    rt_het: &mut RealtimeHet,
+    het_freq: f64,
+    het_cutoff: f64,
+    ps_factor: f64,
+    pv_factor: f64,
+    zc_factor: f64,
+) -> Vec<f32> {
+    match mode {
+        ListenMode::Heterodyne => {
+            let mut out = vec![0.0f32; input.len()];
+            rt_het.process(input, &mut out, sample_rate, het_freq, het_cutoff);
+            out
+        }
+        ListenMode::PitchShift => {
+            pitch_shift_realtime(input, ps_factor)
+        }
+        ListenMode::PhaseVocoder => {
+            let mut out = phase_vocoder_pitch_shift(input, pv_factor);
+            // PV inherently loses ~6 dB; apply compensatory boost
+            let boost = 10.0f32.powf(crate::audio::streaming_playback::PV_MODE_BOOST_DB as f32 / 20.0);
+            for s in &mut out {
+                *s *= boost;
+            }
+            out
+        }
+        ListenMode::ZeroCrossing => {
+            zc_divide(input, sample_rate, zc_factor as u32, false)
+        }
+        ListenMode::Normal => {
+            input.to_vec()
+        }
+        ListenMode::ReadyMic => {
+            // Silence -- mic is open but not producing audio output
+            vec![0.0f32; input.len()]
+        }
     }
 }
 
@@ -482,21 +532,30 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
             }
         }
 
-        // HET listening: process and play through speakers
+        // Listen mode: process input through selected DSP and play through speakers
         if state_cb.mic_listening.get_untracked() {
             let sr = state_cb.mic_sample_rate.get_untracked();
-            let het_freq = state_cb.listen_het_frequency.get_untracked();
-            let het_cutoff = state_cb.listen_het_cutoff.get_untracked();
-            let mut out_data = vec![0.0f32; len];
-            NATIVE_RT_HET.with(|h| {
-                h.borrow_mut().process(&input_data, &mut out_data, sr, het_freq, het_cutoff);
+            let mode = state_cb.listen_mode.get_untracked();
+            let out_data = NATIVE_RT_HET.with(|h| {
+                process_listen_audio(
+                    &input_data,
+                    mode,
+                    sr,
+                    &mut h.borrow_mut(),
+                    state_cb.listen_het_frequency.get_untracked(),
+                    state_cb.listen_het_cutoff.get_untracked(),
+                    state_cb.ps_factor.get_untracked(),
+                    state_cb.pv_factor.get_untracked(),
+                    state_cb.zc_factor.get_untracked(),
+                )
             });
 
             // Schedule playback via AudioBuffer
+            let out_len = out_data.len();
             HET_CTX.with(|ctx_cell| {
                 let ctx_ref = ctx_cell.borrow();
                 let Some(ctx) = ctx_ref.as_ref() else { return };
-                let Ok(buffer) = ctx.create_buffer(1, len as u32, sr as f32) else { return };
+                let Ok(buffer) = ctx.create_buffer(1, out_len as u32, sr as f32) else { return };
                 let _ = buffer.copy_to_channel(&out_data, 0);
                 let Ok(source) = ctx.create_buffer_source() else { return };
                 source.set_buffer(Some(&buffer));
@@ -507,7 +566,7 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
                 let start = if next_time > current_time { next_time } else { current_time };
                 let _ = source.start_with_when(start);
 
-                let duration = len as f64 / sr as f64;
+                let duration = out_len as f64 / sr as f64;
                 HET_NEXT_TIME.with(|t| *t.borrow_mut() = start + duration);
             });
         }
@@ -655,11 +714,19 @@ async fn open_web(state: &AppState) -> bool {
 
         if state_cb.mic_listening.get_untracked() {
             let sr = state_cb.mic_sample_rate.get_untracked();
-            let het_freq = state_cb.listen_het_frequency.get_untracked();
-            let het_cutoff = state_cb.listen_het_cutoff.get_untracked();
-            let mut out_data = vec![0.0f32; input_data.len()];
-            WEB_RT_HET.with(|h| {
-                h.borrow_mut().process(&input_data, &mut out_data, sr, het_freq, het_cutoff);
+            let mode = state_cb.listen_mode.get_untracked();
+            let out_data = WEB_RT_HET.with(|h| {
+                process_listen_audio(
+                    &input_data,
+                    mode,
+                    sr,
+                    &mut h.borrow_mut(),
+                    state_cb.listen_het_frequency.get_untracked(),
+                    state_cb.listen_het_cutoff.get_untracked(),
+                    state_cb.ps_factor.get_untracked(),
+                    state_cb.pv_factor.get_untracked(),
+                    state_cb.zc_factor.get_untracked(),
+                )
             });
             let _ = output_buffer.copy_to_channel(&out_data, 0);
         } else {
