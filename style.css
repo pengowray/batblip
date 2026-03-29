@@ -1681,7 +1681,6 @@ body.sidebar-resizing {
     align-items: center;
     gap: 6px;
     min-width: 0;
-    overflow: hidden;
     width: 100%;
 }
 
@@ -1732,6 +1731,7 @@ body.sidebar-resizing {
     flex: 1;
     min-width: 0;
     direction: ltr;
+    text-align: center;
 }
 
 .toolbar-info-btn {
