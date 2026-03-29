@@ -233,12 +233,25 @@ pub fn Waveform() -> impl IntoView {
         } else if let Some(file) = idx.and_then(|i| files.get(i)) {
             let sel_time = selection.map(|s| (s.time_start, s.time_end));
             let max_freq_khz = file.spectrogram.max_freq / 1000.0;
-            let total_duration = file.audio.duration_secs;
+            let buf_duration = file.audio.duration_secs;
             let sr = file.audio.sample_rate;
+
+            // During live listening, scroll_offset is in waterfall time (grows
+            // forever) but the sample buffer only holds the last ~10s.  Map scroll
+            // into the buffer's coordinate space for sample access / waveform draw.
+            let is_live = (file.is_live_listen || file.is_recording)
+                && crate::canvas::live_waterfall::is_active();
+            let (buf_scroll, wf_total_duration) = if is_live {
+                let wf_total = crate::canvas::live_waterfall::total_time();
+                let offset = (wf_total - buf_duration).max(0.0);
+                ((scroll - offset).clamp(0.0, buf_duration), wf_total)
+            } else {
+                (scroll, buf_duration)
+            };
 
             // Calculate visible sample range and read from source
             let visible_time = viewport::visible_time(display_w as f64, zoom, file.spectrogram.time_resolution);
-            let (vis_start_time, vis_end_time) = viewport::data_window(scroll, visible_time, total_duration)
+            let (vis_start_time, vis_end_time) = viewport::data_window(buf_scroll, visible_time, buf_duration)
                 .unwrap_or((0.0, 0.0));
             // Add a small margin for edge rendering
             let margin_samples = 64usize;
@@ -253,8 +266,8 @@ pub fn Waveform() -> impl IntoView {
                         &ctx,
                         bins,
                         ZC_BIN_DURATION,
-                        file.audio.duration_secs,
-                        scroll,
+                        buf_duration,
+                        buf_scroll,
                         zoom,
                         file.spectrogram.time_resolution,
                         display_w as f64,
@@ -277,14 +290,14 @@ pub fn Waveform() -> impl IntoView {
                         &waveform_buf,
                         &filtered_region,
                         sr,
-                        scroll,
+                        buf_scroll,
                         zoom,
                         file.spectrogram.time_resolution,
                         display_w as f64,
                         display_h as f64,
                         sel_time,
                         gain_db,
-                        total_duration,
+                        buf_duration,
                         region_start,
                     );
                 } else {
@@ -292,14 +305,14 @@ pub fn Waveform() -> impl IntoView {
                         &ctx,
                         &waveform_buf,
                         sr,
-                        scroll,
+                        buf_scroll,
                         zoom,
                         file.spectrogram.time_resolution,
                         display_w as f64,
                         display_h as f64,
                         sel_time,
                         gain_db,
-                        total_duration,
+                        buf_duration,
                         region_start,
                     );
                 }
@@ -308,19 +321,20 @@ pub fn Waveform() -> impl IntoView {
                     &ctx,
                     &waveform_buf,
                     sr,
-                    scroll,
+                    buf_scroll,
                     zoom,
                     file.spectrogram.time_resolution,
                     display_w as f64,
                     display_h as f64,
                     sel_time,
                     gain_db,
-                    total_duration,
+                    buf_duration,
                     region_start,
                 );
             }
 
-            // Time markers along the bottom edge
+            // Time markers along the bottom edge (use absolute scroll / waterfall
+            // duration so labels show real elapsed time, not buffer-relative time)
             if !clean_view {
                 let visible_time = (display_w as f64 / zoom) * file.spectrogram.time_resolution;
                 let clock_cfg = file.recording_start_epoch_ms()
@@ -333,7 +347,7 @@ pub fn Waveform() -> impl IntoView {
                     visible_time,
                     display_w as f64,
                     display_h as f64,
-                    file.audio.duration_secs,
+                    wf_total_duration,
                     clock_cfg,
                     state.show_clock_time.get(),
                     1.0,

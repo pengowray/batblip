@@ -94,6 +94,15 @@ pub fn total_columns() -> usize {
     })
 }
 
+/// Total elapsed time in seconds (total_columns * time_resolution).
+pub fn total_time() -> f64 {
+    WATERFALL.with(|w| {
+        w.borrow().as_ref()
+            .map(|wf| wf.total_written as f64 * wf.hop_size as f64 / wf.sample_rate as f64)
+            .unwrap_or(0.0)
+    })
+}
+
 /// Time resolution (seconds per column).
 pub fn time_resolution() -> f64 {
     WATERFALL.with(|w| {

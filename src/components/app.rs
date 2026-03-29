@@ -303,9 +303,16 @@ pub fn App() -> impl IntoView {
         // During live recording/listening, use standard scroll bounds (no negative
         // lead-in) so the waterfall grows right from the left edge instead of
         // sliding leftward from a from-here offset.
+        // Also use the waterfall's total duration (which grows indefinitely) instead
+        // of the file's duration (which is capped at ~10s by the circular buffer trim).
         let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+        let effective_duration = if is_live && crate::canvas::live_waterfall::is_active() {
+            crate::canvas::live_waterfall::total_columns() as f64 * time_res
+        } else {
+            duration
+        };
         let effective_from_here = from_here_mode && !is_live;
-        let clamped = viewport::clamp_scroll_for_mode(scroll, duration, visible_time, effective_from_here);
+        let clamped = viewport::clamp_scroll_for_mode(scroll, effective_duration, visible_time, effective_from_here);
         if (clamped - scroll).abs() > f64::EPSILON {
             state.scroll_offset.set(clamped);
         }

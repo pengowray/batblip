@@ -541,12 +541,23 @@ pub fn OverviewPanel() -> impl IntoView {
                             clean_view,
                         );
                     } else if file.is_recording && !file.audio.samples.is_empty() {
-                        // Live recording: draw waveform from snapshotted samples
+                        // Live recording: draw waveform from snapshotted samples.
+                        // During listening, scroll is in waterfall time but the buffer
+                        // only holds the last ~10s — map to buffer-relative coords.
+                        let is_live_wf = (file.is_live_listen || file.is_recording)
+                            && crate::canvas::live_waterfall::is_active();
+                        let buf_scroll = if is_live_wf {
+                            let wf_total = crate::canvas::live_waterfall::total_time();
+                            let offset = (wf_total - file.audio.duration_secs).max(0.0);
+                            (scroll - offset).clamp(0.0, file.audio.duration_secs)
+                        } else {
+                            scroll
+                        };
                         draw_overview_waveform(
                             &ctx, canvas, &file.audio.samples,
                             file.audio.sample_rate,
                             file.spectrogram.time_resolution,
-                            scroll, zoom, main_canvas_w,
+                            buf_scroll, zoom, main_canvas_w,
                             &bm_tuples, gain_db, clean_view,
                         );
                     } else if file.is_recording {
@@ -555,7 +566,11 @@ pub fn OverviewPanel() -> impl IntoView {
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
                         let is_listen = file.is_live_listen;
                         let label = if is_listen { "Listening" } else { "Recording" };
-                        let elapsed = file.audio.duration_secs;
+                        let elapsed = if is_listen && crate::canvas::live_waterfall::is_active() {
+                            crate::canvas::live_waterfall::total_time()
+                        } else {
+                            file.audio.duration_secs
+                        };
                         let text = if elapsed >= 1.0 {
                             let mins = elapsed as u32 / 60;
                             let secs = elapsed as u32 % 60;
@@ -610,8 +625,16 @@ pub fn OverviewPanel() -> impl IntoView {
                 }
             }
 
-            // Time markers along the bottom edge (full file duration)
+            // Time markers along the bottom edge (full duration — use waterfall
+            // total when live so the overview time axis grows with the recording)
             if !clean_view {
+                let is_live_wf = (file.is_live_listen || file.is_recording)
+                    && crate::canvas::live_waterfall::is_active();
+                let ov_duration = if is_live_wf {
+                    crate::canvas::live_waterfall::total_time()
+                } else {
+                    file.audio.duration_secs
+                };
                 let clock_cfg = file.recording_start_epoch_ms()
                     .map(|ms| crate::canvas::time_markers::ClockTimeConfig {
                         recording_start_epoch_ms: ms,
@@ -619,10 +642,10 @@ pub fn OverviewPanel() -> impl IntoView {
                 crate::canvas::time_markers::draw_time_markers(
                     &ctx,
                     0.0,
-                    file.audio.duration_secs,
+                    ov_duration,
                     w as f64,
                     h as f64,
-                    file.audio.duration_secs,
+                    ov_duration,
                     clock_cfg,
                     state.show_clock_time.get(),
                     1.0,
@@ -633,10 +656,14 @@ pub fn OverviewPanel() -> impl IntoView {
 
     // ── Mouse handlers ────────────────────────────────────────────────────────
 
-    // Get the true total duration (timeline or single file)
+    // Get the true total duration (timeline, live waterfall, or single file)
     let file_duration = move || -> f64 {
         if let Some(ref tl) = state.active_timeline.get_untracked() {
             return tl.total_duration_secs;
+        }
+        let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+        if is_live && crate::canvas::live_waterfall::is_active() {
+            return crate::canvas::live_waterfall::total_time();
         }
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
@@ -838,11 +865,17 @@ pub fn OverviewPanel() -> impl IntoView {
                     let duration = if let Some(ref tl) = state.active_timeline.get_untracked() {
                         tl.total_duration_secs
                     } else {
-                        let files = state.files.get_untracked();
-                        let idx = state.current_file_index.get_untracked();
-                        idx.and_then(|i| files.get(i))
-                            .map(|f| f.audio.duration_secs)
-                            .unwrap_or(0.0)
+                        let is_live = state.mic_recording.get_untracked()
+                            || state.mic_listening.get_untracked();
+                        if is_live && crate::canvas::live_waterfall::is_active() {
+                            crate::canvas::live_waterfall::total_time()
+                        } else {
+                            let files = state.files.get_untracked();
+                            let idx = state.current_file_index.get_untracked();
+                            idx.and_then(|i| files.get(i))
+                                .map(|f| f.audio.duration_secs)
+                                .unwrap_or(0.0)
+                        }
                     };
                     let pct = if duration > 0.0 {
                         (playhead / duration * 100.0).clamp(0.0, 100.0)
