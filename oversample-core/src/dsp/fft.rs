@@ -1,5 +1,5 @@
 use crate::canvas::colors::magnitude_to_greyscale;
-use crate::canvas::spectrogram_renderer::PreRendered;
+use crate::types::PreRendered;
 use crate::audio::source::ChannelView;
 use crate::types::{AudioData, PreviewImage, SpectrogramColumn, SpectrogramData};
 use realfft::RealFftPlanner;

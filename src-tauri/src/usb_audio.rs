@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Portions of this file are derived from batgizmo (nativeusb.cpp)
+// Copyright (c) 2025 John Mears — MIT License
+// https://github.com/jmears63/batgizmo-app-public
+//
 //! Raw USB isochronous audio streaming for Android.
 //!
 //! Uses Linux's usbdevice_fs ioctl interface to perform isochronous transfers

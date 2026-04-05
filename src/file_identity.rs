@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 use sha2::{Sha256, Digest};
 use leptos::prelude::{Update, WithUntracked};
 use crate::annotations::FileIdentity;

@@ -22,7 +22,7 @@ impl Colormap2D {
 }
 
 /// Convert HSL (h in degrees 0–360, s and l in 0.0–1.0) to RGB [0–255].
-pub(crate) fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
+pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h_prime = h / 60.0;
     let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());

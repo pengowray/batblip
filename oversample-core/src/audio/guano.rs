@@ -105,9 +105,12 @@ pub struct RecordingGuanoExtra {
     pub connection_type: Option<String>,
 }
 
-/// Build GUANO metadata for a recording (WASM side).
+/// Build GUANO metadata for a recording.
 /// Consolidates the duplicated inline GUANO construction from wav_encoder,
 /// live_recording, etc. into a single shared function.
+///
+/// `timestamp` should be an ISO 8601 string with UTC offset (e.g. "2024-03-15T10:30:00+10:00").
+/// The caller is responsible for computing this from the current time and recording duration.
 pub fn build_recording_guano(
     sample_rate: u32,
     duration_secs: f64,
@@ -116,30 +119,8 @@ pub fn build_recording_guano(
     is_mobile: bool,
     mic_device_name: Option<&str>,
     extra: &RecordingGuanoExtra,
+    timestamp: &str,
 ) -> GuanoMetadata {
-    let now = js_sys::Date::new_0();
-    let start_ms = now.get_time() - (duration_secs * 1000.0);
-    let start = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(start_ms));
-
-    // Build ISO 8601 timestamp with UTC offset (GUANO spec strongly recommends this)
-    let tz_offset_minutes = start.get_timezone_offset() as i32; // minutes from UTC (e.g. UTC-5 = 300)
-    let offset_total = -tz_offset_minutes; // negate: UTC-5 → -300 → we want -05:00
-    let offset_sign = if offset_total < 0 { '-' } else { '+' };
-    let offset_abs = offset_total.unsigned_abs();
-    let offset_h = offset_abs / 60;
-    let offset_m = offset_abs % 60;
-    let timestamp = format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-        start.get_full_year(),
-        start.get_month() + 1,
-        start.get_date(),
-        start.get_hours(),
-        start.get_minutes(),
-        start.get_seconds(),
-        offset_sign,
-        offset_h,
-        offset_m,
-    );
     let version = env!("CARGO_PKG_VERSION");
     let model = if is_tauri && is_mobile {
         "Android"

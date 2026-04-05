@@ -482,6 +482,7 @@ pub fn App() -> impl IntoView {
                 crate::canvas::tile_cache::yield_to_browser().await;
                 let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
                     &samples, sample_rate, 0.5, // 500ms from file start
+                    crate::canvas::tile_cache::yield_to_browser,
                 ).await;
                 if let Some(f) = floor {
                     state.display_auto_noise_floor.set(Some(f));

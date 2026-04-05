@@ -1,16 +1,7 @@
-pub mod agc;
-pub mod bit_analysis;
-pub mod fft;
-pub mod filters;
-pub mod harmonics;
-pub mod heterodyne;
-pub mod notch;
-pub mod phase_vocoder;
-pub mod pitch_shift;
-pub mod spectral_sub;
-pub mod zc_divide;
-pub mod wsnr;
-pub mod zero_crossing;
-pub mod chromagram;
-pub mod psd;
-pub mod pulse_detect;
+// Re-export all DSP modules from oversample-core.
+// Individual module re-exports so `crate::dsp::fft`, `crate::dsp::filters`, etc. work.
+pub use oversample_core::dsp::{
+    agc, bit_analysis, fft, filters, harmonics, heterodyne, notch,
+    phase_vocoder, pitch_shift, spectral_sub, zc_divide, wsnr,
+    zero_crossing, chromagram, psd, pulse_detect,
+};

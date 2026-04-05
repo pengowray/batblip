@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 //! Streaming audio sources — streams decoded samples from a file on demand.
 //!
 //! For audio files whose decoded size exceeds a threshold (~512 MB), only the

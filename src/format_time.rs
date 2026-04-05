@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 //! Centralized time formatting for the entire app.
 //!
 //! All time values are in seconds. Two main entry points:
@@ -132,6 +133,36 @@ pub fn format_duration_compact(seconds: f64) -> String {
 /// Example: `5.000–10.500s`
 pub fn format_time_range(start: f64, end: f64, precision: u8) -> String {
     format!("{}–{}", format_time_display(start, precision), format_time_display(end, precision))
+}
+
+// ── GUANO timestamp helper ─────────────────────────────────────────────
+
+/// Build an ISO 8601 timestamp with local timezone offset for a recording
+/// that started `duration_secs` ago.
+/// Returns e.g. "2024-03-15T10:30:00+10:00".
+pub fn recording_timestamp(duration_secs: f64) -> String {
+    let now = js_sys::Date::new_0();
+    let start_ms = now.get_time() - (duration_secs * 1000.0);
+    let start = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(start_ms));
+
+    let tz_offset_minutes = start.get_timezone_offset() as i32;
+    let offset_total = -tz_offset_minutes;
+    let offset_sign = if offset_total < 0 { '-' } else { '+' };
+    let offset_abs = offset_total.unsigned_abs();
+    let offset_h = offset_abs / 60;
+    let offset_m = offset_abs % 60;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+        start.get_full_year(),
+        start.get_month() + 1,
+        start.get_date(),
+        start.get_hours(),
+        start.get_minutes(),
+        start.get_seconds(),
+        offset_sign,
+        offset_h,
+        offset_m,
+    )
 }
 
 // ── Private adaptive helpers ────────────────────────────────────────────

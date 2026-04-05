@@ -255,15 +255,8 @@ pub enum SpectrogramDisplay {
     Phase,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum FlowColorScheme {
-    #[default]
-    RedBlue,
-    CoolWarm,
-    TealOrange,
-    PurpleGreen,
-    Spectral,
-}
+// FlowColorScheme is defined in oversample-core and re-exported here for backward compatibility.
+pub use oversample_core::types::FlowColorScheme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum RightSidebarTab {

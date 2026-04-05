@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 use crate::canvas::colors::{
     magnitude_to_greyscale, magnitude_to_db,
     db_to_greyscale, flow_rgb_scheme, coherence_rgb, phase_rgb,
@@ -21,54 +22,8 @@ pub use crate::canvas::overlays::{
     pixel_to_time_freq, draw_notch_bands, draw_tile_debug_overlay, draw_annotations,
 };
 
-/// Pre-rendered spectrogram image data.
-///
-/// Normal spectrogram tiles store `db_data` (f32 dB values per pixel) so that
-/// gain, contrast, and dynamic range can be adjusted at render time without
-/// regenerating tiles.  Flow tiles store `db_data` + `flow_shifts` for deferred
-/// compositing.  Coherence and chromagram tiles store pre-colored `pixels`
-/// (RGBA u8) because their color encoding is coupled to the data.
-pub struct PreRendered {
-    pub width: u32,
-    pub height: u32,
-    /// RGBA pixel data (4 bytes/pixel).  Used by coherence, chromagram
-    /// tiles and legacy non-tiled rendering.  Empty for dB tiles.
-    pub pixels: Vec<u8>,
-    /// dB values per pixel (one f32 per pixel, row-major, row 0 = highest freq).
-    /// Used by normal spectrogram tiles and flow tiles.  Empty for pre-colored tiles.
-    pub db_data: Vec<f32>,
-    /// Per-pixel frequency shift values (same layout as db_data).
-    /// Non-empty only for flow tiles.  Used with `db_data` for deferred flow compositing.
-    pub flow_shifts: Vec<f32>,
-}
-
-/// Display settings for converting dB tile data to pixels at render time.
-#[derive(Clone, Copy)]
-pub struct SpectDisplaySettings {
-    /// dB floor (e.g. -80.0).  Values below this map to black.
-    pub floor_db: f32,
-    /// dB range (e.g. 80.0).  `floor_db + range_db` = ceiling.
-    pub range_db: f32,
-    /// Gamma curve (1.0 = linear, <1 = brighter darks, >1 = more contrast).
-    pub gamma: f32,
-    /// Additive dB gain offset applied before floor/range mapping.
-    pub gain_db: f32,
-}
-
-impl Default for SpectDisplaySettings {
-    fn default() -> Self {
-        Self { floor_db: -80.0, range_db: 80.0, gamma: 1.0, gain_db: 0.0 }
-    }
-}
-
-impl PreRendered {
-    /// Total memory footprint in bytes (for LRU cache accounting).
-    pub fn byte_len(&self) -> usize {
-        self.pixels.len()
-            + self.db_data.len() * std::mem::size_of::<f32>()
-            + self.flow_shifts.len() * std::mem::size_of::<f32>()
-    }
-}
+// PreRendered and SpectDisplaySettings are defined in oversample-core::types.
+pub use crate::types::{PreRendered, SpectDisplaySettings};
 
 /// Pre-render the entire spectrogram to an RGBA pixel buffer.
 /// Width = number of columns, Height = number of frequency bins.

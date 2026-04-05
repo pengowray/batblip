@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 //! Progressive tile cache for spectrogram rendering.
 //!
 //! Google Maps-style LOD system: each LOD level has its own tile index space.

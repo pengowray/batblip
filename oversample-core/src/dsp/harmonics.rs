@@ -585,7 +585,7 @@ pub fn compute_tile_phase_data(
     col_count: usize,
     fft_size: usize,
     hop_size: usize,
-) -> crate::canvas::spectrogram_renderer::PreRendered {
+) -> crate::types::PreRendered {
     use crate::canvas::colors::magnitude_to_db;
 
     // Compute complex STFT frames. We need col_count + 1 frames to produce
@@ -652,7 +652,7 @@ pub fn compute_tile_phase_data(
         }
     }
 
-    crate::canvas::spectrogram_renderer::PreRendered {
+    crate::types::PreRendered {
         width,
         height,
         pixels: Vec::new(),
@@ -671,7 +671,7 @@ pub fn compute_tile_phase_angle_data(
     col_count: usize,
     fft_size: usize,
     hop_size: usize,
-) -> crate::canvas::spectrogram_renderer::PreRendered {
+) -> crate::types::PreRendered {
     use crate::canvas::colors::magnitude_to_db;
 
     let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
@@ -735,7 +735,7 @@ pub fn compute_tile_phase_angle_data(
         flow_shifts = new_shifts;
     }
 
-    crate::canvas::spectrogram_renderer::PreRendered {
+    crate::types::PreRendered {
         width: final_width,
         height,
         pixels: Vec::new(),

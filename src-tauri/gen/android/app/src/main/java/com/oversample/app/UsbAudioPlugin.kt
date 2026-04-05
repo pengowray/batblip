@@ -1,3 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// USB permission and device enumeration patterns derived from
+// batgizmo (UsbService.kt) — Copyright (c) 2025 John Mears, MIT License
+// https://github.com/jmears63/batgizmo-app-public
+//
+// batgizmo's USB descriptor parsing draws on code from the Android Open Source
+// Project (AOSP) — Copyright (C) 2017 The Android Open Source Project,
+// Apache License 2.0. The descriptor parser in this file is an independent
+// implementation but follows similar architectural patterns.
+
 package com.oversample.app
 
 import android.Manifest

@@ -559,6 +559,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
             .unwrap_or_else(|| generate_recording_name()),
         state.is_tauri, state.is_mobile.get_untracked(), mic_name.as_deref(),
         &crate::audio::guano::RecordingGuanoExtra { connection_type: conn_type.clone() },
+        &crate::format_time::recording_timestamp(duration_secs),
     );
 
     let samples: Arc<Vec<f32>> = samples.into();

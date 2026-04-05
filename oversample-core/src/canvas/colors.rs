@@ -144,7 +144,7 @@ pub fn flow_rgb(grey: u8, shift: f32, intensity_gate: f32, flow_gate: f32, opaci
 
 // ── Selectable flow color schemes ────────────────────────────────────────────
 
-use crate::state::FlowColorScheme;
+use crate::types::FlowColorScheme;
 
 /// Dispatch to the selected flow color scheme.
 /// Phase and PhaseCoherence algorithms ignore this and use their own color functions.

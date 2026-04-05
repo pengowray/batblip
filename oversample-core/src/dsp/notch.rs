@@ -355,24 +355,18 @@ fn running_median(data: &[f64], half_w: usize) -> Vec<f64> {
 
 // ── Async detection wrapper ─────────────────────────────────────────────────
 
-use wasm_bindgen_futures::JsFuture;
-
-async fn yield_to_browser() {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        if let Some(w) = web_sys::window() {
-            let _ = w.set_timeout_with_callback(&resolve);
-        }
-    });
-    let _ = JsFuture::from(promise).await;
-}
-
-/// Async version of detect_noise_bands that yields to the browser
-/// between STFT frames to keep the UI responsive.
-pub async fn detect_noise_bands_async(
+/// Async version of detect_noise_bands that yields periodically via a
+/// caller-supplied future to keep the UI responsive.
+pub async fn detect_noise_bands_async<F, Fut>(
     samples: &[f32],
     sample_rate: u32,
     config: &DetectionConfig,
-) -> Vec<NoiseBand> {
+    yield_now: F,
+) -> Vec<NoiseBand>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let fft_size = if sample_rate >= 192_000 { 8192 } else { 4096 };
     let hop_size = fft_size / 2;
     let num_bins = fft_size / 2 + 1;
@@ -416,7 +410,7 @@ pub async fn detect_noise_bands_async(
         pos += hop_size;
         frame_count += 1;
         if frame_count.is_multiple_of(yield_interval) {
-            yield_to_browser().await;
+            yield_now().await;
         }
     }
 

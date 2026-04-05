@@ -108,8 +108,8 @@ pub fn pre_render_chromagram_columns(
     freq_resolution: f64,
     max_class: f32,
     max_note: f32,
-) -> crate::canvas::spectrogram_renderer::PreRendered {
-    use crate::canvas::spectrogram_renderer::PreRendered;
+) -> crate::types::PreRendered {
+    use crate::types::PreRendered;
 
     if stft_columns.is_empty() {
         return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };

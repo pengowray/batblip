@@ -931,7 +931,9 @@ fn start_psd_compute(
 
     spawn_local(async move {
         let result = psd::compute_psd_async(
-            &samples, sample_rate, nfft, peak_freq_range, generation, compute_gen,
+            &samples, sample_rate, nfft, peak_freq_range,
+            crate::canvas::tile_cache::yield_to_browser,
+            &move || compute_gen.get_untracked() != generation,
         ).await;
         if compute_gen.get_untracked() != generation {
             return;

@@ -1,12 +1,12 @@
+// Re-export modules from oversample-core.
+pub use oversample_core::audio::{source, guano, loader};
+
 pub mod export;
 pub mod peak;
-pub mod guano;
 pub mod live_recording;
-pub mod loader;
 pub mod mic_backend;
 pub mod microphone;
 pub mod playback;
-pub mod source;
 pub mod streaming_playback;
 pub mod streaming_mp3;
 pub mod streaming_ogg;

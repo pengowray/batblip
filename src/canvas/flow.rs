@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 use crate::canvas::colors::{
     magnitude_to_greyscale, magnitude_to_db, flow_rgb,
 };

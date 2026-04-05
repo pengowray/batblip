@@ -55,12 +55,17 @@ fn fft_size_for_rate(sample_rate: u32) -> usize {
     if sample_rate >= 192_000 { 8192 } else { 4096 }
 }
 
-/// Async version that yields to the browser to keep the UI responsive.
-pub async fn learn_noise_floor_async(
+/// Async version that yields periodically via a caller-supplied future.
+pub async fn learn_noise_floor_async<F, Fut>(
     samples: &[f32],
     sample_rate: u32,
     analysis_duration_secs: f64,
-) -> Option<NoiseFloor> {
+    yield_now: F,
+) -> Option<NoiseFloor>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let fft_size = fft_size_for_rate(sample_rate);
     let hop_size = fft_size / 2;
     let num_bins = fft_size / 2 + 1;
@@ -105,7 +110,7 @@ pub async fn learn_noise_floor_async(
         pos += hop_size;
         frame_count += 1;
         if frame_count.is_multiple_of(yield_interval) {
-            yield_to_browser().await;
+            yield_now().await;
         }
     }
 
@@ -122,16 +127,6 @@ pub async fn learn_noise_floor_async(
         analysis_duration_secs: actual_duration,
         frame_count: count,
     })
-}
-
-async fn yield_to_browser() {
-    use wasm_bindgen_futures::JsFuture;
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        if let Some(w) = web_sys::window() {
-            let _ = w.set_timeout_with_callback(&resolve);
-        }
-    });
-    let _ = JsFuture::from(promise).await;
 }
 
 // ── Spectral subtraction application ────────────────────────────────────────

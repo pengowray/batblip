@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 pub const PLAY_FROM_HERE_FRACTION: f64 = 0.10;
 pub const FOLLOW_CURSOR_FRACTION: f64 = 0.20;
 pub const FOLLOW_CURSOR_EDGE_FRACTION: f64 = 0.80;

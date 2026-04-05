@@ -147,7 +147,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                 ..DetectionConfig::default()
             };
 
-            let bands = notch::detect_noise_bands_async(&samples, sample_rate, &config).await;
+            let bands = notch::detect_noise_bands_async(&samples, sample_rate, &config, crate::canvas::tile_cache::yield_to_browser).await;
             let count = bands.len();
             state.notch_bands.set(bands);
             if count > 0 {
@@ -213,6 +213,7 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             let analysis_secs = if duration > 30.0 { 10.0 } else { duration };
             let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
                 &samples, sample_rate, analysis_secs,
+                crate::canvas::tile_cache::yield_to_browser,
             ).await;
             if let Some(f) = floor {
                 state.noise_reduce_floor.set(Some(f));

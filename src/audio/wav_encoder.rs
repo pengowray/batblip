@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -50,6 +51,7 @@ pub(crate) fn encode_wav_with_guano(
 
     let guano_meta = guano::build_recording_guano(
         sample_rate, duration_secs, filename, is_tauri, is_mobile, mic_device_name, extra,
+        &crate::format_time::recording_timestamp(duration_secs),
     );
     guano::append_guano_chunk(&mut wav_data, &guano_meta.to_text());
     wav_data

@@ -3,7 +3,6 @@
 //! Computes averaged periodograms over overlapping Hann-windowed segments,
 //! with peak detection and bandwidth analysis (-6 dB, -10 dB).
 
-use leptos::prelude::GetUntracked;
 use realfft::RealFftPlanner;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -154,17 +153,23 @@ pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize, peak_freq_ran
     }
 }
 
-/// Async version that yields to the browser every `yield_interval` frames.
-pub async fn compute_psd_async(
+/// Async version that yields periodically via a caller-supplied future.
+///
+/// `yield_now` is called every 64 frames to let the caller yield to the browser
+/// (or do nothing in non-wasm contexts). `is_cancelled` is checked after each
+/// yield; return `true` to abort early.
+pub async fn compute_psd_async<F, Fut>(
     samples: &[f32],
     sample_rate: u32,
     nfft: usize,
     peak_freq_range: Option<(f64, f64)>,
-    generation: u32,
-    gen_signal: leptos::prelude::RwSignal<u32>,
-) -> Option<PsdResult> {
-    use wasm_bindgen::prelude::*;
-
+    yield_now: F,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Option<PsdResult>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let n_bins = nfft / 2 + 1;
     let hop = nfft / 2;
     let window = hann_window(nfft);
@@ -195,21 +200,9 @@ pub async fn compute_psd_async(
         pos += hop;
 
         if frame_count.is_multiple_of(yield_interval) {
-            // Yield to browser
-            let promise = js_sys::Promise::new(&mut |resolve, _| {
-                let win = web_sys::window().unwrap();
-                let cb = Closure::once_into_js(move || {
-                    let _ = resolve.call0(&JsValue::NULL);
-                });
-                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.unchecked_ref(),
-                    0,
-                );
-            });
-            let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+            yield_now().await;
 
-            // Check cancellation
-            if gen_signal.get_untracked() != generation {
+            if is_cancelled() {
                 return None;
             }
         }

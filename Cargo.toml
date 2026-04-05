@@ -1,15 +1,17 @@
 [workspace]
-members = [".", "src-tauri", "xc-lib", "xc-cli"]
+members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core"]
 
 [package]
 name = "oversample"
-version = "0.3.17"
+version = "0.4.0"
 edition = "2021"
+license = "GPL-3.0-only"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+oversample-core = { path = "oversample-core" }
 leptos = { version = "0.8", features = ["csr"] }
 web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",
