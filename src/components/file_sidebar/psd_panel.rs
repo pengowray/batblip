@@ -4,6 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
+use crate::audio::playback::effective_selection;
 use crate::state::{AppState, RightSidebarTab};
 use crate::dsp::psd::{self, PsdResult};
 use crate::annotations::{
@@ -11,6 +12,14 @@ use crate::annotations::{
     generate_uuid, now_iso8601,
 };
 use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PsdFreqRangeMode {
+    Auto,
+    All,
+    Selection,
+    FF,
+}
 
 /// Colors for peak markers (primary, then secondary peaks).
 const PEAK_COLORS: &[&str] = &[
@@ -40,7 +49,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
     let file_is_long = RwSignal::new(false);
     let using_selection = RwSignal::new(false);
     let log_scale = RwSignal::new(false);
-    let freq_range_enabled = RwSignal::new(false);
+    let freq_range_mode = RwSignal::new(PsdFreqRangeMode::Auto);
 
     // Trigger recomputation when tab is active and inputs change
     Effect::new(move || {
@@ -60,7 +69,10 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let _eq = state.psd_apply_eq.get();
         let _notch = state.psd_apply_notch.get();
         let _nr = state.psd_apply_nr.get();
-        let _fr = freq_range_enabled.get();
+        let _fr = freq_range_mode.get();
+        // Subscribe to selection/annotation changes when freq range mode cares
+        let _ = state.selection.get();
+        let _ = state.selected_annotation_ids.get();
 
         // Subscribe to relevant filter params when toggles are on
         if state.psd_apply_eq.get_untracked() {
@@ -97,7 +109,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 analysis_is_full,
                 file_is_long,
                 using_selection,
-                freq_range_enabled,
+                freq_range_mode,
                 false,
             );
         });
@@ -267,9 +279,9 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
     view! {
         <div class="sidebar-panel" on:mouseleave=on_panel_leave>
-            // Controls: NFFT selector + log scale toggle
+            // Controls
             <div class="setting-group">
-                <div class="setting-group-title">"Power Spectral Density"</div>
+                <div class="setting-group-title">"Power Spectral Density (PSD)"</div>
                 <div class="psd-controls-row">
                     <label class="setting-label">"NFFT:"</label>
                     <select
@@ -289,131 +301,142 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                             }
                         }).collect::<Vec<_>>()}
                     </select>
-                    <label class="setting-label" style="margin-left:8px;display:flex;align-items:center;gap:3px;cursor:pointer"
-                        title="Toggle logarithmic frequency scale">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || log_scale.get()
-                            on:change=move |ev: web_sys::Event| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                log_scale.set(input.checked());
-                            }
-                        />
-                        "Log"
-                    </label>
+                    // Log / Linear radio buttons
+                    <div class="psd-btn-group" style="margin-left:auto">
+                        <button
+                            class=move || if !log_scale.get() { "psd-btn psd-btn-active" } else { "psd-btn" }
+                            on:click=move |_| log_scale.set(false)
+                            title="Linear frequency scale"
+                        >"Linear"</button>
+                        <button
+                            class=move || if log_scale.get() { "psd-btn psd-btn-active" } else { "psd-btn" }
+                            on:click=move |_| log_scale.set(true)
+                            title="Logarithmic frequency scale"
+                        >"Log"</button>
+                    </div>
                 </div>
             </div>
 
-            // Filter toggles
+            // Filter toggle buttons + Freq range
             <div class="psd-filter-toggles">
-                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
-                    title="Apply EQ filter to PSD">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || state.psd_apply_eq.get()
-                        prop:disabled=move || !state.filter_enabled.get()
-                        on:change=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.psd_apply_eq.set(input.checked());
+                <div class="psd-btn-group">
+                    <button
+                        class=move || {
+                            if !state.filter_enabled.get() { "psd-btn psd-btn-disabled" }
+                            else if state.psd_apply_eq.get() { "psd-btn psd-btn-active" }
+                            else { "psd-btn" }
                         }
-                    />
-                    "EQ"
-                </label>
-                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
-                    title="Apply notch filter to PSD">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || state.psd_apply_notch.get()
-                        prop:disabled=move || !state.notch_enabled.get()
-                        on:change=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.psd_apply_notch.set(input.checked());
+                        on:click=move |_| {
+                            if state.filter_enabled.get_untracked() {
+                                state.psd_apply_eq.update(|v| *v = !*v);
+                            }
                         }
-                    />
-                    "Notch"
-                </label>
-                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
-                    title="Apply noise reduction to PSD">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || state.psd_apply_nr.get()
-                        prop:disabled=move || !state.noise_reduce_enabled.get()
-                        on:change=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.psd_apply_nr.set(input.checked());
+                        title="Apply EQ filter to PSD"
+                    >"EQ"</button>
+                    <button
+                        class=move || {
+                            if !state.notch_enabled.get() { "psd-btn psd-btn-disabled" }
+                            else if state.psd_apply_notch.get() { "psd-btn psd-btn-active" }
+                            else { "psd-btn" }
                         }
-                    />
-                    "NR"
-                </label>
-                <label class="setting-label" style="display:flex;align-items:center;gap:3px;cursor:pointer"
-                    title="Restrict peak detection to the selected frequency range">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || freq_range_enabled.get()
-                        prop:disabled=move || {
-                            let sel = state.selection.get();
-                            sel.and_then(|s| match (s.freq_low, s.freq_high) {
+                        on:click=move |_| {
+                            if state.notch_enabled.get_untracked() {
+                                state.psd_apply_notch.update(|v| *v = !*v);
+                            }
+                        }
+                        title="Apply notch filter to PSD"
+                    >"Notch"</button>
+                    <button
+                        class=move || {
+                            if !state.noise_reduce_enabled.get() { "psd-btn psd-btn-disabled" }
+                            else if state.psd_apply_nr.get() { "psd-btn psd-btn-active" }
+                            else { "psd-btn" }
+                        }
+                        on:click=move |_| {
+                            if state.noise_reduce_enabled.get_untracked() {
+                                state.psd_apply_nr.update(|v| *v = !*v);
+                            }
+                        }
+                        title="Apply noise reduction to PSD"
+                    >"NR"</button>
+                </div>
+                <span class="psd-controls-sep"></span>
+                <label class="setting-label" style="font-size:10px;color:#888">"Freq range"</label>
+                <div class="psd-btn-group">
+                    <button
+                        class=move || if freq_range_mode.get() == PsdFreqRangeMode::Auto { "psd-btn psd-btn-active" } else { "psd-btn" }
+                        on:click=move |_| freq_range_mode.set(PsdFreqRangeMode::Auto)
+                        title="Auto: use selection if available, otherwise use frequency focus range"
+                    >"Auto"</button>
+                    <button
+                        class=move || if freq_range_mode.get() == PsdFreqRangeMode::All { "psd-btn psd-btn-active" } else { "psd-btn" }
+                        on:click=move |_| freq_range_mode.set(PsdFreqRangeMode::All)
+                        title="No frequency range restriction for peak detection"
+                    >"All"</button>
+                    <button
+                        class=move || {
+                            let mode = freq_range_mode.get();
+                            let has_sel = effective_selection(&state).and_then(|s| match (s.freq_low, s.freq_high) {
                                 (Some(lo), Some(hi)) if lo < hi => Some(()),
                                 _ => None,
-                            }).is_none()
+                            }).is_some();
+                            if mode == PsdFreqRangeMode::Selection && has_sel { "psd-btn psd-btn-active" }
+                            else if mode == PsdFreqRangeMode::Selection { "psd-btn psd-btn-active psd-btn-dimmed" }
+                            else if !has_sel { "psd-btn psd-btn-disabled" }
+                            else { "psd-btn" }
                         }
-                        on:change=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            freq_range_enabled.set(input.checked());
+                        on:click=move |_| freq_range_mode.set(PsdFreqRangeMode::Selection)
+                        title="Use selection or selected annotation frequency range"
+                    >"Sel"</button>
+                    <button
+                        class=move || {
+                            let mode = freq_range_mode.get();
+                            let has_ff = state.hfr_enabled.get();
+                            if mode == PsdFreqRangeMode::FF && has_ff { "psd-btn psd-btn-active" }
+                            else if mode == PsdFreqRangeMode::FF { "psd-btn psd-btn-active psd-btn-dimmed" }
+                            else if !has_ff { "psd-btn psd-btn-disabled" }
+                            else { "psd-btn" }
                         }
-                    />
-                    "Freq range"
-                </label>
+                        on:click=move |_| freq_range_mode.set(PsdFreqRangeMode::FF)
+                        title="Use frequency focus (HFR) range"
+                    >"FF"</button>
+                </div>
             </div>
 
-            // Scope badge
+            // Scope badge — uses fixed-height container to prevent layout shift
+            <div class="psd-status-row">
             {move || {
                 if is_computing.get() {
-                    view! { <div class="sidebar-panel-empty">"Computing PSD\u{2026}"</div> }.into_any()
+                    view! { <span class="psd-status-text">"Computing\u{2026}"</span> }.into_any()
                 } else if using_selection.get() && psd_result.get().is_some() {
-                    view! {
-                        <div class="analysis-scope-row">
-                            <span class="analysis-scope-badge">"Selection"</span>
-                        </div>
-                    }.into_any()
+                    view! { <span class="analysis-scope-badge">"Selection"</span> }.into_any()
                 } else if file_is_long.get() && !analysis_is_full.get() && psd_result.get().is_some() {
                     view! {
-                        <div class="analysis-scope-row">
-                            <span class="analysis-scope-badge">"First 30s"</span>
-                            <button
-                                class="analysis-full-btn"
-                                on:click=move |_| {
-                                    spawn_local(async move {
-                                        yield_to_browser().await;
-                                        start_psd_compute(
-                                            state,
-                                            psd_result,
-                                            is_computing,
-                                            compute_gen,
-                                            analysis_is_full,
-                                            file_is_long,
-                                            using_selection,
-                                            freq_range_enabled,
-                                            true,
-                                        );
-                                    });
-                                }
-                            >
-                                "Analyze full file"
-                            </button>
-                        </div>
+                        <span class="analysis-scope-badge">"First 30s"</span>
+                        <button
+                            class="analysis-full-btn"
+                            on:click=move |_| {
+                                spawn_local(async move {
+                                    yield_to_browser().await;
+                                    start_psd_compute(
+                                        state,
+                                        psd_result,
+                                        is_computing,
+                                        compute_gen,
+                                        analysis_is_full,
+                                        file_is_long,
+                                        using_selection,
+                                        freq_range_mode,
+                                        true,
+                                    );
+                                });
+                            }
+                        >
+                            "Analyze full file"
+                        </button>
                     }.into_any()
                 } else if analysis_is_full.get() && file_is_long.get() && psd_result.get().is_some() {
-                    view! {
-                        <div class="analysis-scope-row">
-                            <span class="analysis-scope-badge analysis-scope-full">"Full file"</span>
-                        </div>
-                    }.into_any()
+                    view! { <span class="analysis-scope-badge analysis-scope-full">"Full file"</span> }.into_any()
                 } else if psd_result.get().is_none() && !is_computing.get() {
                     let has_file = {
                         let files = state.files.get();
@@ -421,7 +444,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                         idx.and_then(|i| files.get(i)).is_some()
                     };
                     if !has_file {
-                        view! { <div class="sidebar-panel-empty">"No file loaded"</div> }.into_any()
+                        view! { <span class="psd-status-text">"No file loaded"</span> }.into_any()
                     } else {
                         view! { <span></span> }.into_any()
                     }
@@ -429,6 +452,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     view! { <span></span> }.into_any()
                 }
             }}
+            </div>
 
             // PSD Chart
             {move || {
@@ -829,7 +853,7 @@ fn start_psd_compute(
     analysis_is_full: RwSignal<bool>,
     file_is_long: RwSignal<bool>,
     using_selection: RwSignal<bool>,
-    freq_range_enabled: RwSignal<bool>,
+    freq_range_mode: RwSignal<PsdFreqRangeMode>,
     full_file: bool,
 ) {
     let files = state.files.get_untracked();
@@ -915,16 +939,42 @@ fn start_psd_compute(
         );
     }
 
-    let peak_freq_range = if freq_range_enabled.get_untracked() {
-        let sel = state.selection.get_untracked();
-        sel.and_then(|s| {
-            match (s.freq_low, s.freq_high) {
-                (Some(lo), Some(hi)) if lo < hi => Some((lo, hi)),
-                _ => None,
+    let peak_freq_range = {
+        let mode = freq_range_mode.get_untracked();
+        match mode {
+            PsdFreqRangeMode::All => None,
+            PsdFreqRangeMode::Selection => {
+                effective_selection(&state).and_then(|s| match (s.freq_low, s.freq_high) {
+                    (Some(lo), Some(hi)) if lo < hi => Some((lo, hi)),
+                    _ => None,
+                })
             }
-        })
-    } else {
-        None
+            PsdFreqRangeMode::FF => {
+                if state.hfr_enabled.get_untracked() {
+                    let lo = state.filter_freq_low.get_untracked();
+                    let hi = state.filter_freq_high.get_untracked();
+                    if lo < hi { Some((lo, hi)) } else { None }
+                } else {
+                    None
+                }
+            }
+            PsdFreqRangeMode::Auto => {
+                // Try selection first, then FF
+                let sel_range = effective_selection(&state).and_then(|s| match (s.freq_low, s.freq_high) {
+                    (Some(lo), Some(hi)) if lo < hi => Some((lo, hi)),
+                    _ => None,
+                });
+                sel_range.or_else(|| {
+                    if state.hfr_enabled.get_untracked() {
+                        let lo = state.filter_freq_low.get_untracked();
+                        let hi = state.filter_freq_high.get_untracked();
+                        if lo < hi { Some((lo, hi)) } else { None }
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
     };
 
     let samples = Arc::new(samples);

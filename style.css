@@ -546,9 +546,88 @@ body.sidebar-resizing {
 .psd-filter-toggles {
     display: flex;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 4px;
     padding: 4px 12px;
     font-size: 11px;
+}
+
+.psd-controls-sep {
+    width: 1px;
+    height: 14px;
+    background: #333;
+    margin: 0 2px;
+}
+
+.psd-btn-group {
+    display: inline-flex;
+    gap: 0;
+}
+
+.psd-btn-group .psd-btn {
+    border-radius: 0;
+}
+
+.psd-btn-group .psd-btn:first-child {
+    border-radius: 3px 0 0 3px;
+}
+
+.psd-btn-group .psd-btn:last-child {
+    border-radius: 0 3px 3px 0;
+}
+
+.psd-btn-group .psd-btn + .psd-btn {
+    margin-left: -1px;
+}
+
+.psd-btn {
+    font-size: 10px;
+    color: #999;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 1px 7px;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.psd-btn:hover {
+    background: #252525;
+    color: #ccc;
+}
+
+.psd-btn-active {
+    background: #2a3a4a;
+    color: #8cf;
+    border-color: #4a6a8a;
+}
+
+.psd-btn-active:hover {
+    background: #334a5a;
+}
+
+.psd-btn-disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
+}
+
+.psd-btn-dimmed {
+    opacity: 0.6;
+}
+
+.psd-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 12px;
+    min-height: 22px;
+}
+
+.psd-status-text {
+    font-size: 11px;
+    color: #666;
 }
 
 .psd-chart-wrap {

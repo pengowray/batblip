@@ -276,7 +276,7 @@ impl RightSidebarTab {
         match self {
             Self::Metadata => "Info",
             Self::Selection => "Annotations",
-            Self::Psd => "PSD",
+            Self::Psd => "Power spectrum",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::Notch => "Noise Filter",
