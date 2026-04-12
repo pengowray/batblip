@@ -31,7 +31,8 @@ use crate::viewport;
 pub const TILE_COLS: usize = 256;
 
 /// Main magnitude spectrogram cache budget.
-const MAGNITUDE_MAX_BYTES: usize = 256 * 1024 * 1024;
+/// Sized for adaptive FFT modes where L0/L1 tiles can be 4–8× larger than base.
+const MAGNITUDE_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// Flow cache budget.
 const FLOW_MAX_BYTES: usize = 120 * 1024 * 1024;
 /// Reassignment cache budget.
@@ -683,7 +684,7 @@ fn reassign_request_still_active(key: &CacheKey) -> bool {
 }
 
 fn active_lod1_fft(state: AppState) -> usize {
-    state.spect_fft_mode.get_untracked().fft_for_lod(LOD_CONFIGS[1].hop_size)
+    state.spect_fft_mode.get_untracked().fft_for_lod(1)
 }
 
 fn spectrogram_fft_size(data: &crate::types::SpectrogramData) -> Option<usize> {
@@ -732,7 +733,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let fft_mode = state.spect_fft_mode.get_untracked();
-    let actual_fft = fft_mode.fft_for_lod(config_hop);
+    let actual_fft = fft_mode.fft_for_lod(lod);
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -1257,7 +1258,7 @@ pub fn schedule_tile_on_demand(
         let cv = state.channel_view.get_untracked();
         let col_start = tile_idx * TILE_COLS;
         let hop_size = 512usize;
-        let fft_size = state.spect_fft_mode.get_untracked().fft_for_lod(hop_size);
+        let fft_size = state.spect_fft_mode.get_untracked().fft_for_lod(1);
 
         // Read only the sample region needed for this tile
         let sample_start = col_start * hop_size;
@@ -1359,7 +1360,7 @@ pub fn schedule_flow_tile(
     let gen = FLOW_CACHE_GENERATION.with(|g| *g.borrow());
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(config_hop);
+    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(lod);
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -1556,7 +1557,7 @@ pub fn schedule_reassign_tile(
     let gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(config_hop);
+    let actual_fft = state.spect_fft_mode.get_untracked().fft_for_lod(lod);
 
     spawn_local(async move {
         yield_to_browser().await;

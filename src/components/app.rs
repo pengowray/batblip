@@ -1448,9 +1448,9 @@ fn MainViewButton() -> impl IntoView {
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let val = select.value();
                             let mode = match val.as_str() {
-                                "a512" => FftMode::Adaptive(512),
-                                "a1024" => FftMode::Adaptive(1024),
-                                "a2048" => FftMode::Adaptive(2048),
+                                "as" => FftMode::AdaptiveS,
+                                "am" => FftMode::AdaptiveM,
+                                "al" => FftMode::AdaptiveL,
                                 _ => {
                                     if let Ok(v) = val.parse::<usize>() {
                                         FftMode::Single(v)
@@ -1465,6 +1465,9 @@ fn MainViewButton() -> impl IntoView {
                         {move || {
                             let current = state.spect_fft_mode.get();
                             let options: [(&str, &str); 10] = [
+                                ("am", "Adaptive M"),
+                                ("as", "Adaptive S"),
+                                ("al", "Adaptive L"),
                                 ("128", "128"),
                                 ("256", "256"),
                                 ("512", "512"),
@@ -1472,15 +1475,12 @@ fn MainViewButton() -> impl IntoView {
                                 ("2048", "2048"),
                                 ("4096", "4096"),
                                 ("8192", "8192"),
-                                ("a512", "Adaptive 512"),
-                                ("a1024", "Adaptive 1024"),
-                                ("a2048", "Adaptive 2048"),
                             ];
                             options.into_iter().map(|(value, label)| {
                                 let is_selected = match (value, current) {
-                                    ("a512", FftMode::Adaptive(512)) => true,
-                                    ("a1024", FftMode::Adaptive(1024)) => true,
-                                    ("a2048", FftMode::Adaptive(2048)) => true,
+                                    ("as", FftMode::AdaptiveS) => true,
+                                    ("am", FftMode::AdaptiveM) => true,
+                                    ("al", FftMode::AdaptiveL) => true,
                                     (v, FftMode::Single(sz)) => v.parse::<usize>().ok() == Some(sz),
                                     _ => false,
                                 };

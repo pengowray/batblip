@@ -442,17 +442,28 @@ impl MainView {
 pub enum FftMode {
     /// Fixed FFT size at all LOD levels (128–8192).
     Single(usize),
-    /// Adaptive: base FFT 256, scales up per LOD but capped at the given max.
-    /// Formula per LOD: min(max(256, lod_hop_size), max_fft).
-    Adaptive(usize),
+    /// Adaptive S: [1024, 512, 512, 256, 128]
+    AdaptiveS,
+    /// Adaptive M: [1024, 1024, 512, 512, 256]
+    AdaptiveM,
+    /// Adaptive L: [2048, 2048, 1024, 512, 512]
+    AdaptiveL,
 }
 
 impl FftMode {
-    /// The actual FFT size to use for a given LOD hop size.
-    pub fn fft_for_lod(&self, hop_size: usize) -> usize {
+    /// Per-LOD FFT sizes for each adaptive mode. Index = LOD level (0–4).
+    const ADAPTIVE_S: [usize; 5] = [1024, 512, 512, 256, 128];
+    const ADAPTIVE_M: [usize; 5] = [1024, 1024, 512, 512, 256];
+    const ADAPTIVE_L: [usize; 5] = [2048, 2048, 1024, 512, 512];
+
+    /// The actual FFT size to use for a given LOD level (0–4).
+    pub fn fft_for_lod(&self, lod: u8) -> usize {
+        let idx = (lod as usize).min(4);
         match self {
             FftMode::Single(sz) => *sz,
-            FftMode::Adaptive(max_fft) => 256.max(hop_size).min(*max_fft),
+            FftMode::AdaptiveS => Self::ADAPTIVE_S[idx],
+            FftMode::AdaptiveM => Self::ADAPTIVE_M[idx],
+            FftMode::AdaptiveL => Self::ADAPTIVE_L[idx],
         }
     }
 
@@ -461,7 +472,9 @@ impl FftMode {
     pub fn max_fft_size(&self) -> usize {
         match self {
             FftMode::Single(sz) => *sz,
-            FftMode::Adaptive(max_fft) => *max_fft,
+            FftMode::AdaptiveS => 1024,
+            FftMode::AdaptiveM => 1024,
+            FftMode::AdaptiveL => 2048,
         }
     }
 }
@@ -1414,7 +1427,7 @@ impl AppState {
             spect_gamma: RwSignal::new(1.0),
             spect_gain_db: RwSignal::new(0.0),
             debug_tiles: RwSignal::new(false),
-            spect_fft_mode: RwSignal::new(FftMode::Single(256)),
+            spect_fft_mode: RwSignal::new(FftMode::AdaptiveM),
             reassign_enabled: RwSignal::new(false),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
