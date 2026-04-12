@@ -585,6 +585,258 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
 // ── PSD Chart Canvas ────────────────────────────────────────────────────────
 
+fn draw_psd_canvas(
+    canvas: &HtmlCanvasElement,
+    power_db: &[f64],
+    freq_res: f64,
+    sample_rate: u32,
+    peaks: &[psd::PsdPeak],
+    peak_freq_range: Option<(f64, f64)>,
+    log_scale: bool,
+) {
+    let parent_width = canvas.parent_element()
+        .map(|p| p.client_width() as u32)
+        .unwrap_or(250);
+    let w = parent_width.max(150);
+    let h = 200u32;
+
+    // Skip drawing if parent has no real width yet (sidebar still opening)
+    if parent_width < 50 {
+        return;
+    }
+
+    canvas.set_width(w);
+    canvas.set_height(h);
+
+    let ctx = canvas
+        .get_context("2d")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<CanvasRenderingContext2d>()
+        .unwrap();
+
+    ctx.set_fill_style_str("#111");
+    ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
+
+    if power_db.is_empty() {
+        return;
+    }
+
+    let margin_left = 36.0;
+    let margin_right = 8.0;
+    let margin_top = 18.0;
+    let margin_bottom = 24.0;
+    let chart_w = w as f64 - margin_left - margin_right;
+    let chart_h = h as f64 - margin_top - margin_bottom;
+
+    let nyquist = sample_rate as f64 / 2.0;
+    let n_bins = power_db.len();
+
+    let db_max = power_db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let db_min = (db_max - 80.0).max(-200.0);
+    let db_range = db_max - db_min;
+    if db_range <= 0.0 { return; }
+
+    let min_log_freq = 100.0f64;
+    let freq_to_x = |freq: f64| -> f64 {
+        if log_scale {
+            if freq <= 0.0 { return margin_left; }
+            let f = freq.max(min_log_freq);
+            let log_min = min_log_freq.log10();
+            let log_max = nyquist.log10();
+            let frac = (f.log10() - log_min) / (log_max - log_min);
+            margin_left + frac.clamp(0.0, 1.0) * chart_w
+        } else {
+            margin_left + (freq / nyquist) * chart_w
+        }
+    };
+
+    let db_to_y = |db: f64| -> f64 {
+        let frac = (db - db_min) / db_range;
+        margin_top + (1.0 - frac.clamp(0.0, 1.0)) * chart_h
+    };
+
+    // dB grid
+    ctx.set_stroke_style_str("rgba(255,255,255,0.1)");
+    ctx.set_fill_style_str("#666");
+    ctx.set_font("9px monospace");
+    ctx.set_line_width(0.5);
+    let db_step = if db_range > 60.0 { 20.0 } else { 10.0 };
+    let mut db_tick = (db_min / db_step).ceil() * db_step;
+    while db_tick <= db_max {
+        let y = db_to_y(db_tick);
+        ctx.begin_path();
+        ctx.move_to(margin_left, y);
+        ctx.line_to(w as f64 - margin_right, y);
+        ctx.stroke();
+        let label = format!("{:.0}", db_tick);
+        let _ = ctx.fill_text(&label, 2.0, y + 3.0);
+        db_tick += db_step;
+    }
+
+    // Frequency grid
+    let freq_ticks: Vec<f64> = if log_scale {
+        let mut ticks = Vec::new();
+        for &base in &[100.0, 1000.0, 10000.0, 100000.0] {
+            for mult in 1..10 {
+                let f = base * mult as f64;
+                if f >= min_log_freq && f <= nyquist {
+                    ticks.push(f);
+                }
+            }
+        }
+        ticks
+    } else {
+        let step = if nyquist > 100_000.0 {
+            50_000.0
+        } else if nyquist > 50_000.0 {
+            25_000.0
+        } else if nyquist > 20_000.0 {
+            10_000.0
+        } else {
+            5_000.0
+        };
+        let mut ticks = Vec::new();
+        let mut f = step;
+        while f < nyquist {
+            ticks.push(f);
+            f += step;
+        }
+        ticks
+    };
+
+    for &freq in &freq_ticks {
+        let x = freq_to_x(freq);
+        if x < margin_left || x > w as f64 - margin_right { continue; }
+
+        let is_major = if log_scale {
+            freq == 100.0 || freq == 1000.0 || freq == 10000.0 || freq == 100000.0
+        } else {
+            true
+        };
+
+        if is_major {
+            ctx.set_stroke_style_str("rgba(255,255,255,0.12)");
+        } else {
+            ctx.set_stroke_style_str("rgba(255,255,255,0.04)");
+        }
+        ctx.begin_path();
+        ctx.move_to(x, margin_top);
+        ctx.line_to(x, h as f64 - margin_bottom);
+        ctx.stroke();
+
+        if is_major {
+            ctx.set_fill_style_str("#666");
+            let label = if freq >= 1000.0 {
+                format!("{:.0}k", freq / 1000.0)
+            } else {
+                format!("{:.0}", freq)
+            };
+            let _ = ctx.fill_text(&label, x - 8.0, h as f64 - 6.0);
+        }
+    }
+
+    // Draw frequency range constraint shading (dim regions outside range)
+    if let Some((lo, hi)) = peak_freq_range {
+        ctx.set_fill_style_str("rgba(255,255,255,0.05)");
+        let x_lo = freq_to_x(lo);
+        let x_hi = freq_to_x(hi);
+        // Dim left side
+        ctx.fill_rect(margin_left, margin_top, x_lo - margin_left, chart_h);
+        // Dim right side
+        ctx.fill_rect(x_hi, margin_top, (w as f64 - margin_right) - x_hi, chart_h);
+        // Draw range boundary lines
+        ctx.set_stroke_style_str("rgba(255,200,50,0.4)");
+        ctx.set_line_width(1.0);
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
+            &JsValue::from(2.0), &JsValue::from(2.0),
+        )));
+        ctx.begin_path();
+        ctx.move_to(x_lo, margin_top);
+        ctx.line_to(x_lo, h as f64 - margin_bottom);
+        ctx.move_to(x_hi, margin_top);
+        ctx.line_to(x_hi, h as f64 - margin_bottom);
+        ctx.stroke();
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
+    }
+
+    // Draw bandwidth shading for the primary peak only (to keep chart clean)
+    if let Some(peak) = peaks.first() {
+        if let Some((lo, hi)) = peak.bw_10db {
+            let x1 = freq_to_x(lo);
+            let x2 = freq_to_x(hi);
+            ctx.set_fill_style_str("rgba(170,170,68,0.15)");
+            ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
+        }
+        if let Some((lo, hi)) = peak.bw_6db {
+            let x1 = freq_to_x(lo);
+            let x2 = freq_to_x(hi);
+            ctx.set_fill_style_str("rgba(68,170,102,0.2)");
+            ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
+        }
+    }
+
+    // PSD curve
+    ctx.set_stroke_style_str("#4dd");
+    ctx.set_line_width(1.5);
+    ctx.begin_path();
+    let mut started = false;
+    for (i, &pdb) in power_db.iter().enumerate().take(n_bins) {
+        let freq = i as f64 * freq_res;
+        if log_scale && freq < min_log_freq { continue; }
+        let x = freq_to_x(freq);
+        let y = db_to_y(pdb);
+        if !started {
+            ctx.move_to(x, y);
+            started = true;
+        } else {
+            ctx.line_to(x, y);
+        }
+    }
+    ctx.stroke();
+
+    // Draw all peak markers
+    for (i, peak) in peaks.iter().enumerate() {
+        let color = peak_color(i);
+        let px = freq_to_x(peak.freq_hz);
+        let py = db_to_y(peak.power_db);
+
+        // Dashed vertical line
+        let alpha = if i == 0 { 0.6 } else { 0.35 };
+        ctx.set_stroke_style_str(&hex_to_rgba(color, alpha));
+        ctx.set_line_width(1.0);
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
+            &JsValue::from(3.0),
+            &JsValue::from(3.0),
+        )));
+        ctx.begin_path();
+        ctx.move_to(px, margin_top);
+        ctx.line_to(px, h as f64 - margin_bottom);
+        ctx.stroke();
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
+
+        // Dot
+        ctx.set_fill_style_str(color);
+        ctx.begin_path();
+        let radius = if i == 0 { 3.0 } else { 2.5 };
+        let _ = ctx.arc(px, py, radius, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+
+        // Label (only for first 3 to avoid clutter)
+        if i < 3 {
+            ctx.set_fill_style_str(color);
+            ctx.set_font("9px monospace");
+            let label = format!("{:.1}k", peak.freq_hz / 1000.0);
+            let _ = ctx.fill_text(&label, px + 5.0, py - 4.0);
+        }
+    }
+
+    // Chart border
+    ctx.set_stroke_style_str("rgba(255,255,255,0.2)");
+    ctx.set_line_width(1.0);
+    ctx.stroke_rect(margin_left, margin_top, chart_w, chart_h);
+}
+
 #[component]
 fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
@@ -597,242 +849,33 @@ fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
     Effect::new(move || {
         let Some(el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = el.as_ref();
+        let canvas = canvas.clone();
 
-        let parent_width = canvas.parent_element()
-            .map(|p| p.client_width() as u32)
-            .unwrap_or(250);
-        let w = parent_width.max(150);
-        let h = 200u32;
-        canvas.set_width(w);
-        canvas.set_height(h);
+        // Draw immediately
+        draw_psd_canvas(&canvas, &power_db, freq_res, sample_rate, &peaks, peak_freq_range, log_scale);
 
-        let ctx = canvas
-            .get_context("2d")
-            .unwrap()
-            .unwrap()
-            .dyn_into::<CanvasRenderingContext2d>()
-            .unwrap();
-
-        ctx.set_fill_style_str("#111");
-        ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
-
-        if power_db.is_empty() {
-            return;
+        // Set up ResizeObserver to redraw when the container resizes
+        // (handles sidebar open animation, window resize, etc.)
+        let power_db2 = power_db.clone();
+        let peaks2 = peaks.clone();
+        let canvas2 = canvas.clone();
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(move |_entries: js_sys::Array| {
+            draw_psd_canvas(&canvas2, &power_db2, freq_res, sample_rate, &peaks2, peak_freq_range, log_scale);
+        });
+        if let Ok(observer) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            if let Some(parent) = canvas.parent_element() {
+                observer.observe(&parent);
+            }
+            // Store observer on the canvas element to prevent GC and tie its
+            // lifetime to the DOM node. When the component unmounts and the
+            // canvas is removed, the observer becomes inert.
+            let _ = js_sys::Reflect::set(
+                &canvas,
+                &JsValue::from_str("__psd_resize_obs"),
+                &observer,
+            );
         }
-
-        let margin_left = 36.0;
-        let margin_right = 8.0;
-        let margin_top = 8.0;
-        let margin_bottom = 24.0;
-        let chart_w = w as f64 - margin_left - margin_right;
-        let chart_h = h as f64 - margin_top - margin_bottom;
-
-        let nyquist = sample_rate as f64 / 2.0;
-        let n_bins = power_db.len();
-
-        let db_max = power_db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let db_min = (db_max - 80.0).max(-200.0);
-        let db_range = db_max - db_min;
-        if db_range <= 0.0 { return; }
-
-        let min_log_freq = 100.0f64;
-        let freq_to_x = |freq: f64| -> f64 {
-            if log_scale {
-                if freq <= 0.0 { return margin_left; }
-                let f = freq.max(min_log_freq);
-                let log_min = min_log_freq.log10();
-                let log_max = nyquist.log10();
-                let frac = (f.log10() - log_min) / (log_max - log_min);
-                margin_left + frac.clamp(0.0, 1.0) * chart_w
-            } else {
-                margin_left + (freq / nyquist) * chart_w
-            }
-        };
-
-        let db_to_y = |db: f64| -> f64 {
-            let frac = (db - db_min) / db_range;
-            margin_top + (1.0 - frac.clamp(0.0, 1.0)) * chart_h
-        };
-
-        // dB grid
-        ctx.set_stroke_style_str("rgba(255,255,255,0.1)");
-        ctx.set_fill_style_str("#666");
-        ctx.set_font("9px monospace");
-        ctx.set_line_width(0.5);
-        let db_step = if db_range > 60.0 { 20.0 } else { 10.0 };
-        let mut db_tick = (db_min / db_step).ceil() * db_step;
-        while db_tick <= db_max {
-            let y = db_to_y(db_tick);
-            ctx.begin_path();
-            ctx.move_to(margin_left, y);
-            ctx.line_to(w as f64 - margin_right, y);
-            ctx.stroke();
-            let label = format!("{:.0}", db_tick);
-            let _ = ctx.fill_text(&label, 2.0, y + 3.0);
-            db_tick += db_step;
-        }
-
-        // Frequency grid
-        let freq_ticks: Vec<f64> = if log_scale {
-            let mut ticks = Vec::new();
-            for &base in &[100.0, 1000.0, 10000.0, 100000.0] {
-                for mult in 1..10 {
-                    let f = base * mult as f64;
-                    if f >= min_log_freq && f <= nyquist {
-                        ticks.push(f);
-                    }
-                }
-            }
-            ticks
-        } else {
-            let step = if nyquist > 100_000.0 {
-                50_000.0
-            } else if nyquist > 50_000.0 {
-                25_000.0
-            } else if nyquist > 20_000.0 {
-                10_000.0
-            } else {
-                5_000.0
-            };
-            let mut ticks = Vec::new();
-            let mut f = step;
-            while f < nyquist {
-                ticks.push(f);
-                f += step;
-            }
-            ticks
-        };
-
-        for &freq in &freq_ticks {
-            let x = freq_to_x(freq);
-            if x < margin_left || x > w as f64 - margin_right { continue; }
-
-            let is_major = if log_scale {
-                freq == 100.0 || freq == 1000.0 || freq == 10000.0 || freq == 100000.0
-            } else {
-                true
-            };
-
-            if is_major {
-                ctx.set_stroke_style_str("rgba(255,255,255,0.12)");
-            } else {
-                ctx.set_stroke_style_str("rgba(255,255,255,0.04)");
-            }
-            ctx.begin_path();
-            ctx.move_to(x, margin_top);
-            ctx.line_to(x, h as f64 - margin_bottom);
-            ctx.stroke();
-
-            if is_major {
-                ctx.set_fill_style_str("#666");
-                let label = if freq >= 1000.0 {
-                    format!("{:.0}k", freq / 1000.0)
-                } else {
-                    format!("{:.0}", freq)
-                };
-                let _ = ctx.fill_text(&label, x - 8.0, h as f64 - 6.0);
-            }
-        }
-
-        // Draw frequency range constraint shading (dim regions outside range)
-        if let Some((lo, hi)) = peak_freq_range {
-            ctx.set_fill_style_str("rgba(255,255,255,0.05)");
-            let x_lo = freq_to_x(lo);
-            let x_hi = freq_to_x(hi);
-            // Dim left side
-            ctx.fill_rect(margin_left, margin_top, x_lo - margin_left, chart_h);
-            // Dim right side
-            ctx.fill_rect(x_hi, margin_top, (w as f64 - margin_right) - x_hi, chart_h);
-            // Draw range boundary lines
-            ctx.set_stroke_style_str("rgba(255,200,50,0.4)");
-            ctx.set_line_width(1.0);
-            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
-                &JsValue::from(2.0), &JsValue::from(2.0),
-            )));
-            ctx.begin_path();
-            ctx.move_to(x_lo, margin_top);
-            ctx.line_to(x_lo, h as f64 - margin_bottom);
-            ctx.move_to(x_hi, margin_top);
-            ctx.line_to(x_hi, h as f64 - margin_bottom);
-            ctx.stroke();
-            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
-        }
-
-        // Draw bandwidth shading for the primary peak only (to keep chart clean)
-        if let Some(peak) = peaks.first() {
-            if let Some((lo, hi)) = peak.bw_10db {
-                let x1 = freq_to_x(lo);
-                let x2 = freq_to_x(hi);
-                ctx.set_fill_style_str("rgba(170,170,68,0.15)");
-                ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
-            }
-            if let Some((lo, hi)) = peak.bw_6db {
-                let x1 = freq_to_x(lo);
-                let x2 = freq_to_x(hi);
-                ctx.set_fill_style_str("rgba(68,170,102,0.2)");
-                ctx.fill_rect(x1, margin_top, x2 - x1, chart_h);
-            }
-        }
-
-        // PSD curve
-        ctx.set_stroke_style_str("#4dd");
-        ctx.set_line_width(1.5);
-        ctx.begin_path();
-        let mut started = false;
-        for (i, &pdb) in power_db.iter().enumerate().take(n_bins) {
-            let freq = i as f64 * freq_res;
-            if log_scale && freq < min_log_freq { continue; }
-            let x = freq_to_x(freq);
-            let y = db_to_y(pdb);
-            if !started {
-                ctx.move_to(x, y);
-                started = true;
-            } else {
-                ctx.line_to(x, y);
-            }
-        }
-        ctx.stroke();
-
-        // Draw all peak markers
-        for (i, peak) in peaks.iter().enumerate() {
-            let color = peak_color(i);
-            let px = freq_to_x(peak.freq_hz);
-            let py = db_to_y(peak.power_db);
-
-            // Dashed vertical line
-            let alpha = if i == 0 { 0.6 } else { 0.35 };
-            ctx.set_stroke_style_str(&hex_to_rgba(color, alpha));
-            ctx.set_line_width(1.0);
-            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::of2(
-                &JsValue::from(3.0),
-                &JsValue::from(3.0),
-            )));
-            ctx.begin_path();
-            ctx.move_to(px, margin_top);
-            ctx.line_to(px, h as f64 - margin_bottom);
-            ctx.stroke();
-            let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
-
-            // Dot
-            ctx.set_fill_style_str(color);
-            ctx.begin_path();
-            let radius = if i == 0 { 3.0 } else { 2.5 };
-            let _ = ctx.arc(px, py, radius, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-
-            // Label (only for first 3 to avoid clutter)
-            if i < 3 {
-                ctx.set_fill_style_str(color);
-                ctx.set_font("9px monospace");
-                let label = format!("{:.1}k", peak.freq_hz / 1000.0);
-                let _ = ctx.fill_text(&label, px + 5.0, py - 4.0);
-            }
-        }
-
-        // Chart border
-        ctx.set_stroke_style_str("rgba(255,255,255,0.2)");
-        ctx.set_line_width(1.0);
-        ctx.stroke_rect(margin_left, margin_top, chart_w, chart_h);
+        cb.forget();
     });
 
     view! {
