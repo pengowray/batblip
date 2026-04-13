@@ -605,7 +605,7 @@ fn render_frame(
         zoom,
         r.freq_crop_lo,
         r.freq_crop_hi,
-        r.colormap,
+        spectrogram_renderer::TileRenderMode::Spectrogram(r.colormap),
         &r.display_settings,
         None, // freq_adjustments — skip for simplicity in video export
         None, // preview fallback — not needed, tiles should be cached

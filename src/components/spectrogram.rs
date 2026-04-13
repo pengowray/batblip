@@ -453,7 +453,8 @@ pub fn Spectrogram() -> impl IntoView {
 
                 let drawn = spectrogram_renderer::blit_tiles_viewport(
                     &ctx, clip_right - clip_left, display_h as f64, seg.file_index, seg_total_cols,
-                    file_scroll_col, seg_zoom, freq_crop_lo, freq_crop_hi, colormap,
+                    file_scroll_col, seg_zoom, freq_crop_lo, freq_crop_hi,
+                    spectrogram_renderer::TileRenderMode::Spectrogram(colormap),
                     &display_settings,
                     freq_adjustments.as_deref(),
                     preview_ref,
@@ -521,13 +522,22 @@ pub fn Spectrogram() -> impl IntoView {
                 SpectrogramDisplay::Phase => FlowAlgo::Phase,
             };
             let flow_scheme = state.flow_color_scheme.get_untracked();
-            let drawn = spectrogram_renderer::blit_flow_tiles_viewport(
+            let flow_render_mode = spectrogram_renderer::TileRenderMode::Flow {
+                intensity_gate: ig,
+                flow_gate: mg,
+                opacity: op,
+                shift_gain: sg,
+                color_gamma: cg,
+                algo,
+                scheme: flow_scheme,
+            };
+            let drawn = spectrogram_renderer::blit_tiles_viewport(
                 &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi,
-                &display_settings, freq_adjustments.as_deref(),
-                ig, mg, op, sg, cg, algo, flow_scheme,
+                flow_render_mode, &display_settings, freq_adjustments.as_deref(),
                 file.and_then(|f| f.preview.as_ref()),
                 scroll, visible_time, duration,
+                spectrogram_renderer::TileSource::Flow,
             );
 
             // Schedule missing flow tiles
@@ -553,7 +563,8 @@ pub fn Spectrogram() -> impl IntoView {
             };
             let drawn = spectrogram_renderer::blit_tiles_viewport(
                 &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols,
-                scroll_col, zoom, freq_crop_lo, freq_crop_hi, colormap,
+                scroll_col, zoom, freq_crop_lo, freq_crop_hi,
+                spectrogram_renderer::TileRenderMode::Spectrogram(colormap),
                 &display_settings,
                 freq_adjustments.as_deref(),
                 preview_ref,

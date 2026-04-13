@@ -1509,8 +1509,8 @@ fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // FFT size selector (when any spectrogram view is active)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+            // FFT size selector (when any spectrogram/flow view is active)
+            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"FFT Size"</div>
@@ -1567,20 +1567,14 @@ fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // Frequency range selector (for spectrogram views)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+            // Frequency range selector (for spectrogram/flow views)
+            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
                 let file_max = move || {
                     let files = state.files.get();
                     let idx = state.current_file_index.get();
                     idx.and_then(|i| files.get(i))
                         .map(|f| f.spectrogram.max_freq)
                         .unwrap_or(96_000.0)
-                };
-                let set_range = move |lo: Option<f64>, hi: Option<f64>| {
-                    move |_: web_sys::MouseEvent| {
-                        state.min_display_freq.set(lo);
-                        state.max_display_freq.set(hi);
-                    }
                 };
                 let is_range = move |lo: Option<f64>, hi: Option<f64>| -> bool {
                     let cur_min = state.min_display_freq.get();
@@ -1599,26 +1593,59 @@ fn MainViewButton() -> impl IntoView {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Freq Range"</div>
-                    <button class=move || layer_opt_class(is_range(None, None))
-                        on:click=set_range(None, None)
-                    >"Full"</button>
-                    <button class=move || layer_opt_class(is_range(Some(0.0), Some(22_000.0)))
-                        on:click=set_range(Some(0.0), Some(22_000.0))
-                    >"0 – 22 kHz"</button>
-                    <button class=move || layer_opt_class(is_range(Some(0.0), Some(50_000.0)))
-                        on:click=set_range(Some(0.0), Some(50_000.0))
-                    >"0 – 50 kHz"</button>
-                    <button class=move || layer_opt_class(is_range(Some(0.0), Some(100_000.0)))
-                        on:click=set_range(Some(0.0), Some(100_000.0))
-                    >"0 – 100 kHz"</button>
-                    <button class=move || layer_opt_class(is_range(Some(0.0), Some(192_000.0)))
-                        on:click=set_range(Some(0.0), Some(192_000.0))
-                    >"0 – 192 kHz"</button>
+                    <select
+                        class="setting-select"
+                        style="margin: 4px 8px; width: calc(100% - 16px);"
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                            let val = select.value();
+                            match val.as_str() {
+                                "full" => {
+                                    state.min_display_freq.set(None);
+                                    state.max_display_freq.set(None);
+                                }
+                                "22k" => {
+                                    state.min_display_freq.set(Some(0.0));
+                                    state.max_display_freq.set(Some(22_000.0));
+                                }
+                                "50k" => {
+                                    state.min_display_freq.set(Some(0.0));
+                                    state.max_display_freq.set(Some(50_000.0));
+                                }
+                                "100k" => {
+                                    state.min_display_freq.set(Some(0.0));
+                                    state.max_display_freq.set(Some(100_000.0));
+                                }
+                                "192k" => {
+                                    state.min_display_freq.set(Some(0.0));
+                                    state.max_display_freq.set(Some(192_000.0));
+                                }
+                                _ => {}
+                            }
+                        }
+                    >
+                        {move || {
+                            let options: [(&str, &str, Option<f64>, Option<f64>); 5] = [
+                                ("full", "Full", None, None),
+                                ("22k", "0 \u{2013} 22 kHz", Some(0.0), Some(22_000.0)),
+                                ("50k", "0 \u{2013} 50 kHz", Some(0.0), Some(50_000.0)),
+                                ("100k", "0 \u{2013} 100 kHz", Some(0.0), Some(100_000.0)),
+                                ("192k", "0 \u{2013} 192 kHz", Some(0.0), Some(192_000.0)),
+                            ];
+                            options.into_iter().map(|(value, label, lo, hi)| {
+                                let selected = is_range(lo, hi);
+                                let v = value.to_string();
+                                let l = label.to_string();
+                                view! { <option value={v} selected=move || selected>{l}</option> }
+                            }).collect::<Vec<_>>()
+                        }}
+                    </select>
                 }
             })}
 
-            // Intensity sliders (for Spectrogram or XformedSpec)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+            // Intensity sliders (for Spectrogram, XformedSpec, or Flow)
+            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
                 let is_xform = state.main_view.get_untracked() == MainView::XformedSpec;
                 let gain_sig = if is_xform { state.xform_spect_gain_db } else { state.spect_gain_db };
                 let range_sig = if is_xform { state.xform_spect_range_db } else { state.spect_range_db };

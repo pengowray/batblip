@@ -110,6 +110,24 @@ pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
 pub enum TileSource {
     Normal,
     Reassigned,
+    Flow,
+}
+
+/// How tile dB data (and optional flow shifts) should be converted to RGBA pixels.
+#[derive(Clone, Copy, Debug)]
+pub enum TileRenderMode {
+    /// Normal spectrogram: dB → greyscale → colormap
+    Spectrogram(ColormapMode),
+    /// Flow: dB → greyscale + shift → flow_rgb/coherence_rgb/phase_rgb
+    Flow {
+        intensity_gate: f32,
+        flow_gate: f32,
+        opacity: f32,
+        shift_gain: f32,
+        color_gamma: f32,
+        algo: FlowAlgo,
+        scheme: FlowColorScheme,
+    },
 }
 
 /// Convert a frequency to a canvas Y coordinate.
@@ -155,7 +173,7 @@ impl Colormap {
 }
 
 /// Which colormap to apply when blitting the spectrogram.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ColormapMode {
     /// Uniform colormap across the entire spectrogram.
     Uniform(Colormap),
@@ -403,7 +421,7 @@ thread_local! {
 /// When this changes, cached tile canvases must be re-rendered.
 fn tile_render_fingerprint(
     settings: &SpectDisplaySettings,
-    colormap: ColormapMode,
+    render_mode: &TileRenderMode,
     freq_adj_hash: u64,
 ) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
@@ -415,16 +433,28 @@ fn tile_render_fingerprint(
     mix(&mut h, settings.range_db.to_bits() as u64);
     mix(&mut h, settings.gamma.to_bits() as u64);
     mix(&mut h, settings.gain_db.to_bits() as u64);
-    match colormap {
-        ColormapMode::Uniform(cm) => {
-            mix(&mut h, 0);
-            mix(&mut h, cm as u64);
-        }
-        ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
-            mix(&mut h, 1);
-            mix(&mut h, cm as u64);
-            mix(&mut h, ff_lo_frac.to_bits());
-            mix(&mut h, ff_hi_frac.to_bits());
+    match render_mode {
+        TileRenderMode::Spectrogram(colormap) => match colormap {
+            ColormapMode::Uniform(cm) => {
+                mix(&mut h, 0);
+                mix(&mut h, *cm as u64);
+            }
+            ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
+                mix(&mut h, 1);
+                mix(&mut h, *cm as u64);
+                mix(&mut h, ff_lo_frac.to_bits());
+                mix(&mut h, ff_hi_frac.to_bits());
+            }
+        },
+        TileRenderMode::Flow { intensity_gate, flow_gate, opacity, shift_gain, color_gamma, algo, scheme } => {
+            mix(&mut h, 2);
+            mix(&mut h, intensity_gate.to_bits() as u64);
+            mix(&mut h, flow_gate.to_bits() as u64);
+            mix(&mut h, opacity.to_bits() as u64);
+            mix(&mut h, shift_gain.to_bits() as u64);
+            mix(&mut h, color_gamma.to_bits() as u64);
+            mix(&mut h, *algo as u64);
+            mix(&mut h, *scheme as u64);
         }
     }
     mix(&mut h, freq_adj_hash);
@@ -514,46 +544,69 @@ fn apply_hfr_colormap_to_tile(
     }
 }
 
-/// Convert dB tile data to RGBA pixels with display settings and colormap applied.
-/// `freq_adjustments` is an optional per-row dB offset array (length == height).
-fn db_tile_to_rgba(
-    db_data: &[f32],
-    width: u32,
-    height: u32,
+/// Convert tile dB data (and optional flow shifts) to RGBA pixels.
+/// Dispatches on `TileRenderMode` to apply either colormap or flow-specific coloring.
+fn tile_to_rgba(
+    rendered: &PreRendered,
     settings: &SpectDisplaySettings,
-    colormap: ColormapMode,
+    render_mode: &TileRenderMode,
     freq_adjustments: Option<&[f32]>,
 ) -> Vec<u8> {
+    let db_data = &rendered.db_data;
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
-    let w = width as usize;
+    let w = rendered.width as usize;
 
-    match colormap {
-        ColormapMode::Uniform(cm) => {
-            for (i, &db) in db_data.iter().enumerate() {
-                let row = i / w;
-                let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
-                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
-                let [r, g, b] = cm.apply(grey);
-                let pi = i * 4;
-                rgba[pi] = r;
-                rgba[pi + 1] = g;
-                rgba[pi + 2] = b;
-                rgba[pi + 3] = 255;
+    match render_mode {
+        TileRenderMode::Spectrogram(colormap) => match colormap {
+            ColormapMode::Uniform(cm) => {
+                for (i, &db) in db_data.iter().enumerate() {
+                    let row = if w > 0 { i / w } else { 0 };
+                    let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
+                    let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
+                    let [r, g, b] = cm.apply(grey);
+                    let pi = i * 4;
+                    rgba[pi] = r;
+                    rgba[pi + 1] = g;
+                    rgba[pi + 2] = b;
+                    rgba[pi + 3] = 255;
+                }
             }
-        }
-        ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
-            let h = height as f64;
-            let focus_top = (h * (1.0 - ff_hi_frac)).round() as usize;
-            let focus_bot = (h * (1.0 - ff_lo_frac)).round() as usize;
+            ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
+                let h = rendered.height as f64;
+                let focus_top = (h * (1.0 - ff_hi_frac)).round() as usize;
+                let focus_bot = (h * (1.0 - ff_lo_frac)).round() as usize;
+                for (i, &db) in db_data.iter().enumerate() {
+                    let row = if w > 0 { i / w } else { 0 };
+                    let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
+                    let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
+                    let [r, g, b] = if row >= focus_top && row < focus_bot {
+                        cm.apply(grey)
+                    } else {
+                        [grey, grey, grey]
+                    };
+                    let pi = i * 4;
+                    rgba[pi] = r;
+                    rgba[pi + 1] = g;
+                    rgba[pi + 2] = b;
+                    rgba[pi + 3] = 255;
+                }
+            }
+        },
+        TileRenderMode::Flow { intensity_gate, flow_gate, opacity, shift_gain, color_gamma, algo, scheme } => {
+            let flow_shifts = &rendered.flow_shifts;
             for (i, &db) in db_data.iter().enumerate() {
-                let row = i / w;
+                let row = if w > 0 { i / w } else { 0 };
                 let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
-                let grey = db_to_greyscale(db, settings.floor_db, settings.range_db, settings.gamma, settings.gain_db + extra);
-                let [r, g, b] = if row >= focus_top && row < focus_bot {
-                    cm.apply(grey)
-                } else {
-                    [grey, grey, grey]
+                let grey = db_to_greyscale(
+                    db, settings.floor_db, settings.range_db,
+                    settings.gamma, settings.gain_db + extra,
+                );
+                let shift = if i < flow_shifts.len() { flow_shifts[i] } else { 0.0 };
+                let [r, g, b] = match algo {
+                    FlowAlgo::Phase => phase_rgb(grey, shift, *intensity_gate),
+                    FlowAlgo::PhaseCoherence => coherence_rgb(grey, shift, *intensity_gate, *flow_gate, *opacity, *shift_gain, *color_gamma),
+                    _ => flow_rgb_scheme(grey, shift, *intensity_gate, *flow_gate, *opacity, *shift_gain, *color_gamma, *scheme),
                 };
                 let pi = i * 4;
                 rgba[pi] = r;
@@ -567,7 +620,7 @@ fn db_tile_to_rgba(
     rgba
 }
 
-/// Composite spectrogram tiles from the tile cache onto the canvas.
+/// Composite spectrogram or flow tiles from the tile cache onto the canvas.
 /// Falls back to a preview image for tiles not yet cached.
 /// Returns true if at least one tile was drawn, false if nothing was available.
 pub fn blit_tiles_viewport(
@@ -580,14 +633,13 @@ pub fn blit_tiles_viewport(
     zoom: f64,
     freq_crop_lo: f64,
     freq_crop_hi: f64,
-    colormap: ColormapMode,
+    render_mode: TileRenderMode,
     display_settings: &SpectDisplaySettings,
     freq_adjustments: Option<&[f32]>,
-    // Preview fallback for missing tiles
     preview: Option<&PreviewImage>,
-    scroll_offset: f64,    // seconds (for preview mapping)
-    visible_time: f64,     // seconds (for preview mapping)
-    total_duration: f64,   // seconds (for preview mapping)
+    scroll_offset: f64,
+    visible_time: f64,
+    total_duration: f64,
     tile_source: TileSource,
 ) -> bool {
     use crate::canvas::tile_blit::{ViewportGeometry, compute_tile_blit_coords, for_each_visible_tile};
@@ -595,14 +647,19 @@ pub fn blit_tiles_viewport(
     let cw = viewport_width;
     let ch = viewport_height;
 
+    // For preview fallback, flow mode uses greyscale; spectrogram uses its colormap.
+    let preview_colormap = match &render_mode {
+        TileRenderMode::Spectrogram(cm) => *cm,
+        TileRenderMode::Flow { .. } => ColormapMode::Uniform(Colormap::Greyscale),
+    };
+
     let Some(vg) = ViewportGeometry::new(cw, ch, total_cols, scroll_col, zoom, freq_crop_lo, freq_crop_hi)
     else {
-        // No visible geometry — draw preview if available, else black.
         if let Some(pv) = preview {
             blit_preview_as_background(
                 ctx, pv, cw, ch,
                 scroll_offset, visible_time, total_duration,
-                freq_crop_lo, freq_crop_hi, colormap,
+                freq_crop_lo, freq_crop_hi, preview_colormap,
             );
         } else {
             ctx.set_fill_style_str("#000");
@@ -612,23 +669,28 @@ pub fn blit_tiles_viewport(
     };
 
     // Quick check: do all visible tiles exist at the ideal LOD (or any fallback)?
-    // If so, skip the expensive preview blit entirely — tiles will cover the viewport.
     let all_tiles_covered = {
         let check_fn = |fi: usize, lod: u8, ti: usize| -> bool {
             match tile_source {
-                TileSource::Reassigned => tile_cache::get_reassign_tile(fi, lod, ti).is_some(),
                 TileSource::Normal => tile_cache::get_tile(fi, lod, ti).is_some(),
+                TileSource::Reassigned => tile_cache::get_reassign_tile(fi, lod, ti).is_some(),
+                TileSource::Flow => tile_cache::get_flow_tile(fi, lod, ti).is_some(),
+            }
+        };
+        let fallback_fn = |fi: usize, lod: u8, ti: usize| -> bool {
+            match tile_source {
+                TileSource::Flow => tile_cache::get_flow_tile(fi, lod, ti).is_some(),
+                _ => tile_cache::get_tile(fi, lod, ti).is_some(),
             }
         };
         let mut covered = true;
         for tile_idx in vg.first_tile..=vg.last_tile {
             if vg.tile_clip_range(tile_idx).is_none() { continue; }
             if check_fn(file_idx, vg.ideal_lod, tile_idx) { continue; }
-            // Check fallback LODs
             let mut found_fallback = false;
             for fb_lod in (0..vg.ideal_lod).rev() {
                 let (fb_tile, _, _) = tile_cache::fallback_tile_info(vg.ideal_lod, tile_idx, fb_lod);
-                if tile_cache::get_tile(file_idx, fb_lod, fb_tile).is_some() {
+                if fallback_fn(file_idx, fb_lod, fb_tile) {
                     found_fallback = true;
                     break;
                 }
@@ -642,12 +704,11 @@ pub fn blit_tiles_viewport(
     };
 
     if !all_tiles_covered {
-        // Some tiles missing — draw preview as fallback background.
         if let Some(pv) = preview {
             blit_preview_as_background(
                 ctx, pv, cw, ch,
                 scroll_offset, visible_time, total_duration,
-                freq_crop_lo, freq_crop_hi, colormap,
+                freq_crop_lo, freq_crop_hi, preview_colormap,
             );
         } else {
             ctx.set_fill_style_str("#000");
@@ -660,10 +721,10 @@ pub fn blit_tiles_viewport(
 
     // Compute fingerprint for tile canvas cache invalidation.
     let adj_hash = hash_freq_adjustments(freq_adjustments);
-    let fingerprint = tile_render_fingerprint(display_settings, colormap, adj_hash);
+    let fingerprint = tile_render_fingerprint(display_settings, &render_mode, adj_hash);
 
     // Draw a tile to the canvas given its LOD and screen clip range.
-    // Uses a per-tile offscreen canvas cache to avoid re-running db_tile_to_rgba
+    // Uses a per-tile offscreen canvas cache to avoid re-running tile_to_rgba
     // + ImageData + put_image_data when only the scroll position changes.
     let blit_any_tile = |tile: &tile_cache::Tile, tile_lod: u8, tile_idx: usize,
                          clip_start: f64, clip_end: f64| {
@@ -693,21 +754,18 @@ pub fn blit_tiles_viewport(
         } else {
             // Render tile to a new offscreen canvas and cache it.
             let pixels = if !tile.rendered.db_data.is_empty() {
-                db_tile_to_rgba(
-                    &tile.rendered.db_data,
-                    tile.rendered.width, tile.rendered.height,
-                    display_settings, colormap,
-                    freq_adjustments,
-                )
+                tile_to_rgba(&tile.rendered, display_settings, &render_mode, freq_adjustments)
             } else {
                 let mut px = tile.rendered.pixels.clone();
-                match colormap {
-                    ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut px, cm),
-                    ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
-                        apply_hfr_colormap_to_tile(
-                            &mut px, tile.rendered.width, tile.rendered.height,
-                            cm, ff_lo_frac, ff_hi_frac,
-                        );
+                if let TileRenderMode::Spectrogram(colormap) = &render_mode {
+                    match colormap {
+                        ColormapMode::Uniform(cm) => apply_colormap_to_tile(&mut px, *cm),
+                        ColormapMode::HfrFocus { colormap: cm, ff_lo_frac, ff_hi_frac } => {
+                            apply_hfr_colormap_to_tile(
+                                &mut px, tile.rendered.width, tile.rendered.height,
+                                *cm, *ff_lo_frac, *ff_hi_frac,
+                            );
+                        }
                     }
                 }
                 px
@@ -725,7 +783,6 @@ pub fn blit_tiles_viewport(
             let doc = match web_sys::window().and_then(|w| w.document()) {
                 Some(d) => d,
                 None => {
-                    // Fallback: draw directly from tmp canvas (no caching)
                     ctx.set_image_smoothing_enabled(tile_lod != vg.ideal_lod);
                     let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
                         &tmp,
@@ -756,9 +813,7 @@ pub fn blit_tiles_viewport(
 
             TILE_CANVAS_CACHE.with(|c| {
                 let mut cache = c.borrow_mut();
-                // Cap cache size to prevent unbounded growth
                 if cache.len() > 256 {
-                    // Keep only tiles that might still be relevant
                     let keys: Vec<_> = cache.keys().copied().collect();
                     for k in keys.into_iter().take(cache.len() - 128) {
                         cache.remove(&k);
@@ -783,8 +838,9 @@ pub fn blit_tiles_viewport(
         |tile_idx, clip_start, clip_end| {
             let borrow_fn = |fi: usize, lod: u8, ti: usize, f: &dyn Fn(&tile_cache::Tile)| -> Option<()> {
                 match tile_source {
-                    TileSource::Reassigned => tile_cache::borrow_reassign_tile(fi, lod, ti, |t| f(t)),
                     TileSource::Normal => tile_cache::borrow_tile(fi, lod, ti, |t| f(t)),
+                    TileSource::Reassigned => tile_cache::borrow_reassign_tile(fi, lod, ti, |t| f(t)),
+                    TileSource::Flow => tile_cache::borrow_flow_tile(fi, lod, ti, |t| f(t)),
                 }
             };
             borrow_fn(file_idx, vg.ideal_lod, tile_idx, &|tile| {
@@ -792,192 +848,19 @@ pub fn blit_tiles_viewport(
             }).is_some()
         },
         |fb_tile, fb_lod, clip_start, clip_end| {
-            // Fallback always uses normal tiles (cheaper, already cached)
-            tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
-                blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
-            }).is_some()
-        },
-    );
-
-    any_drawn || preview.is_some()
-}
-
-/// Blit flow tiles from the flow tile cache (MV_CACHE).
-///
-/// Flow tiles store already-colored RGBA pixels (2D colormap pre-applied),
-/// so no colormap step is needed during blit.
-/// Convert flow tile dB+shift data to RGBA pixels at render time.
-///
-/// For each pixel: convert dB to greyscale using display settings, then apply
-/// `flow_rgb()`, `coherence_rgb()`, or `phase_rgb()` depending on algorithm.
-fn db_flow_tile_to_rgba(
-    db_data: &[f32],
-    flow_shifts: &[f32],
-    width: u32,
-    settings: &SpectDisplaySettings,
-    intensity_gate: f32,
-    flow_gate: f32,
-    opacity: f32,
-    shift_gain: f32,
-    color_gamma: f32,
-    algo: FlowAlgo,
-    scheme: FlowColorScheme,
-    freq_adjustments: Option<&[f32]>,
-) -> Vec<u8> {
-    let total = db_data.len();
-    let mut rgba = vec![0u8; total * 4];
-    let w = width as usize;
-
-    for i in 0..total {
-        let row = if w > 0 { i / w } else { 0 };
-        let extra = freq_adjustments.and_then(|a| a.get(row).copied()).unwrap_or(0.0);
-        let grey = db_to_greyscale(
-            db_data[i], settings.floor_db, settings.range_db,
-            settings.gamma, settings.gain_db + extra,
-        );
-        let shift = if i < flow_shifts.len() { flow_shifts[i] } else { 0.0 };
-        let [r, g, b] = match algo {
-            FlowAlgo::Phase => phase_rgb(grey, shift, intensity_gate),
-            FlowAlgo::PhaseCoherence => coherence_rgb(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma),
-            _ => flow_rgb_scheme(grey, shift, intensity_gate, flow_gate, opacity, shift_gain, color_gamma, scheme),
-        };
-        let pi = i * 4;
-        rgba[pi] = r;
-        rgba[pi + 1] = g;
-        rgba[pi + 2] = b;
-        rgba[pi + 3] = 255;
-    }
-
-    rgba
-}
-
-pub fn blit_flow_tiles_viewport(
-    ctx: &CanvasRenderingContext2d,
-    viewport_width: f64,
-    viewport_height: f64,
-    file_idx: usize,
-    total_cols: usize,
-    scroll_col: f64,
-    zoom: f64,
-    freq_crop_lo: f64,
-    freq_crop_hi: f64,
-    display_settings: &SpectDisplaySettings,
-    freq_adjustments: Option<&[f32]>,
-    intensity_gate: f32,
-    flow_gate: f32,
-    opacity: f32,
-    shift_gain: f32,
-    color_gamma: f32,
-    algo: FlowAlgo,
-    scheme: FlowColorScheme,
-    preview: Option<&PreviewImage>,
-    scroll_offset: f64,
-    visible_time: f64,
-    total_duration: f64,
-) -> bool {
-    use crate::canvas::tile_blit::{ViewportGeometry, compute_tile_blit_coords, for_each_visible_tile};
-
-    let cw = viewport_width;
-    let ch = viewport_height;
-
-    let Some(vg) = ViewportGeometry::new(cw, ch, total_cols, scroll_col, zoom, freq_crop_lo, freq_crop_hi)
-    else {
-        if let Some(pv) = preview {
-            blit_preview_as_background(
-                ctx, pv, cw, ch,
-                scroll_offset, visible_time, total_duration,
-                freq_crop_lo, freq_crop_hi, ColormapMode::Uniform(Colormap::Greyscale),
-            );
-        } else {
-            ctx.set_fill_style_str("#000");
-            ctx.fill_rect(0.0, 0.0, cw, ch);
-        }
-        return preview.is_some();
-    };
-
-    // Check if all visible flow tiles are cached before blitting the expensive preview.
-    let all_flow_covered = {
-        let mut covered = true;
-        for tile_idx in vg.first_tile..=vg.last_tile {
-            if vg.tile_clip_range(tile_idx).is_none() { continue; }
-            if tile_cache::get_flow_tile(file_idx, vg.ideal_lod, tile_idx).is_some() { continue; }
-            let mut found_fb = false;
-            for fb_lod in (0..vg.ideal_lod).rev() {
-                let (fb_tile, _, _) = tile_cache::fallback_tile_info(vg.ideal_lod, tile_idx, fb_lod);
-                if tile_cache::get_flow_tile(file_idx, fb_lod, fb_tile).is_some() {
-                    found_fb = true;
-                    break;
+            // For flow tiles, fallback must also use flow cache
+            match tile_source {
+                TileSource::Flow => {
+                    tile_cache::borrow_flow_tile(file_idx, fb_lod, fb_tile, |tile| {
+                        blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                    }).is_some()
+                }
+                _ => {
+                    tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
+                        blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                    }).is_some()
                 }
             }
-            if !found_fb { covered = false; break; }
-        }
-        covered
-    };
-
-    if !all_flow_covered {
-        if let Some(pv) = preview {
-            blit_preview_as_background(
-                ctx, pv, cw, ch,
-                scroll_offset, visible_time, total_duration,
-                freq_crop_lo, freq_crop_hi, ColormapMode::Uniform(Colormap::Greyscale),
-            );
-        } else {
-            ctx.set_fill_style_str("#000");
-            ctx.fill_rect(0.0, 0.0, cw, ch);
-        }
-    } else {
-        ctx.set_fill_style_str("#000");
-        ctx.fill_rect(0.0, 0.0, cw, ch);
-    }
-
-    // Draw a flow tile to the canvas.
-    let blit_flow_tile = |tile: &tile_cache::Tile, tile_lod: u8, tile_idx: usize,
-                          clip_start: f64, clip_end: f64| {
-        let Some(coords) = compute_tile_blit_coords(
-            &vg, tile.rendered.width as f64, tile.rendered.height as f64,
-            tile_lod, tile_idx, clip_start, clip_end,
-        ) else { return };
-
-        // Composite dB+shift to RGBA at render time
-        let rgba = if !tile.rendered.db_data.is_empty() {
-            db_flow_tile_to_rgba(
-                &tile.rendered.db_data, &tile.rendered.flow_shifts,
-                tile.rendered.width,
-                display_settings, intensity_gate, flow_gate, opacity,
-                shift_gain, color_gamma, algo, scheme,
-                freq_adjustments,
-            )
-        } else {
-            tile.rendered.pixels.clone()
-        };
-
-        let clamped = Clamped(&rgba[..]);
-        let Ok(img) = ImageData::new_with_u8_clamped_array_and_sh(
-            clamped, tile.rendered.width, tile.rendered.height,
-        ) else { return };
-
-        let Some((tmp, tmp_ctx)) = get_tmp_canvas(tile.rendered.width, tile.rendered.height) else { return };
-        let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
-
-        ctx.set_image_smoothing_enabled(tile_lod != vg.ideal_lod);
-        let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-            &tmp,
-            coords.src_x, coords.src_y, coords.src_w, coords.src_h,
-            coords.dst_x, coords.dst_y, coords.dst_w, coords.dst_h,
-        );
-    };
-
-    let any_drawn = for_each_visible_tile(
-        &vg,
-        |tile_idx, clip_start, clip_end| {
-            tile_cache::borrow_flow_tile(file_idx, vg.ideal_lod, tile_idx, |tile| {
-                blit_flow_tile(tile, vg.ideal_lod, tile_idx, clip_start, clip_end);
-            }).is_some()
-        },
-        |fb_tile, fb_lod, clip_start, clip_end| {
-            tile_cache::borrow_flow_tile(file_idx, fb_lod, fb_tile, |tile| {
-                blit_flow_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
-            }).is_some()
         },
     );
 
