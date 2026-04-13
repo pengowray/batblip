@@ -57,6 +57,14 @@ fn draw_bend_shield(
     bands: [[u8; 3]; 3],
     alpha: f64,
 ) {
+    if h < 1.0 { return; } // too small to draw
+
+    // Clip to the shield rectangle so nothing renders outside the range
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x, y_top, w, h);
+    ctx.clip();
+
     // Two parallel diagonal lines divide the rectangle into 3 regions.
     // `diag_slope` controls the diagonal tilt (how far the midline deviates
     // from horizontal at each edge); `band_frac` controls the middle band's
@@ -124,6 +132,13 @@ fn draw_bend_shield(
         ctx.line_to(x + w, y_top + l_r * h);
         ctx.stroke();
     }
+
+    // Bordure: dark outline around the shield (vexillological border)
+    ctx.set_stroke_style_str(&format!("rgba(0,0,0,{:.2})", alpha * 0.7));
+    ctx.set_line_width(1.0);
+    ctx.stroke_rect(x + 0.5, y_top + 0.5, w - 1.0, h - 1.0);
+
+    ctx.restore();
 }
 
 /// Draw horizontal frequency marker lines with subtle, interactive UI.
@@ -192,19 +207,31 @@ pub fn draw_freq_markers(
 
         // --- Color range bar (covering the interval above this division) ---
         // Only show bands within: axis drag range, FF handle drag range, or active FF range.
+        // Skip major bars below 20 kHz when minor bars will provide finer coverage.
+        let has_minor_coverage = div_interval >= 5_000.0 && freq < 20_000.0;
         let bar_top_freq = (freq + div_interval).min(max_freq);
-        let axis_drag_in_range = match (ms.axis_drag_lo, ms.axis_drag_hi) {
-            (Some(lo), Some(hi)) => bar_top_freq > lo && freq < hi,
-            _ => false,
-        };
-        let ff_drag_in_range = ms.ff_drag_active && ms.ff_hi > ms.ff_lo && bar_top_freq > ms.ff_lo && freq < ms.ff_hi;
-        let ff_active_in_range = !ms.ff_drag_active && ms.ff_hi > ms.ff_lo && bar_top_freq > ms.ff_lo && freq < ms.ff_hi;
-        if axis_drag_in_range || ff_drag_in_range || ff_active_in_range {
-            let bar_alpha = if axis_drag_in_range || ff_drag_in_range { 0.8 } else { 0.6 };
-            let bar_y_top = freq_to_y(bar_top_freq, min_freq, max_freq, canvas_height);
-            let bar_y_bot = freq_to_y(freq, min_freq, max_freq, canvas_height);
-            let bands = freq_resistor_bands(freq);
-            draw_bend_shield(ctx, color_bar_x, bar_y_top, color_bar_w, bar_y_bot - bar_y_top, bands, bar_alpha);
+        if !has_minor_coverage {
+            let axis_drag_in_range = match (ms.axis_drag_lo, ms.axis_drag_hi) {
+                (Some(lo), Some(hi)) => bar_top_freq > lo && freq < hi,
+                _ => false,
+            };
+            let ff_drag_in_range = ms.ff_drag_active && ms.ff_hi > ms.ff_lo && bar_top_freq > ms.ff_lo && freq < ms.ff_hi;
+            let ff_active_in_range = !ms.ff_drag_active && ms.ff_hi > ms.ff_lo && bar_top_freq > ms.ff_lo && freq < ms.ff_hi;
+            if axis_drag_in_range || ff_drag_in_range || ff_active_in_range {
+                let bar_alpha = if axis_drag_in_range || ff_drag_in_range { 0.8 } else { 0.6 };
+                // Clamp bar extent to active range boundaries
+                let (clamp_lo, clamp_hi) = if axis_drag_in_range {
+                    (ms.axis_drag_lo.unwrap(), ms.axis_drag_hi.unwrap())
+                } else {
+                    (ms.ff_lo, ms.ff_hi)
+                };
+                let clamped_lo = freq.max(clamp_lo);
+                let clamped_hi = bar_top_freq.min(clamp_hi);
+                let bar_y_top = freq_to_y(clamped_hi, min_freq, max_freq, canvas_height);
+                let bar_y_bot = freq_to_y(clamped_lo, min_freq, max_freq, canvas_height);
+                let bands = freq_resistor_bands(freq);
+                draw_bend_shield(ctx, color_bar_x, bar_y_top, color_bar_w, bar_y_bot - bar_y_top, bands, bar_alpha);
+            }
         }
 
         // --- White text label (drawn ABOVE the division line) ---
@@ -337,32 +364,50 @@ pub fn draw_freq_markers(
         let minor_end = max_freq.min(20_000.0);
         let mut mf = minor_start;
         while mf < minor_end {
-            // Skip if coincides with a main division
+            // Check if this minor freq coincides with a main division
             let ratio = mf / div_interval;
-            if (ratio - ratio.round()).abs() < 0.001 {
-                mf += minor_interval;
-                continue;
+            let is_major = (ratio - ratio.round()).abs() < 0.001;
+
+            // Draw tick marks and labels only for non-major frequencies
+            if !is_major {
+                let y = freq_to_y(mf, min_freq, max_freq, canvas_height);
+                let minor_color = freq_marker_color(mf);
+                let minor_alpha = 0.3;
+
+                // Short left tick
+                let tr = minor_color[0]; let tg = minor_color[1]; let tb = minor_color[2];
+                ctx.set_stroke_style_str(&format!("rgba({},{},{},{:.2})", tr, tg, tb, minor_alpha));
+                ctx.set_line_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(0.0, y);
+                ctx.line_to(tick_len * 0.5, y);
+                ctx.stroke();
+
+                // Short right tick
+                ctx.begin_path();
+                ctx.move_to(canvas_width - right_tick_len * 0.5, y);
+                ctx.line_to(canvas_width, y);
+                ctx.stroke();
+
+                // Small label (only when hovering label area)
+                if ms.label_hover_opacity > 0.01 {
+                    let mlabel = freq_marker_label(mf);
+                    ctx.set_font("9px sans-serif");
+                    ctx.set_text_baseline("bottom");
+                    let label_alpha_m = 0.4 * ms.label_hover_opacity;
+                    ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha_m));
+                    let text_x = if labels_on_right {
+                        let m = ctx.measure_text(&mlabel).unwrap();
+                        label_x - m.width()
+                    } else {
+                        label_x
+                    };
+                    let _ = ctx.fill_text(&mlabel, text_x, y - 2.0);
+                }
             }
-            let y = freq_to_y(mf, min_freq, max_freq, canvas_height);
-            let minor_color = freq_marker_color(mf);
-            let minor_alpha = 0.3;
 
-            // Short left tick
-            let tr = minor_color[0]; let tg = minor_color[1]; let tb = minor_color[2];
-            ctx.set_stroke_style_str(&format!("rgba({},{},{},{:.2})", tr, tg, tb, minor_alpha));
-            ctx.set_line_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(0.0, y);
-            ctx.line_to(tick_len * 0.5, y);
-            ctx.stroke();
-
-            // Short right tick
-            ctx.begin_path();
-            ctx.move_to(canvas_width - right_tick_len * 0.5, y);
-            ctx.line_to(canvas_width, y);
-            ctx.stroke();
-
-            // Minor color bar (only when within axis drag, FF drag, or active FF range)
+            // Minor color bar — always draw (including at major-division frequencies
+            // to fill gaps left by suppressed major bars)
             let bar_top_freq_m = (mf + minor_interval).min(max_freq).min(20_000.0);
             let axis_drag_in_m = match (ms.axis_drag_lo, ms.axis_drag_hi) {
                 (Some(lo), Some(hi)) => bar_top_freq_m > lo && mf < hi,
@@ -372,26 +417,20 @@ pub fn draw_freq_markers(
             let ff_active_in_m = !ms.ff_drag_active && ms.ff_hi > ms.ff_lo && bar_top_freq_m > ms.ff_lo && mf < ms.ff_hi;
             if axis_drag_in_m || ff_drag_in_m || ff_active_in_m {
                 let bar_alpha_m = if axis_drag_in_m || ff_drag_in_m { 0.6 } else { 0.4 };
-                let by_top = freq_to_y(bar_top_freq_m, min_freq, max_freq, canvas_height);
-                let by_bot = freq_to_y(mf, min_freq, max_freq, canvas_height);
-                let bands = freq_resistor_bands(mf);
-                draw_bend_shield(ctx, color_bar_x, by_top, color_bar_w, by_bot - by_top, bands, bar_alpha_m);
-            }
-
-            // Small label (only when hovering label area)
-            if ms.label_hover_opacity > 0.01 {
-                let mlabel = freq_marker_label(mf);
-                ctx.set_font("9px sans-serif");
-                ctx.set_text_baseline("bottom");
-                let label_alpha_m = 0.4 * ms.label_hover_opacity;
-                ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha_m));
-                let text_x = if labels_on_right {
-                    let m = ctx.measure_text(&mlabel).unwrap();
-                    label_x - m.width()
+                // Clamp bar extent to active range boundaries
+                let (clamp_lo, clamp_hi) = if axis_drag_in_m {
+                    (ms.axis_drag_lo.unwrap(), ms.axis_drag_hi.unwrap())
                 } else {
-                    label_x
+                    (ms.ff_lo, ms.ff_hi)
                 };
-                let _ = ctx.fill_text(&mlabel, text_x, y - 2.0);
+                let clamped_lo = mf.max(clamp_lo);
+                let clamped_hi = bar_top_freq_m.min(clamp_hi);
+                if clamped_hi > clamped_lo {
+                    let by_top = freq_to_y(clamped_hi, min_freq, max_freq, canvas_height);
+                    let by_bot = freq_to_y(clamped_lo, min_freq, max_freq, canvas_height);
+                    let bands = freq_resistor_bands(mf);
+                    draw_bend_shield(ctx, color_bar_x, by_top, color_bar_w, by_bot - by_top, bands, bar_alpha_m);
+                }
             }
 
             mf += minor_interval;
