@@ -1539,8 +1539,8 @@ fn MainViewButton() -> impl IntoView {
                         {move || {
                             let current = state.spect_fft_mode.get();
                             let options: [(&str, &str); 10] = [
-                                ("am", "Adaptive M"),
                                 ("as", "Adaptive S"),
+                                ("am", "Adaptive M"),
                                 ("al", "Adaptive L"),
                                 ("128", "128"),
                                 ("256", "256"),
