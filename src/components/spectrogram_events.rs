@@ -665,10 +665,15 @@ pub fn on_mousemove(
         state.mouse_canvas_x.set(px_x);
         state.cursor_time.set(Some(t));
 
+        // Canvas height for time-axis zone detection (reuse single rect query)
+        let canvas_height = canvas_ref.get()
+            .map(|el| {
+                let canvas: &HtmlCanvasElement = el.as_ref();
+                canvas.get_bounding_client_rect().height()
+            });
+
         // Time-axis tooltip: show full datetime when hovering bottom 16px
-        if let Some(canvas_el) = canvas_ref.get() {
-            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-            let ch = canvas.get_bounding_client_rect().height();
+        if let Some(ch) = canvas_height {
             if px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH {
                 let tooltip = state.current_file()
                     .and_then(|f| f.recording_start_info())
@@ -688,11 +693,9 @@ pub fn on_mousemove(
         // Update label hover target and in-label-area / time-axis state
         let in_label_area = px_x < LABEL_AREA_WIDTH;
         state.mouse_in_label_area.set(in_label_area);
-        let in_time_axis = if let Some(canvas_el) = canvas_ref.get() {
-            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-            let ch = canvas.get_bounding_client_rect().height();
-            px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH
-        } else { false };
+        let in_time_axis = canvas_height
+            .map(|ch| px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH)
+            .unwrap_or(false);
         state.mouse_in_time_axis.set(in_time_axis);
         let current_target = ix.label_hover_target.get_untracked();
         let new_target = if in_label_area { 1.0 } else { 0.0 };

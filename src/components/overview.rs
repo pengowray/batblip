@@ -381,26 +381,17 @@ pub fn OverviewPanel() -> impl IntoView {
                 ctx.rect(seg_x, 0.0, seg_w, ch);
                 ctx.clip();
 
-                // Draw the preview image scaled to the segment region
-                let img_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
-                    wasm_bindgen::Clamped(preview.pixels.as_slice()),
-                    preview.width,
-                    preview.height,
-                );
-                if let Ok(img) = img_data {
-                    // Create a temporary canvas for the preview
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                        if let Ok(tmp) = doc.create_element("canvas") {
-                            let tmp_canvas: web_sys::HtmlCanvasElement = tmp.unchecked_into();
-                            tmp_canvas.set_width(preview.width);
-                            tmp_canvas.set_height(preview.height);
-                            if let Some(tmp_ctx) = get_canvas_ctx(&tmp_canvas) {
-                                let _ = tmp_ctx.put_image_data(&img, 0.0, 0.0);
-                                let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
-                                    &tmp_canvas, seg_x, 0.0, seg_w, ch,
-                                );
-                            }
-                        }
+                // Draw the preview image scaled to the segment region,
+                // reusing the shared tmp canvas instead of creating DOM elements per frame.
+                if let Some((tmp, tc)) = get_overview_tmp_canvas(preview.width, preview.height) {
+                    let clamped = wasm_bindgen::Clamped(preview.pixels.as_slice());
+                    if let Ok(img) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+                        clamped, preview.width, preview.height,
+                    ) {
+                        let _ = tc.put_image_data(&img, 0.0, 0.0);
+                        let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
+                            &tmp, seg_x, 0.0, seg_w, ch,
+                        );
                     }
                 }
 
