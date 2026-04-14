@@ -1900,37 +1900,6 @@ body.sidebar-resizing {
     text-overflow: ellipsis;
 }
 
-/* Undo/Redo buttons in toolbar */
-.toolbar-undo-redo {
-    display: flex;
-    gap: 2px;
-    align-items: center;
-    margin-left: auto;
-    margin-right: 36px;
-    flex-shrink: 0;
-}
-
-.toolbar-undo-btn {
-    background: transparent !important;
-    border: 1px solid transparent !important;
-    color: #999;
-    font-size: 16px;
-    padding: 2px 6px !important;
-    cursor: pointer;
-    border-radius: 3px;
-    line-height: 1;
-}
-
-.toolbar-undo-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1) !important;
-    color: #eee;
-}
-
-.toolbar-undo-btn:disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-
 /* Mode group — radio-style buttons */
 .mode-group {
     display: flex;
@@ -2294,43 +2263,6 @@ body.sidebar-resizing {
     height: 100%;
     display: block;
     image-rendering: pixelated;
-}
-
-.overview-nav {
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    display: flex;
-    gap: 2px;
-    z-index: 10;
-    pointer-events: auto;
-}
-
-.overview-nav-btn {
-    background: rgba(20, 20, 20, 0.8);
-    border: 1px solid rgba(80, 80, 80, 0.5);
-    color: #999;
-    border-radius: 4px;
-    width: 24px;
-    height: 22px;
-    font-size: 13px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    line-height: 1;
-    backdrop-filter: blur(4px);
-}
-
-.overview-nav-btn:hover:not(:disabled) {
-    background: rgba(50, 50, 50, 0.9);
-    color: #eee;
-}
-
-.overview-nav-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
 }
 
 /* ── Main view area ─────────────────────────────────────────────────────── */
@@ -3399,21 +3331,6 @@ body.sidebar-resizing {
 
 /* ── Mobile / Android ──────────────────────────────────────────────── */
 
-.toolbar-menu-btn {
-    background: none;
-    border: none;
-    color: #ccc;
-    font-size: 22px;
-    padding: 2px 8px;
-    cursor: pointer;
-    line-height: 1;
-    flex-shrink: 0;
-}
-
-.toolbar-menu-btn:hover {
-    color: #fff;
-}
-
 .toolbar-info-btn-mobile {
     background: none;
     border: none;
@@ -3429,36 +3346,36 @@ body.sidebar-resizing {
     color: #ccc;
 }
 
-.toolbar-mobile-right {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    gap: 0;
+.toolbar-overflow-fixed {
+    position: fixed;
+    top: 4px;
+    right: 36px;
+    z-index: 100;
 }
 
 .toolbar-overflow-wrap {
     position: relative;
 }
 
-.toolbar button.toolbar-overflow-btn {
-    background: transparent;
-    border: 1px solid #2a2a2a;
+.toolbar-overflow-btn {
+    width: 28px;
+    height: 32px;
+    background: #1a1a1a;
+    border: 1px solid #333;
     border-radius: 4px;
-    color: #888;
+    color: #777;
     font-size: 14px;
-    padding: 3px 8px;
     cursor: pointer;
-    line-height: 1;
-    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     letter-spacing: 2px;
-    margin-right: 6px;
 }
 
-.toolbar button.toolbar-overflow-btn:hover,
-.toolbar button.toolbar-overflow-btn:active {
-    background: rgba(255, 255, 255, 0.05);
-    color: #bbb;
-    border-color: #444;
+.toolbar-overflow-btn:hover {
+    color: #ddd;
+    background: #282828;
 }
 
 .toolbar-overflow-backdrop {
@@ -3515,6 +3432,16 @@ body.sidebar-resizing {
     height: 1px;
     background: rgba(255, 255, 255, 0.1);
     margin: 4px 0;
+}
+
+/* Landscape mobile: push fixed corner buttons below the toolbar */
+@media (orientation: landscape) and (max-height: 500px) {
+    .sidebar.collapsed .sidebar-collapse-btn,
+    .right-sidebar .sidebar-collapse-btn,
+    .right-sidebar.collapsed .sidebar-collapse-btn,
+    .toolbar-overflow-fixed {
+        top: 44px;
+    }
 }
 
 .sidebar.mobile-overlay {

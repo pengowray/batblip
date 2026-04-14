@@ -66,32 +66,6 @@ fn push_nav(state: &AppState) {
     state.push_nav();
 }
 
-fn nav_back(state: &AppState) {
-    let idx = state.nav_index.get_untracked();
-    if idx == 0 { return; }
-    let new_idx = idx - 1;
-    state.nav_index.set(new_idx);
-    let hist = state.nav_history.get_untracked();
-    if let Some(entry) = hist.get(new_idx) {
-        state.suspend_follow();
-        state.scroll_offset.set(entry.scroll_offset);
-        state.zoom_level.set(entry.zoom_level);
-    }
-}
-
-fn nav_forward(state: &AppState) {
-    let idx = state.nav_index.get_untracked();
-    let hist = state.nav_history.get_untracked();
-    if idx + 1 >= hist.len() { return; }
-    let new_idx = idx + 1;
-    state.nav_index.set(new_idx);
-    if let Some(entry) = hist.get(new_idx) {
-        state.suspend_follow();
-        state.scroll_offset.set(entry.scroll_offset);
-        state.zoom_level.set(entry.zoom_level);
-    }
-}
-
 // ── Rendering helpers ─────────────────────────────────────────────────────────
 
 fn get_canvas_ctx(canvas: &HtmlCanvasElement) -> Option<CanvasRenderingContext2d> {
@@ -1039,36 +1013,8 @@ pub fn OverviewPanel() -> impl IntoView {
         state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
     };
 
-    // Back/forward can_back and can_forward
-    let can_back = move || state.nav_index.get() > 0;
-    let can_forward = move || {
-        let idx = state.nav_index.get();
-        let len = state.nav_history.get().len();
-        idx + 1 < len
-    };
-
     view! {
         <div class="overview-strip">
-            // Back/Forward navigation buttons (top-left)
-            <div class="overview-nav"
-                on:click=|ev: MouseEvent| ev.stop_propagation()
-                on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
-                style:display=move || if state.clean_view.get() { "none" } else { "" }
-            >
-                <button
-                    class="overview-nav-btn"
-                    disabled=move || !can_back()
-                    on:click=move |_| nav_back(&state)
-                    title="Back"
-                >"←"</button>
-                <button
-                    class="overview-nav-btn"
-                    disabled=move || !can_forward()
-                    on:click=move |_| nav_forward(&state)
-                    title="Forward"
-                >"→"</button>
-            </div>
-
             // Background canvas — static waveform/spectrogram (no scroll redraw)
             <canvas
                 node_ref=canvas_ref
