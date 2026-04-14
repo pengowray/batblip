@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
@@ -469,15 +468,21 @@ pub fn Waveform() -> impl IntoView {
         }
     };
 
-    let on_mousedown = move |ev: MouseEvent| {
+    let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
-        // Always start pan drag (bookmark on click is handled in mouseup)
+        // Always start pan drag (bookmark on click is handled in pointerup)
         state.is_dragging.set(true);
         hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+        // Capture pointer so drag continues when cursor leaves the canvas
+        if let Some(target) = ev.target() {
+            if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                let _ = el.set_pointer_capture(ev.pointer_id());
+            }
+        }
     };
 
-    let on_mousemove = move |ev: MouseEvent| {
+    let on_pointermove = move |ev: web_sys::PointerEvent| {
         if !state.is_dragging.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
@@ -497,7 +502,7 @@ pub fn Waveform() -> impl IntoView {
         state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
     };
 
-    let on_mouseup = move |ev: MouseEvent| {
+    let on_pointerup = move |ev: web_sys::PointerEvent| {
         if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
             let (start_x, _) = hand_drag_start.get_untracked();
             let dx = (ev.client_x() as f64 - start_x).abs();
@@ -509,8 +514,11 @@ pub fn Waveform() -> impl IntoView {
         state.is_dragging.set(false);
     };
 
-    let on_mouseleave = move |_ev: MouseEvent| {
-        state.is_dragging.set(false);
+    let on_pointerleave = move |_ev: web_sys::PointerEvent| {
+        // Don't clear drag state during an active drag — pointer capture keeps events flowing
+        if !state.is_dragging.get_untracked() {
+            // Only clear hover state when not dragging
+        }
     };
 
     // ── Touch event handlers (mobile) ──────────────────────────────────────────
@@ -664,10 +672,10 @@ pub fn Waveform() -> impl IntoView {
             <canvas
                 node_ref=canvas_ref
                 on:wheel=on_wheel
-                on:mousedown=on_mousedown
-                on:mousemove=on_mousemove
-                on:mouseup=on_mouseup
-                on:mouseleave=on_mouseleave
+                on:pointerdown=on_pointerdown
+                on:pointermove=on_pointermove
+                on:pointerup=on_pointerup
+                on:pointerleave=on_pointerleave
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend

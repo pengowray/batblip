@@ -907,7 +907,7 @@ pub fn OverviewPanel() -> impl IntoView {
         }).unwrap_or(0.0)
     };
 
-    let on_mousedown = move |ev: MouseEvent| {
+    let on_pointerdown = move |ev: web_sys::PointerEvent| {
         ev.prevent_default();
         let Some(canvas_el) = overlay_ref.get_untracked() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -925,9 +925,15 @@ pub fn OverviewPanel() -> impl IntoView {
         drag_active.set(true);
         drag_start_x.set(ev.client_x() as f64);
         drag_start_scroll.set(state.scroll_offset.get_untracked());
+        // Capture pointer so drag continues when cursor leaves the overview strip
+        if let Some(target) = ev.target() {
+            if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                let _ = el.set_pointer_capture(ev.pointer_id());
+            }
+        }
     };
 
-    let on_mousemove = move |ev: MouseEvent| {
+    let on_pointermove = move |ev: web_sys::PointerEvent| {
         if !drag_active.get_untracked() { return; }
         let Some(canvas_el) = overlay_ref.get_untracked() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -952,7 +958,7 @@ pub fn OverviewPanel() -> impl IntoView {
         state.scroll_offset.set(new_scroll);
     };
 
-    let on_mouseup = move |_: MouseEvent| {
+    let on_pointerup = move |_: web_sys::PointerEvent| {
         drag_active.set(false);
     };
 
@@ -1070,10 +1076,9 @@ pub fn OverviewPanel() -> impl IntoView {
             // Overlay canvas — viewport rect, bookmarks, time markers (cheap per-frame)
             <canvas
                 node_ref=overlay_ref
-                on:mousedown=on_mousedown
-                on:mousemove=on_mousemove
-                on:mouseup=on_mouseup
-                on:mouseleave=on_mouseup
+                on:pointerdown=on_pointerdown
+                on:pointermove=on_pointermove
+                on:pointerup=on_pointerup
                 on:wheel=on_wheel
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove

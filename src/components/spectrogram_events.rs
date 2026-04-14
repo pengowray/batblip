@@ -1,5 +1,6 @@
 use leptos::prelude::*;
-use web_sys::{HtmlCanvasElement, MouseEvent};
+use wasm_bindgen::JsCast;
+use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
 use crate::canvas::coord::pointer_to_xtf;
 use crate::canvas::hit_test::{hit_test_spec_handles, is_in_ff_drag_zone, hit_test_annotation_handles, hit_test_annotation_body};
 use crate::canvas::spectrogram_renderer;
@@ -402,10 +403,23 @@ pub fn apply_annotation_resize(
     });
 }
 
-// ── Mouse event handlers ───────────────────────────────────────────────────
+// ── Pointer capture helper ────────────────────────────────────────────────
 
-pub fn on_mousedown(
-    ev: MouseEvent,
+/// Call setPointerCapture on the event target so that pointermove/pointerup
+/// continue to fire even when the cursor leaves the canvas (e.g. into the
+/// toolbar, sidebar, or off-window).
+fn capture_pointer(ev: &PointerEvent) {
+    if let Some(target) = ev.target() {
+        if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+            let _ = el.set_pointer_capture(ev.pointer_id());
+        }
+    }
+}
+
+// ── Pointer event handlers ───────────────────────────────────────────────────
+
+pub fn on_pointerdown(
+    ev: PointerEvent,
     ix: SpectInteraction,
     canvas_ref: &NodeRef<leptos::html::Canvas>,
     state: AppState,
@@ -443,6 +457,7 @@ pub fn on_mousedown(
             }
             state.annotation_drag_handle.set(Some((ann_id.clone(), handle_pos)));
             state.is_dragging.set(true);
+            capture_pointer(&ev);
             ev.prevent_default();
             return;
         }
@@ -465,6 +480,7 @@ pub fn on_mousedown(
         if allow_drag {
             state.spec_drag_handle.set(Some(handle));
             state.is_dragging.set(true);
+            capture_pointer(&ev);
             ev.prevent_default();
             return;
         }
@@ -515,6 +531,7 @@ pub fn on_mousedown(
                 ix.corner_drag_start_client.set((ev.client_x() as f64, ev.client_y() as f64));
                 ix.corner_drag_axis.set(None);
                 state.is_dragging.set(true);
+                capture_pointer(&ev);
                 ev.prevent_default();
                 return;
             }
@@ -548,6 +565,7 @@ pub fn on_mousedown(
                 }
             }
             state.is_dragging.set(true);
+            capture_pointer(&ev);
             ev.prevent_default();
             return;
         }
@@ -590,6 +608,7 @@ pub fn on_mousedown(
                     ix.time_axis_pending.set(Some((ev.client_x() as f64, t, ev.shift_key(), t)));
                     state.is_dragging.set(true);
                 }
+                capture_pointer(&ev);
                 ev.prevent_default();
                 return;
             }
@@ -651,10 +670,15 @@ pub fn on_mousedown(
             }
         }
     }
+
+    // Capture pointer so drag continues even when cursor leaves the canvas
+    if state.is_dragging.get_untracked() {
+        capture_pointer(&ev);
+    }
 }
 
-pub fn on_mousemove(
-    ev: MouseEvent,
+pub fn on_pointermove(
+    ev: PointerEvent,
     ix: SpectInteraction,
     canvas_ref: &NodeRef<leptos::html::Canvas>,
     state: AppState,
@@ -879,34 +903,30 @@ pub fn on_mousemove(
     }
 }
 
-pub fn on_mouseleave(
-    _ev: MouseEvent,
+pub fn on_pointerleave(
+    _ev: PointerEvent,
     ix: SpectInteraction,
     state: AppState,
 ) {
+    // When pointer is captured (during a drag), pointerleave won't normally fire.
+    // But if it does somehow, preserve drag state so the gesture isn't interrupted.
+    if state.is_dragging.get_untracked() {
+        return;
+    }
+
     state.mouse_freq.set(None);
     state.mouse_in_label_area.set(false);
     state.mouse_in_time_axis.set(false);
     state.cursor_time.set(None);
     ix.label_hover_target.set(0.0);
-    state.is_dragging.set(false);
-    state.spec_drag_handle.set(None);
     state.spec_hover_handle.set(None);
-    state.annotation_drag_handle.set(None);
-    state.annotation_drag_original.set(None);
     state.annotation_hover_handle.set(None);
-    state.axis_drag_start_freq.set(None);
-    state.axis_drag_current_freq.set(None);
-    ix.time_axis_dragging.set(false);
-    ix.time_axis_pending.set(None);
     ix.time_axis_tooltip.set(None);
-    ix.corner_drag_active.set(false);
-    ix.corner_drag_axis.set(None);
     ix.pending_annotation_hit.set(None);
 }
 
-pub fn on_mouseup(
-    ev: MouseEvent,
+pub fn on_pointerup(
+    ev: PointerEvent,
     ix: SpectInteraction,
     canvas_ref: &NodeRef<leptos::html::Canvas>,
     state: AppState,

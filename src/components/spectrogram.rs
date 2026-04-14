@@ -1199,17 +1199,17 @@ pub fn Spectrogram() -> impl IntoView {
     });
 
     // ── Event handler delegates ────────────────────────────────────────────────
-    let on_mousedown = move |ev: web_sys::MouseEvent| {
-        spectrogram_events::on_mousedown(ev, ix, &canvas_ref, state);
+    let on_pointerdown = move |ev: web_sys::PointerEvent| {
+        spectrogram_events::on_pointerdown(ev, ix, &canvas_ref, state);
     };
-    let on_mousemove = move |ev: web_sys::MouseEvent| {
-        spectrogram_events::on_mousemove(ev, ix, &canvas_ref, state);
+    let on_pointermove = move |ev: web_sys::PointerEvent| {
+        spectrogram_events::on_pointermove(ev, ix, &canvas_ref, state);
     };
-    let on_mouseleave = move |ev: web_sys::MouseEvent| {
-        spectrogram_events::on_mouseleave(ev, ix, state);
+    let on_pointerleave = move |ev: web_sys::PointerEvent| {
+        spectrogram_events::on_pointerleave(ev, ix, state);
     };
-    let on_mouseup = move |ev: web_sys::MouseEvent| {
-        spectrogram_events::on_mouseup(ev, ix, &canvas_ref, state);
+    let on_pointerup = move |ev: web_sys::PointerEvent| {
+        spectrogram_events::on_pointerup(ev, ix, &canvas_ref, state);
     };
     let on_dblclick = move |ev: web_sys::MouseEvent| {
         spectrogram_events::on_dblclick(ev, &canvas_ref, state);
@@ -1274,10 +1274,10 @@ pub fn Spectrogram() -> impl IntoView {
             <canvas
                 node_ref=canvas_ref
                 on:wheel=on_wheel
-                on:mousedown=on_mousedown
-                on:mousemove=on_mousemove
-                on:mouseup=on_mouseup
-                on:mouseleave=on_mouseleave
+                on:pointerdown=on_pointerdown
+                on:pointermove=on_pointermove
+                on:pointerup=on_pointerup
+                on:pointerleave=on_pointerleave
                 on:dblclick=on_dblclick
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
