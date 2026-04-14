@@ -3511,6 +3511,12 @@ body.sidebar-resizing {
     text-align: center;
 }
 
+.toolbar-overflow-separator {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 4px 0;
+}
+
 .sidebar.mobile-overlay {
     position: fixed;
     top: 0;
