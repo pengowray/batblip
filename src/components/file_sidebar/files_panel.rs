@@ -18,7 +18,6 @@ use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo
 #[component]
 pub(super) fn FilesPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_mobile = state.is_mobile.get_untracked();
     let drag_over = RwSignal::new(false);
     let files = state.files;
     let current_idx = state.current_file_index;
@@ -177,7 +176,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                 if file_vec.is_empty() && loading_empty {
                     view! {
                         <div class="drop-hint">
-                            {if !is_mobile { Some("Drop audio files here") } else { None }}
+                            {(!state.is_mobile.get_untracked()).then_some("Drop audio files here")}
                             <button class="upload-btn" on:click=on_upload_click>"Browse files"</button>
                             <button class="upload-btn demo-btn" on:click=on_demo_click>
                                 {move || if demo_loading.get() { "Loading..." } else { "Load demo" }}
@@ -547,24 +546,18 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         }
                     };
 
-                    let is_mobile = state.is_mobile.get_untracked();
-
                     view! {
                         <div class="file-list">
-                            {if is_mobile {
-                                Some(view! {
-                                    <div
-                                        style="padding: 12px 12px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;"
-                                        on:click=move |_| state.show_about.set(true)
-                                    >
-                                        <span style="font-weight: bold; font-size: 14px; color: #ddd;">"Oversample"</span>
-                                        " "
-                                        <span style="font-style: italic; font-size: 14px; opacity: 0.45; font-weight: 300; color: #ddd;">"beta"</span>
-                                    </div>
-                                })
-                            } else {
-                                None
-                            }}
+                            {move || state.is_mobile.get().then(|| view! {
+                                <div
+                                    style="padding: 12px 12px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;"
+                                    on:click=move |_| state.show_about.set(true)
+                                >
+                                    <span style="font-weight: bold; font-size: 14px; color: #ddd;">"Oversample"</span>
+                                    " "
+                                    <span style="font-style: italic; font-size: 14px; opacity: 0.45; font-weight: 300; color: #ddd;">"beta"</span>
+                                </div>
+                            })}
                             {if show_sort {
                                 Some(view! { <SortBar sort_mode=sort_mode /> })
                             } else {

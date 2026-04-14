@@ -65,14 +65,12 @@ pub fn RightSidebar() -> impl IntoView {
         let _ = doc.add_event_listener_with_callback_and_bool("mouseup", &on_up_fn, true);
     };
 
-    let is_mobile = state.is_mobile.get_untracked();
-
     let sidebar_class = move || {
         let mut cls = String::from("sidebar right-sidebar");
         if state.right_sidebar_collapsed.get() {
             cls.push_str(" collapsed");
         }
-        if is_mobile {
+        if state.is_mobile.get() {
             cls.push_str(" mobile-overlay");
         }
         cls
@@ -102,28 +100,23 @@ pub fn RightSidebar() -> impl IntoView {
 
     view! {
         <div class=sidebar_class>
-            {if !is_mobile {
-                Some(view! { <div class="sidebar-resize-handle" on:mousedown=on_resize_start></div> })
-            } else {
-                None
-            }}
+            <div
+                class=move || if state.is_mobile.get() { "sidebar-resize-handle hidden" } else { "sidebar-resize-handle" }
+                on:mousedown=on_resize_start
+            ></div>
             <div class="sidebar-tabs">
-                {if !is_mobile {
-                    Some(view! {
-                        <button
-                            class="sidebar-tab sidebar-collapse-btn"
-                            on:click=move |_| {
-                                state.right_sidebar_collapsed.update(|c| *c = !*c);
-                                dropdown_open.set(false);
-                            }
-                            title=move || if state.right_sidebar_collapsed.get() { "Show right sidebar" } else { "Hide right sidebar" }
-                        >
-                            {"\u{25E8}"}
-                        </button>
-                    })
-                } else {
-                    None
-                }}
+                {move || (!state.is_mobile.get()).then(|| view! {
+                    <button
+                        class="sidebar-tab sidebar-collapse-btn"
+                        on:click=move |_| {
+                            state.right_sidebar_collapsed.update(|c| *c = !*c);
+                            dropdown_open.set(false);
+                        }
+                        title=move || if state.right_sidebar_collapsed.get() { "Show right sidebar" } else { "Hide right sidebar" }
+                    >
+                        {"\u{25E8}"}
+                    </button>
+                })}
                 <div class="sidebar-tab-dropdown-wrap" tabindex="-1" on:focusout=on_dropdown_blur>
                     <button class="sidebar-tab-dropdown" on:click=on_dropdown_toggle>
                         {move || state.right_sidebar_tab.get().label()}

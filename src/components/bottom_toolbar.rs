@@ -25,7 +25,6 @@ pub fn BottomToolbar() -> impl IntoView {
     let is_file_disabled = move || {
         state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
     };
-    let is_mobile = state.is_mobile.get_untracked();
 
     // ── Recording timer ──
     let interval_id: StoredValue<Option<i32>> = StoredValue::new(None);
@@ -277,7 +276,7 @@ pub fn BottomToolbar() -> impl IntoView {
     };
 
     view! {
-        <div class=if is_mobile { "bottom-toolbar mobile" } else { "bottom-toolbar" }
+        <div class=move || if state.is_mobile.get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
             node_ref=toolbar_node
             style=move || {
                 match max_height.get() {
@@ -1137,7 +1136,7 @@ pub fn BottomToolbar() -> impl IntoView {
             }
 
             // ── Tool button (Hand / Selection, only when file is open; hidden on mobile) ──
-            {move || (!is_mobile && has_file()).then(|| view! {
+            {move || (!state.is_mobile.get() && has_file()).then(|| view! {
                 <div class="bottom-toolbar-sep"></div>
                 <ToolButtonInline />
             })}

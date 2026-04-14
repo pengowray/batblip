@@ -98,14 +98,12 @@ pub fn FileSidebar() -> impl IntoView {
         let _ = doc.add_event_listener_with_callback_and_bool("mouseup", &on_up_fn, true);
     };
 
-    let is_mobile = state.is_mobile.get_untracked();
-
     let sidebar_class = move || {
         let mut cls = String::from("sidebar");
         if state.sidebar_collapsed.get() {
             cls.push_str(" collapsed");
         }
-        if is_mobile {
+        if state.is_mobile.get() {
             cls.push_str(" mobile-overlay");
         }
         cls
@@ -114,21 +112,17 @@ pub fn FileSidebar() -> impl IntoView {
     view! {
         <div class=sidebar_class>
             <div class="sidebar-tabs">
-                {if !is_mobile {
-                    Some(view! {
-                        <button
-                            class="sidebar-tab sidebar-collapse-btn"
-                            on:click=move |_| {
-                                state.sidebar_collapsed.update(|c| *c = !*c);
-                            }
-                            title=move || if state.sidebar_collapsed.get() { "Show files and settings" } else { "Hide left sidebar" }
-                        >
-                            {"\u{25E7}"}
-                        </button>
-                    })
-                } else {
-                    None
-                }}
+                {move || (!state.is_mobile.get()).then(|| view! {
+                    <button
+                        class="sidebar-tab sidebar-collapse-btn"
+                        on:click=move |_| {
+                            state.sidebar_collapsed.update(|c| *c = !*c);
+                        }
+                        title=move || if state.sidebar_collapsed.get() { "Show files and settings" } else { "Hide left sidebar" }
+                    >
+                        {"\u{25E7}"}
+                    </button>
+                })}
                 <button
                     class=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Files {
                         "sidebar-header-label active"
@@ -198,11 +192,10 @@ pub fn FileSidebar() -> impl IntoView {
                     LeftSidebarTab::Settings => view! { <ConfigPanel /> }.into_any(),
                 }
             }}
-            {if !is_mobile {
-                Some(view! { <div class="sidebar-resize-handle" on:mousedown=on_resize_start></div> })
-            } else {
-                None
-            }}
+            <div
+                class=move || if state.is_mobile.get() { "sidebar-resize-handle hidden" } else { "sidebar-resize-handle" }
+                on:mousedown=on_resize_start
+            ></div>
         </div>
     }
 }

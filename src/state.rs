@@ -1327,23 +1327,32 @@ fn detect_tauri() -> bool {
         .unwrap_or(false)
 }
 
-fn detect_mobile() -> bool {
-    let window = match web_sys::window() {
-        Some(w) => w,
-        None => return false,
-    };
+/// Returns true if the user-agent string indicates a mobile device.
+/// This is a one-time check (UA doesn't change during the session).
+fn detect_mobile_ua() -> bool {
+    let Some(window) = web_sys::window() else { return false };
     if let Ok(ua) = window.navigator().user_agent() {
         let ua_lower = ua.to_lowercase();
         if ua_lower.contains("android") || ua_lower.contains("iphone") || ua_lower.contains("ipad") || ua_lower.contains("mobile") {
             return true;
         }
     }
+    false
+}
+
+/// Returns true if the viewport width is below the mobile breakpoint.
+pub fn is_mobile_viewport() -> bool {
+    let Some(window) = web_sys::window() else { return false };
     if let Ok(w) = window.inner_width() {
         if let Some(w) = w.as_f64() {
             return w < 768.0;
         }
     }
     false
+}
+
+fn detect_mobile() -> bool {
+    detect_mobile_ua() || is_mobile_viewport()
 }
 
 impl Default for AppState {

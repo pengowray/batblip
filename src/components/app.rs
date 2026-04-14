@@ -873,10 +873,32 @@ pub fn App() -> impl IntoView {
     let _ = window.add_event_listener_with_callback("blur", blur_handler.as_ref().unchecked_ref());
     blur_handler.forget();
 
-    let is_mobile = state.is_mobile.get_untracked();
+    // Update is_mobile reactively on window resize.
+    // On resize, layout is driven purely by viewport width — the UA-based mobile
+    // detection only matters for the initial load (before any resize events).
+    {
+        let state_resize = state;
+        let on_resize = Closure::<dyn Fn()>::new(move || {
+            let mobile = crate::state::is_mobile_viewport();
+            let was_mobile = state_resize.is_mobile.get_untracked();
+            if mobile != was_mobile {
+                state_resize.is_mobile.set(mobile);
+                if mobile {
+                    // Switching to mobile: collapse sidebars (they become overlays)
+                    state_resize.sidebar_collapsed.set(true);
+                    state_resize.right_sidebar_collapsed.set(true);
+                } else {
+                    // Switching to desktop: show left sidebar by default
+                    state_resize.sidebar_collapsed.set(false);
+                }
+            }
+        });
+        let _ = window.add_event_listener_with_callback("resize", on_resize.as_ref().unchecked_ref());
+        on_resize.forget();
+    }
 
     let grid_style = move || {
-        if is_mobile {
+        if state.is_mobile.get() {
             // Sidebars are position:fixed overlays, so single column for main content
             "grid-template-columns: 1fr".to_string()
         } else {
@@ -936,10 +958,12 @@ pub fn App() -> impl IntoView {
         crate::tauri_bridge::tauri_listen("tauri://drag-drop", callback);
     }
 
-    // Android back button: close sidebar when open
-    if is_mobile {
+    // Back button (Android/browser): close sidebar when open.
+    // Registered unconditionally — harmless on desktop, needed if layout switches to mobile.
+    {
         let state_back = state;
         let on_popstate = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            if !state_back.is_mobile.get_untracked() { return; }
             if !state_back.right_sidebar_collapsed.get_untracked() {
                 state_back.right_sidebar_collapsed.set(true);
                 let _ = web_sys::window().unwrap().history().unwrap()
@@ -950,7 +974,6 @@ pub fn App() -> impl IntoView {
                     .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", None);
             }
         });
-        let window = web_sys::window().unwrap();
         let _ = window.add_event_listener_with_callback("popstate", on_popstate.as_ref().unchecked_ref());
         on_popstate.forget();
         // Push initial history entry so back button has something to pop
@@ -1003,19 +1026,15 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="app" style=grid_style>
             <FileSidebar />
-            {if is_mobile {
-                Some(view! {
-                    <div
-                        class=move || if !state.sidebar_collapsed.get() || !state.right_sidebar_collapsed.get() { "sidebar-backdrop open" } else { "sidebar-backdrop" }
-                        on:click=move |_| {
-                            state.sidebar_collapsed.set(true);
-                            state.right_sidebar_collapsed.set(true);
-                        }
-                    ></div>
-                })
-            } else {
-                None
-            }}
+            {move || state.is_mobile.get().then(|| view! {
+                <div
+                    class=move || if !state.sidebar_collapsed.get() || !state.right_sidebar_collapsed.get() { "sidebar-backdrop open" } else { "sidebar-backdrop" }
+                    on:click=move |_| {
+                        state.sidebar_collapsed.set(true);
+                        state.right_sidebar_collapsed.set(true);
+                    }
+                ></div>
+            })}
             <MainArea />
             <RightSidebar />
             {move || state.xc_browser_open.get().then(|| view! { <XcBrowser /> })}
@@ -1028,12 +1047,10 @@ fn MainArea() -> impl IntoView {
     let state = expect_context::<AppState>();
     let has_file = move || state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
 
-    let is_mobile = state.is_mobile.get_untracked();
-
     // Click/tap anywhere in the main area closes open layer panels (and sidebar on mobile)
     let on_main_click = move |_: web_sys::MouseEvent| {
         state.layer_panel_open.set(None);
-        if is_mobile {
+        if state.is_mobile.get_untracked() {
             state.sidebar_collapsed.set(true);
             state.right_sidebar_collapsed.set(true);
         }
@@ -1042,7 +1059,7 @@ fn MainArea() -> impl IntoView {
     // call preventDefault() which suppresses the synthetic click event
     let on_main_touchstart = move |_: web_sys::TouchEvent| {
         state.layer_panel_open.set(None);
-        if is_mobile {
+        if state.is_mobile.get_untracked() {
             state.sidebar_collapsed.set(true);
             state.right_sidebar_collapsed.set(true);
         }
@@ -1137,21 +1154,15 @@ fn MainArea() -> impl IntoView {
 
                         <AnalysisPanel />
                     }.into_any()
-                } else if is_mobile {
-                    view! {
-                        <div class="empty-state">
-                            "Tap \u{2630} to load audio files"
-                            <div class="main-overlays">
-                                <BatBookTab />
-                            </div>
-                        </div>
-                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
-                        {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
-                    }.into_any()
                 } else {
+                    let empty_msg = if state.is_mobile.get() {
+                        "Tap \u{2630} to load audio files"
+                    } else {
+                        "Drop WAV, FLAC or MP3 files into the sidebar"
+                    };
                     view! {
                         <div class="empty-state">
-                            "Drop WAV, FLAC or MP3 files into the sidebar"
+                            {empty_msg}
                             <div class="main-overlays">
                                 <BatBookTab />
                             </div>
