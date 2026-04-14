@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 use crate::state::{AppState, RightSidebarTab, ListenMode, MicAcquisitionState, RecordReadyState};
 use crate::audio::streaming_source;
-use crate::audio::microphone;
 use crate::components::file_sidebar::file_groups;
 use crate::components::file_sidebar::file_badges::{FileBadgeData, FileBadgeRow, parse_cc_license, get_xc_field};
 
@@ -249,7 +248,7 @@ pub fn Toolbar() -> impl IntoView {
                     // On web, trigger browser download with preserved GUANO + cue markers
                     let total = f.audio.source.total_samples() as usize;
                     let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
-                    microphone::download_recording_wav(
+                    crate::audio::wav_encoder::download_recording_wav(
                         &samples, f.audio.sample_rate, &f.name,
                         f.audio.metadata.guano.as_ref(), &f.wav_markers,
                     );

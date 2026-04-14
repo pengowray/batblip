@@ -1130,7 +1130,7 @@ fn MainArea() -> impl IntoView {
                                                     if let Some(f) = files.get(i) {
                                                         let total = f.audio.source.total_samples() as usize;
                                                         let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
-                                                        microphone::download_recording_wav(
+                                                        crate::audio::wav_encoder::download_recording_wav(
                                                             &samples, f.audio.sample_rate, &name,
                                                             f.audio.metadata.guano.as_ref(), &f.wav_markers,
                                                         );

@@ -544,30 +544,21 @@ pub(crate) struct FinalizeParams {
     pub file_size: Option<usize>,
 }
 
-/// Unified recording finalization. Handles both browser (WASM-side save) and
-/// native/Tauri (already-saved) recordings. Updates the live file in-place when
-/// one exists, otherwise creates a new LoadedFile as fallback.
-pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
-    use crate::canvas::{spectral_store, tile_cache, live_waterfall};
+/// Collected recording metadata (GUANO, markers, naming) built from AppState.
+struct RecordingMeta {
+    guano: crate::audio::guano::GuanoMetadata,
+    wav_markers: Vec<crate::types::WavMarker>,
+    preroll_samples: usize,
+}
 
-    let FinalizeParams { samples, sample_rate, bits_per_sample, is_float, saved_path, file_size } = params;
-
-    let live_idx = state.mic_live_file_idx.get_untracked();
-    state.mic_live_file_idx.set(None);
-
-    if samples.is_empty() {
-        log::warn!("Empty recording");
-        if let Some(idx) = live_idx {
-            state.files.update(|files| {
-                if idx < files.len() { files.remove(idx); }
-            });
-        }
-        return;
-    }
-
-    let duration_secs = samples.len() as f64 / sample_rate as f64;
-
-    // Build GUANO metadata
+/// Read mic info, location, device model, and preroll from state to build
+/// GUANO metadata and WAV cue markers. Pure state-read, no mutations.
+fn build_recording_meta(
+    state: &AppState,
+    sample_rate: u32,
+    duration_secs: f64,
+    filename: &str,
+) -> RecordingMeta {
     let mic_name = state.mic_device_name.get_untracked();
     let mic_manufacturer = state.mic_manufacturer.get_untracked();
     let conn_type = state.mic_connection_type.get_untracked();
@@ -584,25 +575,22 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     let is_usb = conn_type.as_deref().map(|c| c.contains("USB")).unwrap_or(false);
     let is_web_audio = conn_type.as_deref() == Some("Web Audio API");
     let (guano_mic_name, guano_mic_audio_device) = if is_web_audio {
-        // Web path: device label goes to Oversample|Mic|Audio Device, not Mic|Name
         (None, mic_name.clone())
     } else if is_usb {
         (mic_name.clone(), None)
     } else if conn_type.is_some() {
-        // Non-USB native mic (cpal) — "Internal"
         (Some("Internal".to_string()), None)
     } else {
-        // Unknown / no connection type
         (mic_name.clone(), None)
     };
 
-    // Compute pre-roll duration for GUANO metadata
     let preroll = state.mic_preroll_samples.get_untracked();
     let preroll_secs = if preroll > 0 && sample_rate > 0 {
         Some(preroll as f64 / sample_rate as f64)
     } else {
         None
     };
+
     let guano_extra = crate::audio::guano::RecordingGuanoExtra {
         mic_interface: conn_type,
         mic_name: guano_mic_name,
@@ -616,27 +604,14 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         preroll_secs,
     };
     let guano = crate::audio::guano::build_recording_guano(
-        sample_rate, duration_secs,
-        // Use live file name if available, generate one otherwise
-        &live_idx.and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
-            .unwrap_or_else(|| generate_recording_name()),
+        sample_rate, duration_secs, filename,
         state.is_tauri, is_mobile,
         &guano_extra,
         &crate::format_time::recording_timestamp(duration_secs),
         env!("CARGO_PKG_VERSION"),
     );
 
-    let samples: Arc<Vec<f32>> = samples.into();
-    let source = Arc::new(InMemorySource {
-        samples: samples.clone(),
-        raw_samples: None,
-        sample_rate,
-        channels: 1,
-    });
-
-    // Build pre-roll cue markers (if applicable)
-    let preroll = state.mic_preroll_samples.get_untracked();
-    let wav_markers: Vec<crate::types::WavMarker> = if preroll > 0 {
+    let wav_markers = if preroll > 0 {
         vec![crate::types::WavMarker {
             id: 1,
             position: preroll as u64,
@@ -647,37 +622,21 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         Vec::new()
     };
 
-    // Build the complete WAV bytes to get the exact file size and for hash computation.
-    // Uses the unified encoder so markers + GUANO are always consistent.
-    let wav_bytes = crate::audio::wav_encoder::encode_wav_complete(
-        &samples, sample_rate, Some(&guano), &wav_markers,
-    );
-    let exact_file_size = file_size.unwrap_or(wav_bytes.len());
-    let num_samples = samples.len() as u64;
-    let audio_data_size = num_samples * (bits_per_sample as u64 / 8);
+    RecordingMeta { guano, wav_markers, preroll_samples: preroll }
+}
 
-    let audio = AudioData {
-        samples,
-        source,
-        sample_rate,
-        channels: 1,
-        duration_secs,
-        metadata: FileMetadata {
-            file_size: exact_file_size,
-            format: "REC",
-            bits_per_sample,
-            is_float,
-            guano: Some(guano),
-            data_offset: Some(44),
-            data_size: Some(audio_data_size),
-        },
-    };
+/// Create or update the LoadedFile in state. Returns (file_index, filename).
+fn update_or_create_file(
+    state: AppState,
+    live_idx: Option<usize>,
+    audio: AudioData,
+    preview: crate::types::PreviewImage,
+    wav_markers: Vec<crate::types::WavMarker>,
+    sample_rate: u32,
+) -> (usize, String) {
+    use crate::canvas::{spectral_store, tile_cache};
 
-    let preview = compute_preview(&audio, 256, 128);
-    let audio_for_stft = audio.clone();
-
-    // Either update existing live file or create a new one
-    let (file_index, name_check) = if let Some(idx) = live_idx {
+    let (file_index, name) = if let Some(idx) = live_idx {
         let name = state.files.with_untracked(|files| {
             files.get(idx).map(|f| f.name.clone()).unwrap_or_default()
         });
@@ -694,10 +653,9 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
 
         (idx, name)
     } else {
-        // Fallback: create a new LoadedFile
         let name = generate_recording_name();
-        let total_cols = if audio_for_stft.samples.len() >= 2048 {
-            (audio_for_stft.samples.len() - 2048) / 512 + 1
+        let total_cols = if audio.samples.len() >= 2048 {
+            (audio.samples.len() - 2048) / 512 + 1
         } else { 0 };
         let placeholder_spec = SpectrogramData {
             columns: Vec::new().into(),
@@ -741,7 +699,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         (idx, name)
     };
 
-    // Store pre-roll markers on the file (already built above).
+    // Store WAV markers (preroll cue point) on the file
     if !wav_markers.is_empty() {
         state.files.update(|files| {
             if let Some(f) = files.get_mut(file_index) {
@@ -750,12 +708,118 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         });
     }
 
-    // Clear live waterfall
+    (file_index, name)
+}
+
+/// Compute identity hashes and optionally save WAV bytes to disk.
+/// `wav_bytes` are built once and reused for both hashing and saving.
+fn persist_and_identify(
+    state: AppState,
+    file_index: usize,
+    filename: String,
+    wav_bytes: Vec<u8>,
+    audio_data_size: u64,
+    needs_save: bool,
+    is_mobile: bool,
+) {
+    let exact_file_size = wav_bytes.len() as u64;
+
+    // If we also need to save, clone the bytes before identity computation consumes them.
+    let wav_bytes_for_save = if needs_save { Some(wav_bytes.clone()) } else { None };
+
+    crate::file_identity::start_identity_computation(
+        state, file_index, filename.clone(), exact_file_size, Some(wav_bytes),
+        Some(44), Some(audio_data_size), None,
+    );
+
+    if let Some(wav_data) = wav_bytes_for_save {
+        wasm_bindgen_futures::spawn_local(async move {
+            if is_mobile {
+                crate::audio::wav_encoder::save_wav_to_shared(&wav_data, &filename).await;
+            } else if try_tauri_save(&wav_data, &filename).await.is_some() {
+                // Desktop WASM save succeeded
+            }
+            state.files.update(|files| {
+                if let Some(f) = files.get_mut(file_index) {
+                    f.is_recording = false;
+                }
+            });
+        });
+    }
+}
+
+/// Unified recording finalization. Handles both browser (WASM-side save) and
+/// native/Tauri (already-saved) recordings. Updates the live file in-place when
+/// one exists, otherwise creates a new LoadedFile as fallback.
+pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
+    use crate::canvas::live_waterfall;
+
+    let FinalizeParams { samples, sample_rate, bits_per_sample, is_float, saved_path, file_size } = params;
+
+    let live_idx = state.mic_live_file_idx.get_untracked();
+    state.mic_live_file_idx.set(None);
+
+    if samples.is_empty() {
+        log::warn!("Empty recording");
+        if let Some(idx) = live_idx {
+            state.files.update(|files| {
+                if idx < files.len() { files.remove(idx); }
+            });
+        }
+        return;
+    }
+
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+    // ── Phase 1: Build metadata (GUANO + WAV markers) from state ────────
+    let recording_name = live_idx
+        .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
+        .unwrap_or_else(generate_recording_name);
+    let meta = build_recording_meta(&state, sample_rate, duration_secs, &recording_name);
+
+    // ── Phase 2: Encode WAV bytes (single pass for size, hash, and save) ─
+    let samples: Arc<Vec<f32>> = samples.into();
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        raw_samples: None,
+        sample_rate,
+        channels: 1,
+    });
+    let wav_bytes = crate::audio::wav_encoder::encode_wav_complete(
+        &samples, sample_rate, Some(&meta.guano), &meta.wav_markers,
+    );
+    let exact_file_size = file_size.unwrap_or(wav_bytes.len());
+    let num_samples = samples.len() as u64;
+    let audio_data_size = num_samples * (bits_per_sample as u64 / 8);
+
+    let audio = AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels: 1,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: exact_file_size,
+            format: "REC",
+            bits_per_sample,
+            is_float,
+            guano: Some(meta.guano),
+            data_offset: Some(44),
+            data_size: Some(audio_data_size),
+        },
+    };
+
+    let preview = compute_preview(&audio, 256, 128);
+    let audio_for_stft = audio.clone();
+
+    // ── Phase 3: Update or create the file in state ─────────────────────
+    let (file_index, name_check) = update_or_create_file(
+        state, live_idx, audio, preview, meta.wav_markers, sample_rate,
+    );
+
     live_waterfall::clear();
 
-    // Set file handle if native backend saved to internal storage.
-    // "shared://..." means the recording was written directly to shared storage
-    // via ContentResolver fd — no internal path exists, so don't set FileHandle.
+    // Set file handle if native backend saved to internal storage
     let shared_saved = saved_path.starts_with("shared://");
     let native_saved = !saved_path.is_empty();
     if native_saved && !shared_saved {
@@ -766,8 +830,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         });
     }
 
-    // is_recording doubles as "unsaved" flag for the toolbar badge.
-    // Mark saved (false) only when a file was actually persisted to disk.
+    // Mark saved if native backend already persisted the file
     let record_mode = state.record_mode.get_untracked();
     let is_tauri = state.is_tauri;
     let is_mobile = state.is_mobile.get_untracked();
@@ -781,70 +844,25 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         });
     }
 
-    // Set Layer 1 identity with exact WAV file size.
-    // Pass the complete WAV bytes so hash computation can proceed without a file handle.
-    crate::file_identity::start_identity_computation(
-        state, file_index, name_check.clone(), exact_file_size as u64, Some(wav_bytes),
-        Some(44), Some(audio_data_size), None,
+    // ── Phase 4: Hash computation + optional WAV save ───────────────────
+    let needs_save = !to_memory && !shared_saved
+        && if is_mobile { true } else { is_tauri && !native_saved };
+
+    persist_and_identify(
+        state, file_index, name_check.clone(), wav_bytes,
+        audio_data_size, needs_save, is_mobile,
     );
 
-    // Save WAV to appropriate destination (skip for ToMemory mode)
-    let name_for_save = name_check.clone();
-    let needs_save = if to_memory {
-        false
-    } else if shared_saved {
-        // Already written directly to shared storage via ContentResolver fd —
-        // no WASM re-encode needed.
-        false
-    } else if is_mobile {
-        // On mobile, save to shared storage (Recordings/Oversample) —
-        // even if native backend saved to internal storage, the user needs it
-        // in a visible location accessible from their file manager.
-        true
-    } else {
-        // On desktop, only save from WASM if native backend didn't already save
-        is_tauri && !native_saved
-    };
-    if needs_save {
-        let samples_ref = state.files.get_untracked();
-        if let Some(file) = samples_ref.get(file_index) {
-            // Build complete WAV with cue markers + GUANO using the unified encoder.
-            let wav_data = crate::audio::wav_encoder::encode_wav_complete(
-                &file.audio.samples,
-                file.audio.sample_rate,
-                file.audio.metadata.guano.as_ref(),
-                &file.wav_markers,
-            );
-
-            let filename = name_for_save;
-            wasm_bindgen_futures::spawn_local(async move {
-                if is_mobile {
-                    crate::audio::wav_encoder::save_wav_to_shared(&wav_data, &filename).await;
-                }  else if try_tauri_save(&wav_data, &filename).await.is_some() {
-                    // Desktop WASM save succeeded
-                }
-                // Mark as saved after successful write
-                state.files.update(|files| {
-                    if let Some(f) = files.get_mut(file_index) {
-                        f.is_recording = false;
-                    }
-                });
-            });
-        }
-    }
-
-    // Reset pre-roll state now that saving is done
-    if preroll > 0 {
+    // ── Phase 5: Reset preroll + zoom + spectrogram ─────────────────────
+    if meta.preroll_samples > 0 {
         state.mic_preroll_samples.set(0);
     }
 
-    // Zoom to fit the entire recording
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let final_time_res = 512.0 / sample_rate as f64;
     state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.scroll_offset.set(0.0);
 
-    // Re-compute full spectrogram with accurate final normalization
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }
 

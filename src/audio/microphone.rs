@@ -731,7 +731,7 @@ pub fn stop_all(state: &AppState) {
 }
 
 // Re-export from split modules
-pub use crate::audio::wav_encoder::{encode_wav, download_recording_wav};
+pub use crate::audio::wav_encoder::encode_wav;
 pub(crate) use crate::audio::live_recording::{
     start_live_recording, start_live_listening,
     cleanup_listen_file, convert_listen_to_recording,

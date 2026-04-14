@@ -4,7 +4,6 @@ use leptos::task::spawn_local;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlInputElement, ImageData, MouseEvent};
 use crate::audio::playback;
-use crate::audio::microphone;
 use crate::audio::streaming_source;
 use crate::canvas::tile_cache;
 use crate::state::{AppState, FileSortMode, LoadedFile};
@@ -392,7 +391,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             if let Some(f) = files.get(i) {
                                 let total = f.audio.source.total_samples() as usize;
                                 let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
-                                microphone::download_recording_wav(
+                                crate::audio::wav_encoder::download_recording_wav(
                                     &samples, f.audio.sample_rate, &name_dl,
                                     f.audio.metadata.guano.as_ref(), &f.wav_markers,
                                 );

@@ -666,6 +666,7 @@ pub fn build_tauri_guano(
     let extra = RecordingGuanoExtra {
         mic_interface: params.connection_type.clone(),
         mic_name,
+        mic_audio_device: None, // Web Audio API only — not applicable to native
         mic_make: if is_usb { params.mic_make.clone() } else { None },
         loc_position: params.location.as_ref().map(|l| (l.latitude, l.longitude)),
         loc_elevation: params.location.as_ref().and_then(|l| l.elevation),
