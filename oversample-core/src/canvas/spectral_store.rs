@@ -205,18 +205,26 @@ pub fn get_max_magnitude(file_idx: usize) -> f32 {
 /// Compute the global chromagram normalisation maxima (max_class, max_note)
 /// by iterating all present columns in the store **by reference** (no cloning).
 /// Returns `None` if the store doesn't exist or has no data.
-pub fn compute_chroma_global_max(file_idx: usize, freq_resolution: f64) -> Option<(f32, f32)> {
-    use crate::dsp::chromagram::stft_to_chromagram;
+pub fn compute_chroma_global_max(
+    file_idx: usize,
+    freq_resolution: f64,
+    min_octave: usize,
+    num_octaves: usize,
+) -> Option<(f32, f32)> {
+    use crate::dsp::chromagram::{stft_to_chromagram, MAX_OCTAVES};
+    let max_octave = min_octave + num_octaves;
     STORES.with(|s| {
         let stores = s.borrow();
         let store = stores.get(&file_idx)?;
         let mut max_class = 0.0f32;
         let mut max_note = 0.0f32;
         for col in store.columns.iter().flatten() {
-            let ch = stft_to_chromagram(&col.magnitudes, freq_resolution);
+            let ch = stft_to_chromagram(&col.magnitudes, freq_resolution, min_octave, num_octaves);
             for &v in &ch.pitch_classes { max_class = max_class.max(v); }
             for octaves in &ch.octave_detail {
-                for &v in octaves { max_note = max_note.max(v); }
+                for &v in &octaves[min_octave..max_octave.min(MAX_OCTAVES)] {
+                    max_note = max_note.max(v);
+                }
             }
         }
         if max_class > 0.0 { Some((max_class, max_note)) } else { None }

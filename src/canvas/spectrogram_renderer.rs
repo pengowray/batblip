@@ -945,6 +945,7 @@ pub fn blit_chromagram_tiles_viewport(
     chroma_colormap: crate::state::ChromaColormap,
     chroma_gain: f32,
     chroma_gamma: f32,
+    num_octaves: usize,
 ) -> bool {
     use crate::state::ChromaColormap;
     use crate::canvas::colormap_2d::{
@@ -1019,15 +1020,16 @@ pub fn blit_chromagram_tiles_viewport(
                 let row = pixel_idx / tile_w;
 
                 let scale = crate::dsp::chromagram::CHROMA_RENDER_SCALE;
+                const NUM_PITCH_CLASSES: usize = crate::dsp::chromagram::NUM_PITCH_CLASSES;
                 let logical_row = row / scale;
                 let [r, g, b] = match &mode {
                     ChromaMode::Single(cm) => cm.apply(class_byte, note_byte),
                     ChromaMode::PerPitchClass(cms) => {
-                        let pc = 11usize.saturating_sub(logical_row / 10).min(11);
+                        let pc = (NUM_PITCH_CLASSES - 1).saturating_sub(logical_row / num_octaves).min(NUM_PITCH_CLASSES - 1);
                         cms[pc].apply(class_byte, note_byte)
                     }
                     ChromaMode::PerOctave(cms) => {
-                        let oct = 9usize.saturating_sub(logical_row % 10).min(9);
+                        let oct = (num_octaves - 1).saturating_sub(logical_row % num_octaves).min(9);
                         cms[oct].apply(class_byte, note_byte)
                     }
                     ChromaMode::FlowInline => {

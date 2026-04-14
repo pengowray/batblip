@@ -1762,6 +1762,8 @@ pub fn schedule_chroma_tile(
             files.get(file_idx).map(|f| f.spectrogram.freq_resolution)
         }).unwrap_or(1.0);
 
+        let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
+
         // Try spectral_store first, then file columns, then compute on-demand from audio
         let cols_from_store = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _| {
             cols.to_vec()
@@ -1822,9 +1824,9 @@ pub fn schedule_chroma_tile(
         let (max_class, max_note) = if let Some(gm) = global_max {
             gm
         } else {
-            let from_store = spectral_store::compute_chroma_global_max(file_idx, freq_res);
+            let from_store = spectral_store::compute_chroma_global_max(file_idx, freq_res, min_octave, num_octaves);
             let gm = from_store.unwrap_or_else(|| {
-                chromagram::compute_chroma_max(&stft_cols, freq_res)
+                chromagram::compute_chroma_max(&stft_cols, freq_res, min_octave, num_octaves)
             });
             if gm.0 > 0.0 {
                 CHROMA_GLOBAL_MAX.with(|m| m.borrow_mut().insert(file_idx, gm));
@@ -1832,7 +1834,7 @@ pub fn schedule_chroma_tile(
             gm
         };
 
-        let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note);
+        let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note, min_octave, num_octaves);
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

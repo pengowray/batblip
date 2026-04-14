@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, ChromaColormap, DisplayFilterMode, FftMode, FileSettings, FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy, MicAcquisitionState, PlayStartMode, PlaybackMode, SpectrogramDisplay};
+use crate::state::{AppState, ChromaColormap, ChromaRange, DisplayFilterMode, FftMode, FileSettings, FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy, MicAcquisitionState, PlayStartMode, PlaybackMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -2049,6 +2049,19 @@ fn MainViewButton() -> impl IntoView {
                                 on:click=move |_| state.chroma_colormap.set(mode)
                             >
                                 {mode.label()}
+                            </button>
+                        }
+                    }).collect_view()}
+
+                    <hr />
+                    <div class="layer-panel-title">"Freq Range"</div>
+                    {ChromaRange::ALL.iter().map(|&range| {
+                        view! {
+                            <button
+                                class=move || layer_opt_class(state.chroma_range.get() == range)
+                                on:click=move |_| state.chroma_range.set(range)
+                            >
+                                {range.label()}
                             </button>
                         }
                     }).collect_view()}

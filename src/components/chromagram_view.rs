@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::spectrogram_renderer;
 use crate::canvas::tile_cache::{self, TILE_COLS};
-use crate::dsp::chromagram::{NUM_PITCH_CLASSES, NUM_OCTAVES, PITCH_CLASS_NAMES};
+use crate::dsp::chromagram::{NUM_PITCH_CLASSES, PITCH_CLASS_NAMES};
 use crate::state::{AppState, CanvasTool};
 use crate::viewport;
 
@@ -15,10 +15,11 @@ pub fn ChromagramView() -> impl IntoView {
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
     let pinch_state: RwSignal<Option<crate::components::pinch::PinchState>> = RwSignal::new(None);
 
-    // Clear chromagram cache when file changes
+    // Clear chromagram cache when file or range changes
     Effect::new(move || {
         let _files = state.files.get();
         let _idx = state.current_file_index.get();
+        let _range = state.chroma_range.get();
         tile_cache::clear_chroma_cache();
     });
 
@@ -30,6 +31,8 @@ pub fn ChromagramView() -> impl IntoView {
         let chroma_colormap = state.chroma_colormap.get();
         let chroma_gain = state.chroma_gain.get();
         let chroma_gamma = state.chroma_gamma.get();
+        let chroma_range = state.chroma_range.get();
+        let (_min_octave, num_octaves) = chroma_range.octave_params();
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let is_playing = state.is_playing.get();
@@ -77,6 +80,7 @@ pub fn ChromagramView() -> impl IntoView {
             &ctx, canvas, file_idx, total_cols,
             scroll_col, zoom, chroma_colormap,
             chroma_gain, chroma_gamma,
+            num_octaves,
         );
 
         // Schedule missing chromagram tiles
@@ -97,12 +101,12 @@ pub fn ChromagramView() -> impl IntoView {
 
         // Draw pitch class labels on left edge
         let ch = display_h as f64;
-        let row_height = ch / (NUM_PITCH_CLASSES * NUM_OCTAVES) as f64;
+        let row_height = ch / (NUM_PITCH_CLASSES * num_octaves) as f64;
         ctx.set_font("10px monospace");
         ctx.set_text_baseline("middle");
         for (pc, &label) in PITCH_CLASS_NAMES.iter().enumerate().take(NUM_PITCH_CLASSES) {
-            let band_bottom = ch - (pc * NUM_OCTAVES) as f64 * row_height;
-            let band_top = band_bottom - NUM_OCTAVES as f64 * row_height;
+            let band_bottom = ch - (pc * num_octaves) as f64 * row_height;
+            let band_top = band_bottom - num_octaves as f64 * row_height;
             let band_center = (band_top + band_bottom) / 2.0;
 
             // Semi-transparent background for label

@@ -678,6 +678,57 @@ impl ChromaColormap {
     ];
 }
 
+/// Frequency range preset for the chromagram view.
+///
+/// Each preset defines which octaves to display. Octave numbering follows
+/// scientific pitch notation extended upward: octave 0 starts at C0 (16.35 Hz),
+/// octave 10 at C10 (~16.7 kHz), octave 13 at C13 (~134 kHz), etc.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ChromaRange {
+    /// C0–B9 (16 Hz – 16.7 kHz) — standard musical range.
+    #[default]
+    Musical,
+    /// C0–B11 (16 Hz – 33.5 kHz) — audible + near-ultrasound.
+    Audible,
+    /// C0–B13 (16 Hz – 134 kHz) — includes bat echolocation range.
+    Extended,
+    /// C5–B14 (523 Hz – 268 kHz) — focused on ultrasound.
+    Ultrasound,
+    /// All octaves from C0 to the highest representable.
+    Full,
+}
+
+impl ChromaRange {
+    /// (min_octave, num_octaves) — which octave indices to include.
+    pub fn octave_params(self) -> (usize, usize) {
+        match self {
+            Self::Musical    => (0, 10),   // oct 0–9
+            Self::Audible    => (0, 12),   // oct 0–11
+            Self::Extended   => (0, 14),   // oct 0–13
+            Self::Ultrasound => (5, 10),   // oct 5–14
+            Self::Full       => (0, 16),   // oct 0–15
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Musical    => "Musical (0\u{2013}17 kHz)",
+            Self::Audible    => "Audible (0\u{2013}34 kHz)",
+            Self::Extended   => "Extended (0\u{2013}134 kHz)",
+            Self::Ultrasound => "Ultrasound (0.5\u{2013}268 kHz)",
+            Self::Full       => "Full",
+        }
+    }
+
+    pub const ALL: &'static [ChromaRange] = &[
+        Self::Musical,
+        Self::Audible,
+        Self::Extended,
+        Self::Ultrasound,
+        Self::Full,
+    ];
+}
+
 /// Style for frequency shield/flag color bars on the spectrogram edge.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ShieldStyle {
@@ -1187,6 +1238,8 @@ pub struct AppState {
     pub chroma_gain: RwSignal<f32>,
     // Chromagram display: gamma curve (1.0 = linear)
     pub chroma_gamma: RwSignal<f32>,
+    // Chromagram frequency range preset
+    pub chroma_range: RwSignal<ChromaRange>,
     // Colormap preference used when HFR mode is active
     pub hfr_colormap_preference: RwSignal<Colormap>,
     // When false, the Range button is hidden at full range
@@ -1612,6 +1665,7 @@ impl AppState {
             chroma_colormap: RwSignal::new(ChromaColormap::PitchClass),
             chroma_gain: RwSignal::new(1.0),
             chroma_gamma: RwSignal::new(1.0),
+            chroma_range: RwSignal::new(ChromaRange::Musical),
             hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 
