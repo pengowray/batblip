@@ -721,47 +721,42 @@ impl ChromaColormap {
 /// octave 10 at C10 (~16.7 kHz), octave 13 at C13 (~134 kHz), etc.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ChromaRange {
-    /// C0–B9 (16 Hz – 16.7 kHz) — standard musical range.
-    #[default]
-    Musical,
-    /// C0–B11 (16 Hz – 33.5 kHz) — audible + near-ultrasound.
-    Audible,
-    /// C0–B13 (16 Hz – 134 kHz) — includes bat echolocation range.
-    Extended,
-    /// C5–B14 (523 Hz – 268 kHz) — focused on ultrasound.
-    Ultrasound,
     /// All octaves from C0 to the highest representable.
+    #[default]
     Full,
+    /// C0–B10 (~16 Hz – 31.6 kHz) — human hearing range.
+    Audible,
+    /// C0–B8 (~16 Hz – 8.4 kHz) — A0 to ~D8 musical range.
+    Musical,
+    /// C10–B15 (~16.7 kHz – max) — ultrasound only.
+    Ultrasound,
 }
 
 impl ChromaRange {
     /// (min_octave, num_octaves) — which octave indices to include.
     pub fn octave_params(self) -> (usize, usize) {
         match self {
-            Self::Musical    => (0, 10),   // oct 0–9
-            Self::Audible    => (0, 12),   // oct 0–11
-            Self::Extended   => (0, 14),   // oct 0–13
-            Self::Ultrasound => (5, 10),   // oct 5–14
             Self::Full       => (0, 16),   // oct 0–15
+            Self::Audible    => (0, 11),   // oct 0–10 (~16 Hz – 31.6 kHz)
+            Self::Musical    => (0, 9),    // oct 0–8  (~16 Hz – 8.4 kHz)
+            Self::Ultrasound => (10, 6),   // oct 10–15 (~16.7 kHz – max)
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Musical    => "Musical (0\u{2013}17 kHz)",
-            Self::Audible    => "Audible (0\u{2013}34 kHz)",
-            Self::Extended   => "Extended (0\u{2013}134 kHz)",
-            Self::Ultrasound => "Ultrasound (0.5\u{2013}268 kHz)",
             Self::Full       => "Full",
+            Self::Audible    => "Audible (20\u{2013}20k)",
+            Self::Musical    => "Musical (A0\u{2013}D8)",
+            Self::Ultrasound => "Ultrasound (18k+)",
         }
     }
 
     pub const ALL: &'static [ChromaRange] = &[
-        Self::Musical,
-        Self::Audible,
-        Self::Extended,
-        Self::Ultrasound,
         Self::Full,
+        Self::Audible,
+        Self::Musical,
+        Self::Ultrasound,
     ];
 }
 
@@ -1705,7 +1700,7 @@ impl AppState {
             chroma_colormap: RwSignal::new(ChromaColormap::PitchClass),
             chroma_gain: RwSignal::new(0.0),
             chroma_gamma: RwSignal::new(1.0),
-            chroma_range: RwSignal::new(ChromaRange::Musical),
+            chroma_range: RwSignal::new(ChromaRange::Full),
             hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 
