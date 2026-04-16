@@ -391,7 +391,10 @@ fn WavMarkersList() -> impl IntoView {
 }
 
 /// Get the display label for an annotation.
-fn annotation_display(a: &Annotation) -> (String, Option<String>) {
+/// Returns (display_text, stored_label, is_default).
+/// is_default is true when the label was auto-generated (render italic).
+fn annotation_display(a: &Annotation) -> (String, Option<String>, bool) {
+    let is_default = a.label_default.unwrap_or(false);
     match &a.kind {
         AnnotationKind::Region(reg) => {
             let auto_label = match (reg.freq_low, reg.freq_high) {
@@ -400,23 +403,34 @@ fn annotation_display(a: &Annotation) -> (String, Option<String>) {
                     fl / 1000.0, fh / 1000.0),
                 _ => crate::format_time::format_time_range(reg.time_start, reg.time_end, 3),
             };
-            let display = reg.label.clone().unwrap_or(auto_label);
-            (display, reg.label.clone())
+            let (display, italic) = match &reg.label {
+                Some(l) => (l.clone(), is_default),
+                None => (auto_label, true),
+            };
+            (display, reg.label.clone(), italic)
         }
         AnnotationKind::Marker(m) => {
             let auto_label = crate::format_time::format_time_display(m.time, 3);
-            let display = m.label.clone().unwrap_or(auto_label);
-            (display, m.label.clone())
+            let (display, italic) = match &m.label {
+                Some(l) => (l.clone(), is_default),
+                None => (auto_label, true),
+            };
+            (display, m.label.clone(), italic)
         }
         AnnotationKind::Group(g) => {
-            let display = g.label.clone().unwrap_or_else(|| "Group".to_string());
-            (display, g.label.clone())
+            let (display, italic) = match &g.label {
+                Some(l) => (l.clone(), is_default),
+                None => ("Group".to_string(), true),
+            };
+            (display, g.label.clone(), italic)
         }
         AnnotationKind::Measurement(m) => {
-            let display = m.label.clone().unwrap_or_else(|| {
-                crate::format_time::format_time_range(m.start_time, m.end_time, 3)
-            });
-            (display, m.label.clone())
+            let auto_label = crate::format_time::format_time_range(m.start_time, m.end_time, 3);
+            let (display, italic) = match &m.label {
+                Some(l) => (l.clone(), is_default),
+                None => (auto_label, true),
+            };
+            (display, m.label.clone(), italic)
         }
     }
 }
@@ -527,7 +541,7 @@ fn AnnotationsList() -> impl IntoView {
 fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoView {
     nodes.into_iter().map(move |node| {
         let id = node.annotation.id.clone();
-        let (display, existing_label) = annotation_display(&node.annotation);
+        let (display, existing_label, label_is_default) = annotation_display(&node.annotation);
         let icon = annotation_icon(&node.annotation.kind);
         let is_group = matches!(node.annotation.kind, AnnotationKind::Group(_));
         let is_collapsed = match &node.annotation.kind {
@@ -555,7 +569,11 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
         let id_dragover2 = id.clone();
 
         let editing = RwSignal::new(false);
-        let edit_value = RwSignal::new(existing_label.unwrap_or_default());
+        // Start the input blank when the current label is auto-generated, so hitting
+        // Enter keeps it as a default (with a freshly generated number). If the user
+        // starts typing, their input becomes the user-authored label.
+        let initial_edit = if label_is_default { String::new() } else { existing_label.unwrap_or_default() };
+        let edit_value = RwSignal::new(initial_edit);
         let tags_value = RwSignal::new(existing_tags.join(", "));
 
         let indent_px = depth * 16;
@@ -766,8 +784,9 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                         }.into_any()
                     } else {
                         let tags_pills = tags_display.clone();
+                        let label_class = if label_is_default { "annotation-label default" } else { "annotation-label" };
                         view! {
-                            <span class="annotation-label">
+                            <span class=label_class>
                                 {display.clone()}
                                 {if !tags_pills.is_empty() {
                                     view! {
@@ -955,13 +974,28 @@ pub(crate) fn update_annotation_label(state: AppState, annotation_id: &str, labe
     state.snapshot_annotations();
     state.annotation_store.update(|store| {
         if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+            // If user cleared the label, regenerate a default ("Region 4" etc.)
+            // and mark it so the UI renders it in italic.
+            let (new_label, is_default) = if label.is_none() {
+                let kind = match set.annotations.iter().find(|a| a.id == annotation_id) {
+                    Some(a) => a.kind.clone(),
+                    None => return,
+                };
+                let default_label = crate::annotations::generate_default_label(
+                    &set.annotations, &kind, Some(annotation_id),
+                );
+                (Some(default_label), true)
+            } else {
+                (label, false)
+            };
             if let Some(a) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
                 match a.kind {
-                    AnnotationKind::Region(ref mut reg) => { reg.label = label; }
-                    AnnotationKind::Marker(ref mut m) => { m.label = label; }
-                    AnnotationKind::Group(ref mut g) => { g.label = label; }
-                    AnnotationKind::Measurement(ref mut m) => { m.label = label; }
+                    AnnotationKind::Region(ref mut reg) => { reg.label = new_label; }
+                    AnnotationKind::Marker(ref mut m) => { m.label = new_label; }
+                    AnnotationKind::Group(ref mut g) => { g.label = new_label; }
+                    AnnotationKind::Measurement(ref mut m) => { m.label = new_label; }
                 }
+                a.label_default = if is_default { Some(true) } else { None };
                 a.modified_at = now_iso8601();
             }
         }
@@ -1026,19 +1060,25 @@ fn group_selected(state: AppState) {
                 .unwrap_or((None, None));
 
             // Create group at the same level as the first selected item
+            let kind = AnnotationKind::Group(Group {
+                label: Some(crate::annotations::generate_default_label(
+                    &set.annotations,
+                    &AnnotationKind::Group(Group { label: None, color: None, collapsed: None }),
+                    None,
+                )),
+                color: None,
+                collapsed: Some(false),
+            });
             let group = Annotation {
                 id: group_id.clone(),
-                kind: AnnotationKind::Group(Group {
-                    label: None,
-                    color: None,
-                    collapsed: Some(false),
-                }),
+                kind,
                 created_at: now.clone(),
                 modified_at: now,
                 notes: None,
                 parent_id: parent,
                 sort_order: order,
                 tags: Vec::new(),
+                label_default: Some(true),
             };
             set.annotations.push(group);
 

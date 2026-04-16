@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::{ActiveFocus, AppState, LayerPanel};
-use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Region, generate_uuid, now_iso8601};
+use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Region, generate_default_label, generate_uuid, now_iso8601};
 use crate::components::combo_button::ComboButton;
 use crate::components::file_sidebar::settings_panel::{
     toggle_annotation_lock, delete_annotation, update_annotation_label, update_annotation_tags,
@@ -21,24 +21,6 @@ pub(crate) fn annotate_selection(state: &AppState) {
         let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
         state.snapshot_annotations();
         let ann_id = generate_uuid();
-        let annotation = Annotation {
-            id: ann_id.clone(),
-            kind: AnnotationKind::Region(Region {
-                time_start: sel.time_start,
-                time_end: sel.time_end,
-                freq_low: sel.freq_low,
-                freq_high: sel.freq_high,
-                label: None,
-                color: None,
-                locked: None,
-            }),
-            created_at: now_iso8601(),
-            modified_at: now_iso8601(),
-            notes: None,
-            parent_id: None,
-            sort_order: None,
-            tags: Vec::new(),
-        };
         state.annotation_store.update(|store| {
             store.ensure_len(idx + 1);
             if store.sets[idx].is_none() {
@@ -55,7 +37,30 @@ pub(crate) fn annotate_selection(state: &AppState) {
                 }
             }
             if let Some(ref mut set) = store.sets[idx] {
-                set.annotations.push(annotation);
+                let mut kind = AnnotationKind::Region(Region {
+                    time_start: sel.time_start,
+                    time_end: sel.time_end,
+                    freq_low: sel.freq_low,
+                    freq_high: sel.freq_high,
+                    label: None,
+                    color: None,
+                    locked: None,
+                });
+                let default_label = generate_default_label(&set.annotations, &kind, None);
+                if let AnnotationKind::Region(ref mut r) = kind {
+                    r.label = Some(default_label);
+                }
+                set.annotations.push(Annotation {
+                    id: ann_id.clone(),
+                    kind,
+                    created_at: now_iso8601(),
+                    modified_at: now_iso8601(),
+                    notes: None,
+                    parent_id: None,
+                    sort_order: None,
+                    tags: Vec::new(),
+                    label_default: Some(true),
+                });
             }
         });
         state.annotations_dirty.set(true);
@@ -172,6 +177,7 @@ fn get_selected_annotation_info(state: &AppState) -> Option<AnnotationInfo> {
     let store = state.annotation_store.get();
     let set = store.sets.get(idx)?.as_ref()?;
     let ann = set.annotations.iter().find(|a| a.id == ids[0])?;
+    let label_is_default = ann.label_default.unwrap_or(false);
     let (label, tags, is_locked, is_region) = match &ann.kind {
         AnnotationKind::Region(r) => (
             r.label.clone(),
@@ -202,6 +208,7 @@ fn get_selected_annotation_info(state: &AppState) -> Option<AnnotationInfo> {
     Some(AnnotationInfo {
         id: ann.id.clone(),
         label,
+        label_is_default,
         tags,
         is_locked,
         is_region,
@@ -214,6 +221,7 @@ fn get_selected_annotation_info(state: &AppState) -> Option<AnnotationInfo> {
 struct AnnotationInfo {
     id: String,
     label: Option<String>,
+    label_is_default: bool,
     tags: Vec<String>,
     is_locked: bool,
     is_region: bool,
@@ -380,12 +388,19 @@ pub fn SelectionComboButton() -> impl IntoView {
                         let ann_id_lock = info.id.clone();
                         let ann_id_label = info.id.clone();
                         let ann_id_tags = info.id.clone();
-                        let initial_label = info.label.clone().unwrap_or_default();
+                        // Start the edit input blank when the label is auto-generated, so
+                        // the user types a fresh label (or hits Enter to keep it default).
+                        let initial_label = if info.label_is_default {
+                            String::new()
+                        } else {
+                            info.label.clone().unwrap_or_default()
+                        };
                         let initial_tags = info.tags.join(", ");
 
                         let lock_label = if info.is_locked { "\u{1F512} Unlock" } else { "\u{1F513} Lock" };
                         let new_locked = !info.is_locked;
                         let has_freq = info.has_freq;
+                        let label_is_default = info.label_is_default;
 
                         if editing.get_untracked() {
                             // Editing mode: show label + tags inputs
@@ -508,8 +523,13 @@ pub fn SelectionComboButton() -> impl IntoView {
                             view! {
                                 <div class="layer-panel-title">"Annotation"</div>
                                 <div style="padding: 4px 8px; font-size: 11px; color: #aaa;">
-                                    {info.label.as_ref().map(|l| view! {
-                                        <div style="color: #ccc; font-weight: 600; margin-bottom: 2px;">{l.clone()}</div>
+                                    {info.label.as_ref().map(|l| {
+                                        let style = if label_is_default {
+                                            "color: #ccc; font-weight: 600; font-style: italic; margin-bottom: 2px;"
+                                        } else {
+                                            "color: #ccc; font-weight: 600; margin-bottom: 2px;"
+                                        };
+                                        view! { <div style=style>{l.clone()}</div> }
                                     })}
                                     {info.duration.as_ref().map(|d| view! {
                                         <div>"Duration: " {d.clone()}</div>

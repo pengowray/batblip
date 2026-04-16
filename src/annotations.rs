@@ -206,6 +206,56 @@ pub struct Annotation {
     /// User-defined tags (e.g. species, call type).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tags: Vec<String>,
+    /// True when the label was auto-generated (e.g. "Region 3") rather than
+    /// set by the user. UI renders default labels in italic. Omitted/None
+    /// means the label (if any) is user-authored.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub label_default: Option<bool>,
+}
+
+/// Human-readable kind name used as the prefix for auto-generated labels
+/// ("Region 1", "Segment 2", etc.).
+pub fn kind_name(kind: &AnnotationKind) -> &'static str {
+    match kind {
+        AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some() => "Region",
+        AnnotationKind::Region(_) => "Segment",
+        AnnotationKind::Marker(_) => "Marker",
+        AnnotationKind::Group(_) => "Group",
+        AnnotationKind::Measurement(_) => "Measurement",
+    }
+}
+
+fn label_of(kind: &AnnotationKind) -> Option<&str> {
+    match kind {
+        AnnotationKind::Region(r) => r.label.as_deref(),
+        AnnotationKind::Marker(m) => m.label.as_deref(),
+        AnnotationKind::Group(g) => g.label.as_deref(),
+        AnnotationKind::Measurement(m) => m.label.as_deref(),
+    }
+}
+
+/// Generate a default label like "Region 4" by finding the highest existing
+/// number among annotations whose label matches "{prefix} N" (for any kind —
+/// so numbering is shared per prefix). Leaves gaps so deletions don't renumber
+/// the remaining annotations. `exclude_id` skips a specific annotation (useful
+/// when regenerating a label for an annotation already in the set).
+pub fn generate_default_label(
+    annotations: &[Annotation],
+    kind: &AnnotationKind,
+    exclude_id: Option<&str>,
+) -> String {
+    let prefix = kind_name(kind);
+    let mut max_n: u32 = 0;
+    for a in annotations {
+        if exclude_id == Some(a.id.as_str()) { continue; }
+        let Some(label) = label_of(&a.kind) else { continue; };
+        let Some(rest) = label.strip_prefix(prefix) else { continue; };
+        let rest = rest.trim_start();
+        if let Ok(n) = rest.parse::<u32>() {
+            if n > max_n { max_n = n; }
+        }
+    }
+    format!("{} {}", prefix, max_n + 1)
 }
 
 /// Basic audio file metadata stored in the sidecar for reference.

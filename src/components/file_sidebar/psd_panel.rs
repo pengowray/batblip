@@ -152,6 +152,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 parent_id: None,
                 sort_order: None,
                 tags: Vec::new(),
+                label_default: None,
             }];
 
             // Add selection bounds as the first child annotation
@@ -174,6 +175,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                         parent_id: Some(group_id.clone()),
                         sort_order: Some(-1.0),
                         tags: Vec::new(),
+                        label_default: None,
                     });
                 }
             }
@@ -201,6 +203,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     parent_id: Some(group_id.clone()),
                     sort_order: Some(sort),
                     tags: Vec::new(),
+                    label_default: None,
                 });
 
                 if let Some((lo, hi)) = peak.bw_6db {
@@ -221,6 +224,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                         parent_id: Some(group_id.clone()),
                         sort_order: Some(sort + 1.0),
                         tags: Vec::new(),
+                        label_default: None,
                     });
                 }
 
@@ -242,6 +246,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                         parent_id: Some(group_id.clone()),
                         sort_order: Some(sort + 2.0),
                         tags: Vec::new(),
+                        label_default: None,
                     });
                 }
             }

@@ -1415,7 +1415,12 @@ pub fn draw_annotations(
 
         // Label
         if let Some(ref label) = sel.label {
-            ctx.set_font("11px monospace");
+            let font = if annotation.label_default.unwrap_or(false) {
+                "italic 11px monospace"
+            } else {
+                "11px monospace"
+            };
+            ctx.set_font(font);
             ctx.set_fill_style_str("rgba(200, 255, 200, 0.8)");
             let _ = ctx.fill_text(label, x0 + 3.0, y0 + 12.0);
         }

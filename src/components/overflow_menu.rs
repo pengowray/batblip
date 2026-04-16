@@ -373,6 +373,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let store = state.annotation_store.get();
         let set = store.sets.get(idx)?.as_ref()?;
         let ann = set.annotations.iter().find(|a| a.id == ids[0])?;
+        let is_default = ann.label_default.unwrap_or(false);
         match &ann.kind {
             crate::annotations::AnnotationKind::Region(r) => {
                 Some((
@@ -380,9 +381,10 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                     r.label.clone(),
                     r.is_locked(),
                     true, // is_region
+                    is_default,
                 ))
             }
-            _ => Some((ann.id.clone(), None, false, false)),
+            _ => Some((ann.id.clone(), None, false, false, is_default)),
         }
     });
 
@@ -422,7 +424,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                             <div class="canvas-overflow-menu">
                                 {move || {
                                     let info = ann_info.get();
-                                    if let Some((id, label, is_locked, is_region)) = info {
+                                    if let Some((id, label, is_locked, is_region, label_is_default)) = info {
                                         let id_lock = id.clone();
                                         let id_del = id.clone();
                                         let id_edit = id.clone();
@@ -433,7 +435,13 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                         if inline_editing.get() {
                                             // Inline editing mode
                                             let label_ref = NodeRef::<leptos::html::Input>::new();
-                                            let label_value = RwSignal::new(label.clone().unwrap_or_default());
+                                            // Start input blank when label is auto-generated.
+                                            let initial_edit = if label_is_default {
+                                                String::new()
+                                            } else {
+                                                label.clone().unwrap_or_default()
+                                            };
+                                            let label_value = RwSignal::new(initial_edit.clone());
                                             let initial_tags = {
                                                 // Get current tags (tags are on the Annotation, not Region)
                                                 let idx = state.current_file_index.get_untracked();
@@ -477,7 +485,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                         class="sel-combo-input"
                                                         type="text"
                                                         node_ref=label_ref
-                                                        prop:value=label.clone().unwrap_or_default()
+                                                        prop:value=initial_edit.clone()
                                                         on:input=move |ev: web_sys::Event| {
                                                             let input = ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
                                                             label_value.set(input.value());
@@ -530,10 +538,17 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                         } else {
                                         // Normal menu mode
                                         view! {
-                                            {label.map(|l| view! {
-                                                <div class="canvas-overflow-info">
-                                                    <div style="font-weight: 600; color: #ccc;">{l}</div>
-                                                </div>
+                                            {label.map(|l| {
+                                                let style = if label_is_default {
+                                                    "font-weight: 600; color: #ccc; font-style: italic;"
+                                                } else {
+                                                    "font-weight: 600; color: #ccc;"
+                                                };
+                                                view! {
+                                                    <div class="canvas-overflow-info">
+                                                        <div style=style>{l}</div>
+                                                    </div>
+                                                }
                                             })}
                                             <button
                                                 class="canvas-overflow-item"
