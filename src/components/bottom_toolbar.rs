@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, CanvasTool, ChannelMode, GainMode, LayerPanel, ListenMode, MicAcquisitionState, MicStrategy, PeakSource, PlaybackMode, PlayStartMode, RecordMode, RecordReadyState};
+use crate::state::{ActiveFocus, AppState, CanvasTool, ChannelMode, GainMode, LayerPanel, ListenMode, MicAcquisitionState, MicStrategy, PeakSource, PlaybackMode, PlayStartMode, RecordMode, RecordReadyState};
 use crate::audio::{microphone, playback};
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::audio::source::ChannelView;
@@ -1134,6 +1134,34 @@ pub fn BottomToolbar() -> impl IntoView {
                     </ComboButton>
                 }
             }
+
+            // ── Annotations visibility toggle ──
+            {move || has_file().then(|| view! {
+                <button
+                    class=move || if state.annotations_visible.get() { "layer-btn active" } else { "layer-btn" }
+                    on:click=move |_| {
+                        let new_visible = !state.annotations_visible.get_untracked();
+                        state.annotations_visible.set(new_visible);
+                        if !new_visible {
+                            // Drop annotation focus/selection and clear interaction state.
+                            if state.active_focus.get_untracked() == Some(ActiveFocus::Annotations) {
+                                state.active_focus.set(None);
+                            }
+                            if !state.selected_annotation_ids.get_untracked().is_empty() {
+                                state.selected_annotation_ids.set(Vec::new());
+                            }
+                            state.annotation_hover_handle.set(None);
+                            state.annotation_drag_handle.set(None);
+                            state.annotation_editing.set(false);
+                            state.annotation_is_new_edit.set(false);
+                        }
+                    }
+                    title=move || if state.annotations_visible.get() { "Hide annotations" } else { "Show annotations" }
+                >
+                    <span class="layer-btn-category">"Ann"</span>
+                    <span class="layer-btn-value">{move || if state.annotations_visible.get() { "On" } else { "Off" }}</span>
+                </button>
+            })}
 
             // ── Tool button (Hand / Selection, only when file is open; hidden on mobile) ──
             {move || (!state.is_mobile.get() && has_file()).then(|| view! {

@@ -185,6 +185,7 @@ pub fn Spectrogram() -> impl IntoView {
         let annotation_store = state.annotation_store.get();
         let selected_annotation_ids = state.selected_annotation_ids.get();
         let annotation_hover_handle = state.annotation_hover_handle.get();
+        let annotations_visible = state.annotations_visible.get();
         let active_focus = state.active_focus.get();
         let _timeline = state.active_timeline.get(); // trigger redraw on timeline change
         pre_rendered.track();
@@ -871,8 +872,8 @@ pub fn Spectrogram() -> impl IntoView {
                 }
             }
 
-            // Draw saved annotation selections (skip in xform view)
-            if !xform_on {
+            // Draw saved annotation selections (skip in xform view or when hidden via toolbar toggle)
+            if !xform_on && annotations_visible {
                 if let Some(file_idx_val) = idx {
                     if let Some(Some(set)) = annotation_store.sets.get(file_idx_val) {
                         let hover_ref = annotation_hover_handle.as_ref()

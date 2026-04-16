@@ -59,6 +59,7 @@ pub(crate) fn annotate_selection(state: &AppState) {
             }
         });
         state.annotations_dirty.set(true);
+        state.annotations_visible.set(true);
         state.selection.set(None);
         state.selected_annotation_ids.set(vec![ann_id]);
         state.active_focus.set(Some(ActiveFocus::Annotations));

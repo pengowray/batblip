@@ -268,6 +268,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 }
             });
             state.annotations_dirty.set(true);
+            state.annotations_visible.set(true);
             state.show_info_toast("PSD peaks annotated");
         }
     };

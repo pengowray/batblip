@@ -1059,6 +1059,7 @@ fn group_selected(state: AppState) {
     });
     state.selected_annotation_ids.set(vec![group_id]);
     state.annotations_dirty.set(true);
+    state.annotations_visible.set(true);
 }
 
 fn ungroup_selected(state: AppState) {

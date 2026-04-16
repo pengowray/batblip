@@ -1350,6 +1350,8 @@ pub struct AppState {
     pub annotation_editing: RwSignal<bool>,
     /// True when editing a just-created annotation (Escape = cancel/delete).
     pub annotation_is_new_edit: RwSignal<bool>,
+    /// Whether saved annotations are drawn on the spectrogram.
+    pub annotations_visible: RwSignal<bool>,
 
     // Project
     /// Whether the Projects beta feature is enabled (persisted to localStorage).
@@ -1765,6 +1767,7 @@ impl AppState {
             annotation_drag_original: RwSignal::new(None),
             annotation_editing: RwSignal::new(false),
             annotation_is_new_edit: RwSignal::new(false),
+            annotations_visible: RwSignal::new(true),
 
             projects_enabled: RwSignal::new({
                 web_sys::window()

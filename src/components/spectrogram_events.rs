@@ -437,7 +437,8 @@ pub fn on_pointerdown(
     state.pointer_is_down.set(true);
 
     // Check for annotation resize handle drag first (selected annotations take
-    // priority over FF/HET handles when they overlap)
+    // priority over FF/HET handles when they overlap). Skipped when annotations are hidden.
+    if state.annotations_visible.get_untracked() {
     if let Some((ref ann_id, handle_pos)) = state.annotation_hover_handle.get_untracked() {
         // Check if the annotation is locked
         let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
@@ -471,6 +472,7 @@ pub fn on_pointerdown(
             ev.prevent_default();
             return;
         }
+    }
     }
 
     // Check for spec handle drag (FF or HET — takes priority over axis/tool drags)
@@ -638,24 +640,26 @@ pub fn on_pointerdown(
         let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
         let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
 
-        // Check annotation body first (highest priority)
+        // Check annotation body first (highest priority; skipped when annotations are hidden)
         let mut hit_annotation = false;
-        let store = state.annotation_store.get_untracked();
-        if let Some(Some(set)) = store.sets.get(file_idx) {
-            if let Some(canvas_el) = canvas_ref.get() {
-                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-                let cw = canvas.width() as f64;
-                let ch = canvas.height() as f64;
-                let scroll = state.scroll_offset.get_untracked();
-                let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                let zoom = state.zoom_level.get_untracked();
+        if state.annotations_visible.get_untracked() {
+            let store = state.annotation_store.get_untracked();
+            if let Some(Some(set)) = store.sets.get(file_idx) {
+                if let Some(canvas_el) = canvas_ref.get() {
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    let cw = canvas.width() as f64;
+                    let ch = canvas.height() as f64;
+                    let scroll = state.scroll_offset.get_untracked();
+                    let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                    let zoom = state.zoom_level.get_untracked();
 
-                if let Some(hit_id) = hit_test_annotation_body(
-                    set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
-                ) {
-                    let ctrl = ev.ctrl_key() || ev.meta_key();
-                    ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
-                    hit_annotation = true;
+                    if let Some(hit_id) = hit_test_annotation_body(
+                        set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
+                    ) {
+                        let ctrl = ev.ctrl_key() || ev.meta_key();
+                        ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
+                        hit_annotation = true;
+                    }
                 }
             }
         }
@@ -916,8 +920,9 @@ pub fn on_pointermove(
                         );
                         state.spec_hover_handle.set(handle);
 
-                        // Annotation resize handle hover detection (only when annotations have focus)
-                        let annotations_focused = state.active_focus.get_untracked() == Some(ActiveFocus::Annotations);
+                        // Annotation resize handle hover detection (only when annotations have focus and are visible)
+                        let annotations_focused = state.active_focus.get_untracked() == Some(ActiveFocus::Annotations)
+                            && state.annotations_visible.get_untracked();
                         let selected_ids = state.selected_annotation_ids.get_untracked();
                         if annotations_focused && !selected_ids.is_empty() {
                             let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
