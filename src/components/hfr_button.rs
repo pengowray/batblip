@@ -727,14 +727,23 @@ pub fn HfrButton() -> impl IntoView {
                 <hr />
                 <div class="layer-panel-title">"Bandpass"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                    <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::Auto)
-                        on:click=move |_| state.bandpass_mode.set(BandpassMode::Auto)
-                    >"AUTO"</button>
+                    <Show when=move || state.hfr_enabled.get()>
+                        <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::Auto)
+                            on:click=move |_| state.bandpass_mode.set(BandpassMode::Auto)
+                        >"AUTO"</button>
+                    </Show>
                     <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::Off)
                         on:click=move |_| state.bandpass_mode.set(BandpassMode::Off)
                     >"OFF"</button>
                     <button class=move || layer_opt_class(state.bandpass_mode.get() == BandpassMode::On)
-                        on:click=move |_| state.bandpass_mode.set(BandpassMode::On)
+                        on:click=move |_| {
+                            if !state.focus_stack.get_untracked().hfr_enabled() {
+                                // Enable HF with 1:1 mode
+                                state.focus_stack.update(|s| s.set_saved_playback_mode(Some(PlaybackMode::Normal)));
+                                state.toggle_hfr();
+                            }
+                            state.bandpass_mode.set(BandpassMode::On);
+                        }
                     >"ON"</button>
                 </div>
                 <Show when=move || {
