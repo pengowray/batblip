@@ -16,6 +16,7 @@ leptos = { version = "0.8", features = ["csr"] }
 web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
+    "CanvasGradient",
     "ImageData",
     "AudioContext",
     "AudioContextOptions",

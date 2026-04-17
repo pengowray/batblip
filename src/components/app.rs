@@ -21,7 +21,7 @@ use crate::components::bat_book_tab::BatBookTab;
 use crate::components::bat_book_strip::BatBookStrip;
 use crate::components::bat_book_ref_panel::BatBookRefPanel;
 use crate::components::display_filter_button::DspFilterRow;
-use crate::components::selection_combo_button::SelectionComboButton;
+use crate::components::annotation_label_editor::AnnotationLabelEditor;
 use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::viewport;
 
@@ -1185,8 +1185,8 @@ fn MainArea() -> impl IntoView {
                                 }}
                                 <BookmarkPopup />
                                 <ViewAndDspButtons />
-                                <SelectionComboButton />
                                 <CanvasOverflowMenus />
+                                <AnnotationLabelEditor />
                                 <BatBookTab />
                             </div>
 

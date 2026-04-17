@@ -1140,7 +1140,7 @@ pub fn on_pointerup(
         if sel.time_end - sel.time_start > 0.0001 {
             state.selection.set(Some(sel));
             state.active_focus.set(Some(ActiveFocus::TransientSelection));
-            if state.annotation_auto_focus.get_untracked() {
+            if state.selection_auto_focus.get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {
                         state.set_ff_range(lo, hi);
@@ -1177,17 +1177,65 @@ pub fn on_dblclick(
         }
     }
 
-    // Double-click in main area: clear transient selection if click is outside it
+    // Double-click inside a transient selection: promote it to an annotation and open label edit.
     if let Some(sel) = state.selection.get_untracked() {
         if let Some((_, _, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-            if !point_in_selection(&sel, t, freq) {
-                state.last_selection.set(Some(sel));
-                state.selection.set(None);
-                if state.active_focus.get_untracked() == Some(ActiveFocus::TransientSelection) {
-                    state.active_focus.set(None);
-                }
+            if point_in_selection(&sel, t, freq) {
+                crate::components::overflow_menu::annotate_selection(&state);
                 ev.prevent_default();
                 return;
+            }
+            // Outside selection: clear it (existing behavior)
+            state.last_selection.set(Some(sel));
+            state.selection.set(None);
+            if state.active_focus.get_untracked() == Some(ActiveFocus::TransientSelection) {
+                state.active_focus.set(None);
+            }
+            ev.prevent_default();
+            return;
+        }
+    }
+
+    // Double-click inside an annotation body: enter label edit for that annotation.
+    if state.annotations_visible.get_untracked() {
+        if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+            if let Some(canvas_el) = canvas_ref.get() {
+                let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                let cw = canvas.width() as f64;
+                let ch = canvas.height() as f64;
+                let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+                let files = state.files.get_untracked();
+                let file = files.get(file_idx);
+                let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
+                let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+                let scroll = state.scroll_offset.get_untracked();
+                let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+                let zoom = state.zoom_level.get_untracked();
+                let store = state.annotation_store.get_untracked();
+                if let Some(Some(set)) = store.sets.get(file_idx) {
+                    if let Some(hit_id) = hit_test_annotation_body(
+                        set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
+                    ) {
+                        let is_locked = set.annotations.iter()
+                            .find(|a| a.id == hit_id)
+                            .and_then(|a| match &a.kind {
+                                crate::annotations::AnnotationKind::Region(r) => Some(r.is_locked()),
+                                _ => None,
+                            })
+                            .unwrap_or(false);
+                        state.selected_annotation_ids.set(vec![hit_id]);
+                        state.active_focus.set(Some(ActiveFocus::Annotations));
+                        if is_locked {
+                            state.show_info_toast("Annotation is locked \u{2014} unlock to edit label by double-click");
+                        } else {
+                            state.annotation_is_new_edit.set(false);
+                            state.annotation_editing.set(true);
+                        }
+                        ev.prevent_default();
+                        return;
+                    }
+                }
             }
         }
     }
@@ -1773,7 +1821,7 @@ pub fn on_touchend(
         }
 
         // Update frequency focus from selection (if auto-focus enabled)
-        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.annotation_auto_focus.get_untracked() {
+        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.selection_auto_focus.get_untracked() {
             if let Some(sel) = state.selection.get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {

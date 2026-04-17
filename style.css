@@ -880,7 +880,7 @@ body.sidebar-resizing {
 }
 .annotation-label.default {
     font-style: italic;
-    color: #888;
+    color: #666;
 }
 .annotation-delete {
     background: none;
@@ -3091,100 +3091,24 @@ body.sidebar-resizing {
     margin: 4px 0;
 }
 
-/* Selection combo button action buttons */
-.sel-combo-action-btn {
-    display: block;
-    width: 100%;
-    padding: 5px 8px;
-    background: rgba(80, 180, 130, 0.15);
-    border: 1px solid rgba(80, 180, 130, 0.4);
-    border-radius: 4px;
-    color: #8fc;
-    font-size: 12px;
-    cursor: pointer;
-    text-align: left;
-}
-
-.sel-combo-action-btn:hover {
-    background: rgba(80, 180, 130, 0.25);
-    border-color: rgba(80, 180, 130, 0.6);
-}
-
-.sel-combo-action-btn.subtle {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: #bbb;
-}
-
-.sel-combo-action-btn.subtle:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #eee;
-}
-
-.sel-combo-action-btn.danger {
-    background: rgba(220, 60, 60, 0.1);
-    border-color: rgba(220, 60, 60, 0.3);
-    color: #f99;
-}
-
-.sel-combo-action-btn.danger:hover {
-    background: rgba(220, 60, 60, 0.2);
-    border-color: rgba(220, 60, 60, 0.5);
-    color: #fcc;
-}
-
-/* Small inline +/x buttons next to freq range */
-.sel-combo-freq-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border-radius: 3px;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-.sel-combo-freq-btn.remove {
-    background: rgba(220, 60, 60, 0.15);
-    border: 1px solid rgba(220, 60, 60, 0.4);
-    color: #f99;
-}
-
-.sel-combo-freq-btn.remove:hover {
-    background: rgba(220, 60, 60, 0.3);
-    color: #fcc;
-}
-
-.sel-combo-freq-btn.add {
-    background: rgba(80, 180, 130, 0.15);
-    border: 1px solid rgba(80, 180, 130, 0.4);
-    color: #8fc;
-}
-
-.sel-combo-freq-btn.add:hover {
-    background: rgba(80, 180, 130, 0.3);
-    color: #bfe;
-}
-
-.sel-combo-input {
-    width: 100%;
-    padding: 3px 6px;
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 3px;
-    color: #ddd;
-    font-size: 11px;
+/* Floating annotation label editor (appears on double-click) */
+.annotation-inline-label-editor {
+    z-index: 30;
+    pointer-events: auto;
+    min-width: 80px;
+    max-width: 260px;
+    padding: 1px 4px;
+    background: rgba(15, 20, 15, 0.92);
+    border: 1px solid rgba(100, 230, 160, 0.8);
+    border-radius: 2px;
+    color: #e0ffe8;
+    font: 11px monospace;
     outline: none;
-    box-sizing: border-box;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
 }
-
-.sel-combo-input:focus {
-    border-color: #6da;
+.annotation-inline-label-editor:focus {
+    border-color: rgba(255, 220, 120, 1.0);
+    background: rgba(20, 18, 10, 0.95);
 }
 
 .layer-panel-title {
@@ -5381,6 +5305,30 @@ button.canvas-overflow-btn:hover {
     gap: 4px;
     padding: 6px 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Freq range row: text on the left, buttons right-aligned in a fixed position. */
+.canvas-overflow-freq-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    color: #aaa;
+}
+.canvas-overflow-freq-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.canvas-overflow-btn-group {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 button.canvas-overflow-action-btn {

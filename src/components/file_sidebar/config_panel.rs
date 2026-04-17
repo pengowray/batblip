@@ -237,6 +237,49 @@ pub(super) fn ConfigPanel() -> impl IntoView {
             }}
 
             <div class="setting-group">
+                <div class="setting-group-title">"Selection"</div>
+                <div class="setting-row">
+                    <span class="setting-label">"Auto-focus: Selection"</span>
+                    <input
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.selection_auto_focus.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.selection_auto_focus.set(input.checked());
+                        }
+                    />
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">"Auto-focus: Annotation"</span>
+                    <input
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.annotation_auto_focus.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.annotation_auto_focus.set(input.checked());
+                        }
+                    />
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">"Auto-focus: Bat Book"</span>
+                    <input
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.bat_book_auto_focus.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.bat_book_auto_focus.set(input.checked());
+                        }
+                    />
+                </div>
+            </div>
+
+            <div class="setting-group">
                 <div class="setting-group-title">"Beta"</div>
                 <div class="setting-row">
                     <span class="setting-label">"Enable projects"</span>

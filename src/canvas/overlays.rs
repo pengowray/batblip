@@ -879,10 +879,15 @@ pub fn draw_selection(
     ctx.set_fill_style_str("rgba(50, 120, 200, 0.15)");
     ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
 
-    // Border
-    ctx.set_stroke_style_str("rgba(80, 160, 255, 0.7)");
+    // Dotted border (distinguishes transient selection from annotations)
+    let _ = ctx.set_line_dash(&js_sys::Array::of2(
+        &wasm_bindgen::JsValue::from_f64(1.0),
+        &wasm_bindgen::JsValue::from_f64(3.0),
+    ));
+    ctx.set_stroke_style_str("rgba(120, 190, 255, 0.95)");
     ctx.set_line_width(1.0);
     ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+    let _ = ctx.set_line_dash(&js_sys::Array::new());
 }
 
 /// Draw shadow selection boxes one octave higher and lower to highlight harmonics.
@@ -1389,39 +1394,43 @@ pub fn draw_annotations(
 
         let is_selected = selected_ids.contains(&annotation.id);
 
-        // Fill
-        let fill_color = if is_selected {
-            "rgba(200, 150, 50, 0.15)"
+        // Fill with dark-top → transparent gradient (distinguishes annotations from transient selection)
+        let grad = ctx.create_linear_gradient(x0, y0, x0, y1);
+        let (top_stop, bot_stop) = if is_selected {
+            ("rgba(230, 170, 60, 0.42)", "rgba(230, 170, 60, 0.00)")
         } else {
-            "rgba(50, 200, 120, 0.10)"
+            ("rgba(70, 220, 140, 0.32)", "rgba(70, 220, 140, 0.00)")
         };
-        ctx.set_fill_style_str(fill_color);
+        let _ = grad.add_color_stop(0.0, top_stop);
+        let _ = grad.add_color_stop(1.0, bot_stop);
+        ctx.set_fill_style_canvas_gradient(&grad);
         ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
 
-        // Dashed border
-        let _ = ctx.set_line_dash(&js_sys::Array::of2(
-            &wasm_bindgen::JsValue::from_f64(4.0),
-            &wasm_bindgen::JsValue::from_f64(3.0),
-        ));
+        // Solid border
         let stroke_color = if is_selected {
-            "rgba(255, 200, 80, 0.8)"
+            "rgba(255, 200, 80, 0.9)"
         } else {
-            "rgba(80, 220, 140, 0.5)"
+            "rgba(100, 230, 160, 0.75)"
         };
         ctx.set_stroke_style_str(stroke_color);
         ctx.set_line_width(1.0);
         ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
-        let _ = ctx.set_line_dash(&js_sys::Array::new());
 
         // Label
         if let Some(ref label) = sel.label {
-            let font = if annotation.label_default.unwrap_or(false) {
+            let is_default = annotation.label_default.unwrap_or(false);
+            let font = if is_default {
                 "italic 11px monospace"
             } else {
                 "11px monospace"
             };
             ctx.set_font(font);
-            ctx.set_fill_style_str("rgba(200, 255, 200, 0.8)");
+            let label_color = if is_default {
+                "rgba(170, 200, 185, 0.55)"
+            } else {
+                "rgba(210, 255, 220, 0.9)"
+            };
+            ctx.set_fill_style_str(label_color);
             let _ = ctx.fill_text(label, x0 + 3.0, y0 + 12.0);
         }
 

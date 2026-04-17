@@ -1,12 +1,99 @@
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use crate::state::{ActiveFocus, AppState, Selection};
+use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Region, generate_default_label, generate_uuid, now_iso8601};
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::file_sidebar::settings_panel::{
     toggle_annotation_lock, delete_annotation,
-    update_annotation_label, update_annotation_tags,
 };
-use crate::components::selection_combo_button::annotate_selection;
+
+// Icons for the expand/contract freq buttons.
+// Expand = "remove frequency bounds" (treat as full range).
+// Contract = "snap frequency to current view/focus".
+const ICON_EXPAND: &str = "\u{26F6}";   // ⛶ square four corners — full range / remove bounds
+const ICON_CONTRACT: &str = "\u{25AD}"; // ▭ white rectangle — snap to current view
+
+/// Creates an annotation from the current transient selection and enters label-edit mode.
+pub fn annotate_selection(state: &AppState) {
+    let selection = state.selection.get_untracked();
+    let file_idx = state.current_file_index.get_untracked();
+    if let (Some(sel), Some(idx)) = (selection, file_idx) {
+        let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
+        state.snapshot_annotations();
+        let ann_id = generate_uuid();
+        state.annotation_store.update(|store| {
+            store.ensure_len(idx + 1);
+            if store.sets[idx].is_none() {
+                let new_set = state.files.with_untracked(|files| {
+                    files.get(idx).map(|f| {
+                        let id = f.identity.clone().unwrap_or_else(|| {
+                            crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+                        });
+                        AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
+                    })
+                });
+                if let Some(set) = new_set {
+                    store.sets[idx] = Some(set);
+                }
+            }
+            if let Some(ref mut set) = store.sets[idx] {
+                let mut kind = AnnotationKind::Region(Region {
+                    time_start: sel.time_start,
+                    time_end: sel.time_end,
+                    freq_low: sel.freq_low,
+                    freq_high: sel.freq_high,
+                    label: None,
+                    color: None,
+                    locked: None,
+                });
+                let default_label = generate_default_label(&set.annotations, &kind, None);
+                if let AnnotationKind::Region(ref mut r) = kind {
+                    r.label = Some(default_label);
+                }
+                set.annotations.push(Annotation {
+                    id: ann_id.clone(),
+                    kind,
+                    created_at: now_iso8601(),
+                    modified_at: now_iso8601(),
+                    notes: None,
+                    parent_id: None,
+                    sort_order: None,
+                    tags: Vec::new(),
+                    label_default: Some(true),
+                });
+            }
+        });
+        state.annotations_dirty.set(true);
+        state.annotations_visible.set(true);
+        state.selection.set(None);
+        state.selected_annotation_ids.set(vec![ann_id]);
+        state.active_focus.set(Some(ActiveFocus::Annotations));
+        // Auto-enter label editing for the new annotation (floating editor)
+        state.annotation_editing.set(true);
+        state.annotation_is_new_edit.set(true);
+        state.show_info_toast(if has_freq { "Region annotated" } else { "Segment annotated" });
+    }
+}
+
+/// Get frequency bounds from focus stack or display range.
+fn get_freq_bounds(state: &AppState) -> (f64, f64) {
+    let ff = state.focus_stack.get_untracked().effective_range_ignoring_hfr();
+    if ff.is_active() {
+        (ff.lo, ff.hi)
+    } else {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked().unwrap_or(0);
+        let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+        (
+            state.min_display_freq.get_untracked().unwrap_or(0.0),
+            state.max_display_freq.get_untracked().unwrap_or(file_max),
+        )
+    }
+}
+
+/// Format freq range for tooltip.
+fn fmt_freq_range(lo: f64, hi: f64) -> String {
+    format!("{:.0}\u{2013}{:.0} kHz", lo / 1000.0, hi / 1000.0)
+}
 
 /// Compute the pixel position of the top-right corner of the transient selection
 /// relative to the spectrogram canvas area.
@@ -69,7 +156,6 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
     view! {
         {move || {
             let focus = state.active_focus.get();
-            // Close overflow menus when focus doesn't match
             if focus != Some(ActiveFocus::TransientSelection) {
                 state.selection_overflow_open.set(false);
             }
@@ -101,6 +187,62 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
 const BTN_SIZE: f64 = 22.0;
 const BTN_MARGIN: f64 = 4.0;
 
+/// Frequency row: "Freq: 20–50 kHz" on the left, [⇅] [⇵] buttons on the right.
+/// Buttons are always shown; disabled when they wouldn't change anything.
+#[component]
+fn FreqRow(
+    /// Displayed freq range (or em-dash).
+    #[prop(into)]
+    freq_text: Signal<String>,
+    /// Whether the target currently has a freq range.
+    #[prop(into)]
+    has_freq: Signal<bool>,
+    /// Whether the current freq range already matches the snap-to-view target.
+    #[prop(into)]
+    matches_view: Signal<bool>,
+    /// Tooltip extension for the contract button (e.g. "Snap to 20–50 kHz").
+    #[prop(into)]
+    contract_target: Signal<String>,
+    /// Remove freq bounds (expand to full).
+    on_expand: Callback<()>,
+    /// Snap freq to current view/focus.
+    on_contract: Callback<()>,
+) -> impl IntoView {
+    let expand_disabled = Signal::derive(move || !has_freq.get());
+    let contract_disabled = Signal::derive(move || matches_view.get());
+
+    view! {
+        <div class="canvas-overflow-freq-row">
+            <span class="canvas-overflow-freq-text">{"Freq: "}{move || freq_text.get()}</span>
+            <div class="canvas-overflow-btn-group">
+                <button
+                    class="canvas-overflow-action-btn"
+                    disabled=move || expand_disabled.get()
+                    title="Full frequency range (remove bounds)"
+                    on:click=move |_| { if !expand_disabled.get_untracked() { on_expand.run(()); } }
+                >
+                    {ICON_EXPAND}
+                </button>
+                <button
+                    class="canvas-overflow-action-btn"
+                    disabled=move || contract_disabled.get()
+                    title=move || {
+                        let t = contract_target.get();
+                        if t.is_empty() {
+                            "Snap frequency to current view".to_string()
+                        } else {
+                            format!("Snap frequency to current view ({})", t)
+                        }
+                    }
+                    on:click=move |_| { if !contract_disabled.get_untracked() { on_contract.run(()); } }
+                >
+                    {ICON_CONTRACT}
+                </button>
+            </div>
+        </div>
+    }
+}
+
 /// "..." overflow button + dropdown for transient selection.
 #[component]
 fn SelectionOverflowMenu() -> impl IntoView {
@@ -122,8 +264,6 @@ fn SelectionOverflowMenu() -> impl IntoView {
         let min_freq = state.min_display_freq.get().unwrap_or(0.0);
         let max_freq = state.max_display_freq.get().unwrap_or(file_max_freq);
 
-        // Estimate canvas height from the spectrogram_canvas_width and aspect
-        // We don't have a height signal, so compute from the viewport
         let canvas_h = web_sys::window()
             .and_then(|w| w.document())
             .and_then(|d| d.query_selector(".spectrogram-container canvas").ok().flatten())
@@ -141,33 +281,63 @@ fn SelectionOverflowMenu() -> impl IntoView {
         let d = sel.time_end - sel.time_start;
         if d < 0.0001 { return None; }
         let dur = crate::format_time::format_duration(d, 3);
-        let freq = match (sel.freq_low, sel.freq_high) {
-            (Some(fl), Some(fh)) => Some(format!("{:.0} \u{2013} {:.0} kHz", fl / 1000.0, fh / 1000.0)),
-            _ => None,
+        let freq_text = match (sel.freq_low, sel.freq_high) {
+            (Some(fl), Some(fh)) => format!("{:.0} \u{2013} {:.0} kHz", fl / 1000.0, fh / 1000.0),
+            _ => "\u{2014}".to_string(),
         };
         let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
-        Some((dur, freq, has_freq))
+        Some((dur, freq_text, has_freq))
     });
 
-    // Check if selection already matches FF
-    let sel_matches_ff = Signal::derive(move || {
-        let sel = state.selection.get();
-        let ff_lo = state.ff_freq_lo.get();
-        let ff_hi = state.ff_freq_hi.get();
-        match sel {
-            Some(s) => {
-                if ff_hi <= ff_lo { return false; }
-                match (s.freq_low, s.freq_high) {
-                    (Some(sl), Some(sh)) => (sl - ff_lo).abs() < 1.0 && (sh - ff_hi).abs() < 1.0,
-                    _ => false,
-                }
-            }
-            None => false,
+    let has_freq_sig = Signal::derive(move || {
+        state.selection.get().is_some_and(|s| s.freq_low.is_some() && s.freq_high.is_some())
+    });
+
+    let freq_text_sig = Signal::derive(move || {
+        state.selection.get()
+            .and_then(|s| match (s.freq_low, s.freq_high) {
+                (Some(fl), Some(fh)) => Some(format!("{:.0} \u{2013} {:.0} kHz", fl / 1000.0, fh / 1000.0)),
+                _ => None,
+            })
+            .unwrap_or_else(|| "\u{2014}".to_string())
+    });
+
+    let matches_view_sig = Signal::derive(move || {
+        let sel = match state.selection.get() { Some(s) => s, None => return false };
+        let (tlo, thi) = get_freq_bounds(&state);
+        if thi <= tlo { return false; }
+        match (sel.freq_low, sel.freq_high) {
+            (Some(sl), Some(sh)) => (sl - tlo).abs() < 1.0 && (sh - thi).abs() < 1.0,
+            _ => false,
         }
     });
 
-    let ff_active = Signal::derive(move || {
-        state.ff_freq_hi.get() > state.ff_freq_lo.get()
+    let contract_target_sig = Signal::derive(move || {
+        let (lo, hi) = get_freq_bounds(&state);
+        if hi > lo { fmt_freq_range(lo, hi) } else { String::new() }
+    });
+
+    let on_expand = Callback::new(move |_: ()| {
+        if let Some(sel) = state.selection.get_untracked() {
+            state.selection.set(Some(Selection {
+                freq_low: None,
+                freq_high: None,
+                ..sel
+            }));
+        }
+    });
+
+    let on_contract = Callback::new(move |_: ()| {
+        if let Some(sel) = state.selection.get_untracked() {
+            let (lo, hi) = get_freq_bounds(&state);
+            if hi > lo {
+                state.selection.set(Some(Selection {
+                    freq_low: Some(lo),
+                    freq_high: Some(hi),
+                    ..sel
+                }));
+            }
+        }
     });
 
     view! {
@@ -175,7 +345,6 @@ fn SelectionOverflowMenu() -> impl IntoView {
             let (x, y) = pos.get().unwrap_or((0.0, 0.0));
             if x <= 0.0 && y <= 0.0 { return None; }
 
-            // Position the button above and to the left of the top-right corner
             let btn_left = (x - BTN_SIZE - BTN_MARGIN).max(0.0);
             let btn_top = (y + BTN_MARGIN).max(0.0);
 
@@ -198,7 +367,6 @@ fn SelectionOverflowMenu() -> impl IntoView {
                         "\u{22EF}"
                     </button>
 
-                    // Dropdown menu
                     {move || is_open.get().then(|| {
                         view! {
                             <div
@@ -207,88 +375,20 @@ fn SelectionOverflowMenu() -> impl IntoView {
                             ></div>
                             <div class="canvas-overflow-menu">
                                 {move || {
-                                    if let Some((dur, freq, has_freq)) = sel_details.get() {
+                                    if let Some((dur, _freq_text, has_freq)) = sel_details.get() {
+                                        let btn_label = if has_freq { "Annotate Region" } else { "Annotate Segment" };
                                         view! {
                                             <div class="canvas-overflow-info">
                                                 <div>"Duration: " {dur}</div>
-                                                {freq.map(|f| view! { <div>"Freq: " {f}</div> }.into_any())}
                                             </div>
-                                            <div class="canvas-overflow-btn-row">
-                                                // Remove freq range
-                                                <button
-                                                    class="canvas-overflow-action-btn"
-                                                    class:disabled={!has_freq}
-                                                    disabled=move || !has_freq
-                                                    title="Remove frequency range"
-                                                    on:click=move |_| {
-                                                        if let Some(sel) = state.selection.get_untracked() {
-                                                            state.selection.set(Some(Selection {
-                                                                freq_low: None,
-                                                                freq_high: None,
-                                                                ..sel
-                                                            }));
-                                                        }
-                                                    }
-                                                >
-                                                    {"\u{00D7}"}
-                                                </button>
-                                                // Add freq range from FF
-                                                <button
-                                                    class="canvas-overflow-action-btn"
-                                                    class:disabled={has_freq}
-                                                    disabled=move || has_freq
-                                                    title="Add frequency range from focus"
-                                                    on:click=move |_| {
-                                                        if let Some(sel) = state.selection.get_untracked() {
-                                                            let ff_lo = state.ff_freq_lo.get_untracked();
-                                                            let ff_hi = state.ff_freq_hi.get_untracked();
-                                                            if ff_hi > ff_lo {
-                                                                state.selection.set(Some(Selection {
-                                                                    freq_low: Some(ff_lo),
-                                                                    freq_high: Some(ff_hi),
-                                                                    ..sel
-                                                                }));
-                                                            } else {
-                                                                // Fall back to display range
-                                                                let files = state.files.get_untracked();
-                                                                let idx = state.current_file_index.get_untracked().unwrap_or(0);
-                                                                let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                                                                let lo = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                                                                let hi = state.max_display_freq.get_untracked().unwrap_or(file_max);
-                                                                state.selection.set(Some(Selection {
-                                                                    freq_low: Some(lo),
-                                                                    freq_high: Some(hi),
-                                                                    ..sel
-                                                                }));
-                                                            }
-                                                        }
-                                                    }
-                                                >
-                                                    {"+"}
-                                                </button>
-                                                // Refresh: reset selection freq to FF
-                                                <button
-                                                    class="canvas-overflow-action-btn"
-                                                    class:disabled={move || !ff_active.get() || sel_matches_ff.get()}
-                                                    disabled=move || !ff_active.get() || sel_matches_ff.get()
-                                                    title="Reset frequency range to match focus"
-                                                    on:click=move |_| {
-                                                        let ff_lo = state.ff_freq_lo.get_untracked();
-                                                        let ff_hi = state.ff_freq_hi.get_untracked();
-                                                        if ff_hi > ff_lo {
-                                                            if let Some(sel) = state.selection.get_untracked() {
-                                                                state.selection.set(Some(Selection {
-                                                                    freq_low: Some(ff_lo),
-                                                                    freq_high: Some(ff_hi),
-                                                                    ..sel
-                                                                }));
-                                                            }
-                                                        }
-                                                    }
-                                                >
-                                                    {"\u{21BB}"}
-                                                </button>
-                                            </div>
+                                            <FreqRow
+                                                freq_text=freq_text_sig
+                                                has_freq=has_freq_sig
+                                                matches_view=matches_view_sig
+                                                contract_target=contract_target_sig
+                                                on_expand=on_expand
+                                                on_contract=on_contract
+                                            />
                                             <div class="canvas-overflow-separator"></div>
                                             <button
                                                 class="canvas-overflow-item"
@@ -297,7 +397,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
                                                     is_open.set(false);
                                                 }
                                             >
-                                                {if has_freq { "Annotate Region" } else { "Annotate Segment" }}
+                                                {btn_label}
                                             </button>
                                         }.into_any()
                                     } else {
@@ -318,14 +418,6 @@ fn SelectionOverflowMenu() -> impl IntoView {
 fn AnnotationOverflowMenu() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = state.annotation_overflow_open;
-    let inline_editing = RwSignal::new(false);
-
-    // Reset inline editing when menu closes
-    Effect::new(move |_| {
-        if !is_open.get() {
-            inline_editing.set(false);
-        }
-    });
 
     // Reactive position: top-right corner of first selected annotation
     let pos = Signal::derive(move || {
@@ -337,7 +429,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let ann = set.annotations.iter().find(|a| ids.contains(&a.id))?;
 
         let region = match &ann.kind {
-            crate::annotations::AnnotationKind::Region(r) => r,
+            AnnotationKind::Region(r) => r,
             _ => return None,
         };
 
@@ -375,17 +467,102 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let ann = set.annotations.iter().find(|a| a.id == ids[0])?;
         let is_default = ann.label_default.unwrap_or(false);
         match &ann.kind {
-            crate::annotations::AnnotationKind::Region(r) => {
+            AnnotationKind::Region(r) => {
+                let d = r.time_end - r.time_start;
+                let dur = if d > 0.0001 { Some(crate::format_time::format_duration(d, 3)) } else { None };
+                let freq_text = match (r.freq_low, r.freq_high) {
+                    (Some(fl), Some(fh)) => format!("{:.0} \u{2013} {:.0} kHz", fl / 1000.0, fh / 1000.0),
+                    _ => "\u{2014}".to_string(),
+                };
+                let has_freq = r.freq_low.is_some() && r.freq_high.is_some();
                 Some((
                     ann.id.clone(),
                     r.label.clone(),
                     r.is_locked(),
                     true, // is_region
                     is_default,
+                    ann.tags.clone(),
+                    dur,
+                    freq_text,
+                    has_freq,
                 ))
             }
-            _ => Some((ann.id.clone(), None, false, false, is_default)),
+            _ => Some((ann.id.clone(), None, false, false, is_default, ann.tags.clone(), None, "\u{2014}".to_string(), false)),
         }
+    });
+
+    let has_freq_sig = Signal::derive(move || {
+        ann_info.get().is_some_and(|info| info.8)
+    });
+    let freq_text_sig = Signal::derive(move || {
+        ann_info.get().map(|info| info.7).unwrap_or_else(|| "\u{2014}".to_string())
+    });
+
+    let matches_view_sig = Signal::derive(move || {
+        let info = match ann_info.get() { Some(i) => i, None => return false };
+        if !info.8 { return false; }
+        let (tlo, thi) = get_freq_bounds(&state);
+        if thi <= tlo { return false; }
+        // Re-read annotation freq
+        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return false };
+        let store = state.annotation_store.get_untracked();
+        let set = match store.sets.get(idx).and_then(|s| s.as_ref()) { Some(s) => s, None => return false };
+        let ann = match set.annotations.iter().find(|a| a.id == info.0) { Some(a) => a, None => return false };
+        if let AnnotationKind::Region(r) = &ann.kind {
+            if let (Some(fl), Some(fh)) = (r.freq_low, r.freq_high) {
+                return (fl - tlo).abs() < 1.0 && (fh - thi).abs() < 1.0;
+            }
+        }
+        false
+    });
+
+    let contract_target_sig = Signal::derive(move || {
+        let (lo, hi) = get_freq_bounds(&state);
+        if hi > lo { fmt_freq_range(lo, hi) } else { String::new() }
+    });
+
+    let on_expand = Callback::new(move |_: ()| {
+        let ids = state.selected_annotation_ids.get_untracked();
+        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return };
+        if ids.is_empty() { return; }
+        state.snapshot_annotations();
+        state.annotation_store.update(|store| {
+            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                for ann in set.annotations.iter_mut() {
+                    if ids.contains(&ann.id) {
+                        if let AnnotationKind::Region(ref mut r) = ann.kind {
+                            r.freq_low = None;
+                            r.freq_high = None;
+                            ann.modified_at = now_iso8601();
+                        }
+                    }
+                }
+            }
+        });
+        state.annotations_dirty.set(true);
+    });
+
+    let on_contract = Callback::new(move |_: ()| {
+        let ids = state.selected_annotation_ids.get_untracked();
+        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return };
+        if ids.is_empty() { return; }
+        let (lo, hi) = get_freq_bounds(&state);
+        if hi <= lo { return; }
+        state.snapshot_annotations();
+        state.annotation_store.update(|store| {
+            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                for ann in set.annotations.iter_mut() {
+                    if ids.contains(&ann.id) {
+                        if let AnnotationKind::Region(ref mut r) = ann.kind {
+                            r.freq_low = Some(lo);
+                            r.freq_high = Some(hi);
+                            ann.modified_at = now_iso8601();
+                        }
+                    }
+                }
+            }
+        });
+        state.annotations_dirty.set(true);
     });
 
     view! {
@@ -424,123 +601,16 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                             <div class="canvas-overflow-menu">
                                 {move || {
                                     let info = ann_info.get();
-                                    if let Some((id, label, is_locked, is_region, label_is_default)) = info {
+                                    if let Some((id, label, is_locked, is_region, label_is_default, tags, duration, _freq_text, _has_freq)) = info {
                                         let id_lock = id.clone();
                                         let id_del = id.clone();
-                                        let id_edit = id.clone();
-                                        let id_edit_confirm = id.clone();
                                         let lock_label = if is_locked { "\u{1F512} Unlock" } else { "\u{1F513} Lock" };
                                         let new_locked = !is_locked;
 
-                                        if inline_editing.get() {
-                                            // Inline editing mode
-                                            let label_ref = NodeRef::<leptos::html::Input>::new();
-                                            // Start input blank when label is auto-generated.
-                                            let initial_edit = if label_is_default {
-                                                String::new()
-                                            } else {
-                                                label.clone().unwrap_or_default()
-                                            };
-                                            let label_value = RwSignal::new(initial_edit.clone());
-                                            let initial_tags = {
-                                                // Get current tags (tags are on the Annotation, not Region)
-                                                let idx = state.current_file_index.get_untracked();
-                                                let store = state.annotation_store.get_untracked();
-                                                idx.and_then(|i| store.sets.get(i)?.as_ref())
-                                                    .and_then(|set| set.annotations.iter().find(|a| a.id == id_edit))
-                                                    .map(|ann| ann.tags.join(", "))
-                                                    .unwrap_or_default()
-                                            };
-                                            let tags_value = RwSignal::new(initial_tags.clone());
-                                            // Store the annotation id in a signal so closures can share it
-                                            let edit_id = StoredValue::new(id_edit_confirm.clone());
-                                            // Auto-focus the label input
-                                            Effect::new(move |_| {
-                                                if let Some(el) = label_ref.get() {
-                                                    let _ = el.focus();
-                                                }
-                                            });
-                                            let save_and_close = move || {
-                                                let aid = edit_id.get_value();
-                                                let lbl = label_value.get_untracked();
-                                                let label_opt = if lbl.trim().is_empty() { None } else { Some(lbl.trim().to_string()) };
-                                                update_annotation_label(state, &aid, label_opt);
-                                                let tval = tags_value.get_untracked();
-                                                let tags: Vec<String> = tval.split(',')
-                                                    .map(|s: &str| s.trim().to_string())
-                                                    .filter(|s: &String| !s.is_empty())
-                                                    .collect();
-                                                update_annotation_tags(state, &aid, tags);
-                                                inline_editing.set(false);
-                                            };
-                                            let save_close_enter = save_and_close.clone();
-                                            let save_close_btn = save_and_close.clone();
-                                            view! {
-                                                <div class="canvas-overflow-info">
-                                                    <div style="font-weight: 600; color: #ccc; font-size: 10px;">"Edit Annotation"</div>
-                                                </div>
-                                                <div style="padding: 4px 8px;">
-                                                    <div style="font-size: 10px; color: #888; margin-bottom: 2px;">"Label"</div>
-                                                    <input
-                                                        class="sel-combo-input"
-                                                        type="text"
-                                                        node_ref=label_ref
-                                                        prop:value=initial_edit.clone()
-                                                        on:input=move |ev: web_sys::Event| {
-                                                            let input = ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
-                                                            label_value.set(input.value());
-                                                        }
-                                                        on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                                            if ev.key() == "Escape" {
-                                                                ev.prevent_default();
-                                                                ev.stop_propagation();
-                                                                inline_editing.set(false);
-                                                            } else if ev.key() == "Enter" {
-                                                                ev.prevent_default();
-                                                                save_close_enter();
-                                                            }
-                                                        }
-                                                    />
-                                                    <div style="font-size: 10px; color: #888; margin-top: 4px; margin-bottom: 2px;">"Tags (comma separated)"</div>
-                                                    <input
-                                                        class="sel-combo-input"
-                                                        type="text"
-                                                        prop:value=initial_tags
-                                                        on:input=move |ev: web_sys::Event| {
-                                                            let input = ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
-                                                            tags_value.set(input.value());
-                                                        }
-                                                        on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                                            if ev.key() == "Escape" {
-                                                                ev.prevent_default();
-                                                                ev.stop_propagation();
-                                                                inline_editing.set(false);
-                                                            } else if ev.key() == "Enter" {
-                                                                ev.prevent_default();
-                                                                save_and_close();
-                                                            }
-                                                        }
-                                                    />
-                                                </div>
-                                                <div style="padding: 4px 8px; display: flex; gap: 4px;">
-                                                    <button class="canvas-overflow-item" style="flex: 1; text-align: center;"
-                                                        on:click=move |_| save_close_btn()
-                                                    >
-                                                        "\u{2713} Done"
-                                                    </button>
-                                                    <button class="canvas-overflow-item" style="flex: 1; text-align: center;"
-                                                        on:click=move |_| inline_editing.set(false)
-                                                    >
-                                                        "Cancel"
-                                                    </button>
-                                                </div>
-                                            }.into_any()
-                                        } else {
-                                        // Normal menu mode
                                         view! {
                                             {label.map(|l| {
                                                 let style = if label_is_default {
-                                                    "font-weight: 600; color: #ccc; font-style: italic;"
+                                                    "font-weight: 600; color: #999; font-style: italic;"
                                                 } else {
                                                     "font-weight: 600; color: #ccc;"
                                                 };
@@ -550,10 +620,29 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                     </div>
                                                 }
                                             })}
+                                            {duration.map(|d| view! {
+                                                <div class="canvas-overflow-info"><div>"Duration: " {d}</div></div>
+                                            })}
+                                            <FreqRow
+                                                freq_text=freq_text_sig
+                                                has_freq=has_freq_sig
+                                                matches_view=matches_view_sig
+                                                contract_target=contract_target_sig
+                                                on_expand=on_expand
+                                                on_contract=on_contract
+                                            />
+                                            {(!tags.is_empty()).then(move || view! {
+                                                <div class="canvas-overflow-info" style="color: #8cf; font-size: 10px;">
+                                                    {tags.join(", ")}
+                                                </div>
+                                            })}
+                                            <div class="canvas-overflow-separator"></div>
                                             <button
                                                 class="canvas-overflow-item"
                                                 on:click=move |_| {
-                                                    inline_editing.set(true);
+                                                    state.annotation_is_new_edit.set(false);
+                                                    state.annotation_editing.set(true);
+                                                    is_open.set(false);
                                                 }
                                             >
                                                 "\u{270E} Edit label & tags"
@@ -582,7 +671,6 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                 "\u{00D7} Delete"
                                             </button>
                                         }.into_any()
-                                        }
                                     } else {
                                         view! { <span></span> }.into_any()
                                     }
@@ -595,3 +683,4 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         }}
     }
 }
+

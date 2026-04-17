@@ -656,7 +656,6 @@ pub enum LayerPanel {
     RecordMode,
     Channel,
     Gain,
-    SelectionCombo,
     ListenMode,
 }
 
@@ -1330,6 +1329,8 @@ pub struct AppState {
     pub selected_annotation_ids: RwSignal<Vec<AnnotationId>>,
     /// Anchor for shift-click range selection in annotation tree.
     pub last_clicked_annotation_id: RwSignal<Option<AnnotationId>>,
+    /// When true, finalizing a transient selection sets the frequency focus range to match.
+    pub selection_auto_focus: RwSignal<bool>,
     /// When true, clicking an annotation pushes its frequency focus override.
     pub annotation_auto_focus: RwSignal<bool>,
     /// When true, export uses each region's own freq bounds for DSP; when false, uses global HFR.
@@ -1757,6 +1758,7 @@ impl AppState {
             annotations_dirty: RwSignal::new(false),
             selected_annotation_ids: RwSignal::new(Vec::new()),
             last_clicked_annotation_id: RwSignal::new(None),
+            selection_auto_focus: RwSignal::new(false),
             annotation_auto_focus: RwSignal::new(false),
             export_use_region_focus: RwSignal::new(true),
             dragging_annotation_id: RwSignal::new(None),
