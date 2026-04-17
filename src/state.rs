@@ -1139,6 +1139,12 @@ pub struct AppState {
     pub band_ff_freq_lo: RwSignal<f64>,
     pub band_ff_freq_hi: RwSignal<f64>,
 
+    /// True while the user is live-dragging the band gutter. Heavy consumers
+    /// (e.g. the waveform's full-file FFT band-split) can early-return with
+    /// a cached value while this is set, and recompute only when the drag
+    /// ends. Gutter repainting is cheap and still reflects every move.
+    pub band_ff_dragging: RwSignal<bool>,
+
     // Per-parameter auto flags (true = computed from BandFF)
     pub het_freq_auto: RwSignal<bool>,
     pub het_cutoff_auto: RwSignal<bool>,
@@ -1635,6 +1641,7 @@ impl AppState {
             spec_hover_handle: RwSignal::new(None),
             band_ff_freq_lo: RwSignal::new(0.0),
             band_ff_freq_hi: RwSignal::new(0.0),
+            band_ff_dragging: RwSignal::new(false),
             het_freq_auto: RwSignal::new(true),
             het_cutoff_auto: RwSignal::new(true),
             te_factor_auto: RwSignal::new(true),

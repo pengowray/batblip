@@ -1588,13 +1588,87 @@ body.sidebar-resizing {
 .waveform-container {
     flex: 1;
     position: relative;
-    min-height: 60px;
-    max-height: 150px;
+    display: flex;
+    flex-direction: row;
+    min-height: 80px;
+    max-height: 170px;
     background: #0a0a0a;
     border-top: 1px solid #333;
 }
 
-.waveform-container canvas {
+.waveform-container .band-gutter {
+    flex: 0 0 40px;
+    position: relative;
+    /* Align with the waveform content area — the bottom 24px of the
+       waveform-stage is reserved for the time gutter, so the band gutter
+       stops short to leave the corner empty for now. Must stay in sync
+       with gutter_renderer::TIME_GUTTER_HEIGHT. */
+    margin-bottom: 24px;
+    /* Visible gap between the gutter and the wave canvas so the scale
+       distinction (frequency vs. amplitude) reads at a glance. */
+    margin-right: 3px;
+    background: #0d0d0d;
+    border-right: 2px solid #2a2a2a;
+    overflow: hidden;
+    touch-action: none;
+}
+
+.waveform-container .band-gutter canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Subtle top/bottom vignette — detaches the gutter visually from the
+   flat-black wave background so it reads as a distinct "strip". */
+.waveform-container .band-gutter::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(to bottom,
+        rgba(0, 0, 0, 0.35) 0%,
+        rgba(0, 0, 0, 0) 12%,
+        rgba(0, 0, 0, 0) 88%,
+        rgba(0, 0, 0, 0.35) 100%);
+}
+
+.waveform-container .band-gutter-header {
+    position: absolute;
+    top: 2px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 9px;
+    line-height: 1;
+    color: rgba(200, 200, 200, 0.7);
+    pointer-events: none;
+    z-index: 2;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.waveform-container .band-gutter-tooltip {
+    position: absolute;
+    left: 44px;
+    transform: translateY(-50%);
+    padding: 2px 6px;
+    background: rgba(20, 20, 20, 0.92);
+    border: 1px solid #444;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #eee;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.waveform-container .waveform-stage {
+    flex: 1 1 auto;
+    position: relative;
+    min-width: 0;
+}
+
+.waveform-container .waveform-stage canvas {
     width: 100%;
     height: 100%;
     display: block;

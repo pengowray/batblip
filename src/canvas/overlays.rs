@@ -54,7 +54,7 @@ fn colors_similar(a: [u8; 3], b: [u8; 3]) -> bool {
 /// The rectangle is divided diagonally: 1st color top-left, 2nd color as a diagonal
 /// bend across the middle, 3rd color bottom-right. A thin fimbriation line is drawn
 /// between adjacent bands when their colors are too similar.
-fn draw_bend_shield(
+pub fn draw_bend_shield(
     ctx: &CanvasRenderingContext2d,
     x: f64, y_top: f64, w: f64, h: f64,
     bands: [[u8; 3]; 3],
@@ -145,7 +145,7 @@ fn draw_bend_shield(
 }
 
 /// Draw a solid-color shield (single color fill with dark border).
-fn draw_solid_shield(
+pub fn draw_solid_shield(
     ctx: &CanvasRenderingContext2d,
     x: f64, y_top: f64, w: f64, h: f64,
     color: [u8; 3],

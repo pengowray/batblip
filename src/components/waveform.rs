@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
+use crate::components::gutter::BandGutter;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, split_three_bands_fft};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, PlaybackMode, WaveformView};
@@ -54,10 +55,26 @@ pub fn Waveform() -> impl IntoView {
     });
 
     // Band-split samples for Frequency and Triple waveform views.
-    // Returns (below, selected, above) bands using cascaded lowpass splitting.
+    // Returns (below, selected, above) bands using brick-wall FFT separation.
+    //
+    // The FFT runs over full-file samples — for multi-minute files this
+    // takes tens of milliseconds, so running it on every `pointermove`
+    // during a band-gutter drag makes the drag visibly laggy. While the
+    // user is actively dragging, we return the last computed split
+    // unchanged; a fresh split fires once when the drag ends.
+    let band_split_cache: StoredValue<Option<(Vec<f32>, Vec<f32>, Vec<f32>)>> = StoredValue::new(None);
     let band_split = Memo::new(move |_| {
         let wv = state.waveform_view.get();
-        if wv == WaveformView::Simple { return None; }
+        if wv == WaveformView::Simple {
+            band_split_cache.set_value(None);
+            return None;
+        }
+        // Early-return while dragging. This must happen BEFORE reading
+        // focus_stack so the memo un-subscribes from it during the drag
+        // and doesn't re-fire on every band-range tweak.
+        if state.band_ff_dragging.get() {
+            return band_split_cache.get_value();
+        }
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let cv = state.channel_view.get();
@@ -69,7 +86,7 @@ pub fn Waveform() -> impl IntoView {
         let freq_low = ff.lo;
         let freq_high = ff.hi;
 
-        idx.and_then(|i| files.get(i).cloned()).map(|file| {
+        let result = idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
             let ch_samples = match cv {
                 ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
@@ -80,7 +97,9 @@ pub fn Waveform() -> impl IntoView {
             // lowpasses had poor passband flatness so content from the middle
             // band leaked heavily into the 'above' lane.
             split_three_bands_fft(&ch_samples, sr, freq_low, freq_high)
-        })
+        });
+        band_split_cache.set_value(result.clone());
+        result
     });
 
     Effect::new(move || {
@@ -146,6 +165,12 @@ pub fn Waveform() -> impl IntoView {
         }
         state.spectrogram_canvas_width.set(display_w as f64);
 
+        // Reserve the bottom strip of the canvas for the time gutter. The
+        // waveform and time markers render into `wave_h`; the gutter
+        // overlay paints on top of the strip between `wave_h` and
+        // `display_h` at the end of the effect.
+        let wave_h = (display_h as f64 - crate::canvas::gutter_renderer::TIME_GUTTER_HEIGHT).max(1.0);
+
         let ctx = canvas
             .get_context("2d")
             .unwrap()
@@ -201,7 +226,7 @@ pub fn Waveform() -> impl IntoView {
 
                 ctx.save();
                 ctx.begin_path();
-                ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
+                ctx.rect(clip_left, 0.0, clip_right - clip_left, wave_h);
                 ctx.clip();
                 ctx.translate(clip_left, 0.0).unwrap_or(());
 
@@ -213,7 +238,7 @@ pub fn Waveform() -> impl IntoView {
                     zoom,
                     seg_time_res,
                     clip_right - clip_left,
-                    display_h as f64,
+                    wave_h,
                     sel_time,
                     gain_db,
                     seg.duration_secs,
@@ -237,7 +262,7 @@ pub fn Waveform() -> impl IntoView {
                     scroll,
                     visible_time,
                     display_w as f64,
-                    display_h as f64,
+                    wave_h,
                     total_duration,
                     clock_cfg,
                     state.show_clock_time.get(),
@@ -285,7 +310,7 @@ pub fn Waveform() -> impl IntoView {
                         zoom,
                         file.spectrogram.time_resolution,
                         display_w as f64,
-                        display_h as f64,
+                        wave_h,
                         sel_time,
                         max_freq_khz,
                     );
@@ -311,7 +336,7 @@ pub fn Waveform() -> impl IntoView {
                             zoom,
                             file.spectrogram.time_resolution,
                             display_w as f64,
-                            display_h as f64,
+                            wave_h,
                             sel_time,
                             gain_db,
                             buf_duration,
@@ -330,7 +355,7 @@ pub fn Waveform() -> impl IntoView {
                                 zoom,
                                 file.spectrogram.time_resolution,
                                 display_w as f64,
-                                display_h as f64,
+                                wave_h,
                                 sel_time,
                                 gain_db,
                                 buf_duration,
@@ -342,7 +367,7 @@ pub fn Waveform() -> impl IntoView {
                             waveform_renderer::draw_waveform(
                                 &ctx, &waveform_buf, sr, buf_scroll, zoom,
                                 file.spectrogram.time_resolution,
-                                display_w as f64, display_h as f64,
+                                display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,
                             );
                         }
@@ -362,7 +387,7 @@ pub fn Waveform() -> impl IntoView {
                                 zoom,
                                 file.spectrogram.time_resolution,
                                 display_w as f64,
-                                display_h as f64,
+                                wave_h,
                                 sel_time,
                                 gain_db,
                                 buf_duration,
@@ -374,7 +399,7 @@ pub fn Waveform() -> impl IntoView {
                             waveform_renderer::draw_waveform(
                                 &ctx, &waveform_buf, sr, buf_scroll, zoom,
                                 file.spectrogram.time_resolution,
-                                display_w as f64, display_h as f64,
+                                display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,
                             );
                         }
@@ -395,7 +420,7 @@ pub fn Waveform() -> impl IntoView {
                     scroll,
                     visible_time,
                     display_w as f64,
-                    display_h as f64,
+                    wave_h,
                     wf_total_duration,
                     clock_cfg,
                     state.show_clock_time.get(),
@@ -417,7 +442,7 @@ pub fn Waveform() -> impl IntoView {
                 ));
                 ctx.begin_path();
                 ctx.move_to(here_x, 0.0);
-                ctx.line_to(here_x, display_h as f64);
+                ctx.line_to(here_x, wave_h);
                 ctx.stroke();
                 let _ = ctx.set_line_dash(&js_sys::Array::new());
             }
@@ -426,6 +451,27 @@ pub fn Waveform() -> impl IntoView {
             ctx.set_fill_style_str("#0a0a0a");
             ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
         }
+
+        // ── Time gutter overlay: bottom strip is reserved for range selection ──
+        // The fog / selection highlight sits on top of whatever was drawn
+        // above; waveform / time markers already know to skip this strip.
+        let gutter_h = crate::canvas::gutter_renderer::TIME_GUTTER_HEIGHT;
+        let gutter_y = (display_h as f64 - gutter_h).max(0.0);
+        let files_now = state.files.get_untracked();
+        let idx_now = state.current_file_index.get_untracked();
+        let time_res = idx_now
+            .and_then(|i| files_now.get(i))
+            .map(|f| f.spectrogram.time_resolution)
+            .unwrap_or(1.0);
+        let visible_time_now = if zoom > 0.0 { (display_w as f64 / zoom) * time_res } else { 0.0 };
+        let sel_time = selection.map(|s| (s.time_start, s.time_end));
+        crate::canvas::gutter_renderer::draw_time_gutter_overlay(
+            &ctx,
+            0.0, gutter_y,
+            display_w as f64, gutter_h,
+            scroll, scroll + visible_time_now,
+            sel_time,
+        );
     });
 
     // Auto-scroll to follow playhead during playback (with suspension support)
@@ -486,6 +532,46 @@ pub fn Waveform() -> impl IntoView {
         }
     });
 
+    // Time-gutter drag state: Some(anchor_time) while a gutter drag is in
+    // progress; None otherwise. When set, pointermove updates state.selection
+    // and pan/flick handlers bail out.
+    let time_gutter_anchor: StoredValue<Option<f64>> = StoredValue::new(None);
+
+    // Map a client-space position (from a PointerEvent or TouchEvent) to
+    // `(client_x, local_y, canvas_height)`. Returns None if the canvas
+    // isn't laid out.
+    let pointer_local = move |client_x: f64, client_y: f64| -> Option<(f64, f64, f64)> {
+        let canvas_el = canvas_ref.get()?;
+        let canvas: &web_sys::HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let h = rect.height();
+        if h <= 0.0 { return None; }
+        Some((client_x, client_y - rect.top(), h))
+    };
+
+    // Returns Some(time_seconds) if the given canvas-local y is inside the
+    // time gutter strip. The time is derived from client_x using the
+    // current scroll/zoom of the waveform.
+    let gutter_time_at = move |client_x: f64, local_y: f64, canvas_h: f64| -> Option<f64> {
+        let gutter_top = canvas_h - crate::canvas::gutter_renderer::TIME_GUTTER_HEIGHT;
+        if local_y < gutter_top { return None; }
+        let canvas_el = canvas_ref.get()?;
+        let canvas: &web_sys::HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let cw = rect.width();
+        if cw <= 0.0 { return None; }
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        let file = idx.and_then(|i| files.get(i))?;
+        let time_res = file.spectrogram.time_resolution;
+        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.scroll_offset.get_untracked();
+        let visible_time = (cw / zoom) * time_res;
+        let x = client_x - rect.left();
+        let frac = (x / cw).clamp(0.0, 1.0);
+        Some(scroll + frac * visible_time)
+    };
+
     let on_wheel = move |ev: web_sys::WheelEvent| {
         ev.prevent_default();
         if ev.ctrl_key() {
@@ -516,6 +602,28 @@ pub fn Waveform() -> impl IntoView {
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
         if state.viewport_zoomed.get_untracked() { return; }
+
+        // Time-gutter drag takes priority over hand-tool pan. Route based
+        // on pointer Y within the canvas.
+        if let Some((cx, ly, ch)) = pointer_local(ev.client_x() as f64, ev.client_y() as f64) {
+            if let Some(t) = gutter_time_at(cx, ly, ch) {
+                ev.prevent_default();
+                time_gutter_anchor.set_value(Some(t));
+                state.selection.set(Some(crate::state::Selection {
+                    time_start: t,
+                    time_end: t,
+                    freq_low: None,
+                    freq_high: None,
+                }));
+                if let Some(target) = ev.target() {
+                    if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                        let _ = el.set_pointer_capture(ev.pointer_id());
+                    }
+                }
+                return;
+            }
+        }
+
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         // Always start pan drag (bookmark on click is handled in pointerup)
         state.is_dragging.set(true);
@@ -529,6 +637,42 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_pointermove = move |ev: web_sys::PointerEvent| {
+        // Gutter drag: update selection.time_end.
+        if let Some(anchor) = time_gutter_anchor.get_value() {
+            if let Some((cx, ly, ch)) = pointer_local(ev.client_x() as f64, ev.client_y() as f64) {
+                // Reuse gutter_time_at's client-x→time math even if the
+                // pointer leaves the gutter strip vertically (drag should
+                // still track horizontally once started).
+                let _ = ly; let _ = ch;
+                let canvas_el = canvas_ref.get();
+                if let Some(canvas_el) = canvas_el {
+                    let canvas: &web_sys::HtmlCanvasElement = canvas_el.as_ref();
+                    let rect = canvas.get_bounding_client_rect();
+                    let cw = rect.width();
+                    if cw > 0.0 {
+                        let files = state.files.get_untracked();
+                        let idx = state.current_file_index.get_untracked();
+                        if let Some(file) = idx.and_then(|i| files.get(i)) {
+                            let time_res = file.spectrogram.time_resolution;
+                            let zoom = state.zoom_level.get_untracked();
+                            let scroll = state.scroll_offset.get_untracked();
+                            let visible_time = (cw / zoom) * time_res;
+                            let x = cx - rect.left();
+                            let frac = (x / cw).clamp(0.0, 1.0);
+                            let t = scroll + frac * visible_time;
+                            let (ts, te) = if t < anchor { (t, anchor) } else { (anchor, t) };
+                            state.selection.set(Some(crate::state::Selection {
+                                time_start: ts,
+                                time_end: te,
+                                freq_low: None,
+                                freq_high: None,
+                            }));
+                        }
+                    }
+                }
+            }
+            return;
+        }
         if !state.is_dragging.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
@@ -549,6 +693,18 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_pointerup = move |ev: web_sys::PointerEvent| {
+        // Finalize a time-gutter drag. If the drag was effectively a tap
+        // (start == end), clear the selection to match the "fog returns"
+        // metaphor; otherwise leave the range in place.
+        if time_gutter_anchor.get_value().is_some() {
+            time_gutter_anchor.set_value(None);
+            if let Some(sel) = state.selection.get_untracked() {
+                if (sel.time_end - sel.time_start).abs() < 1e-4 {
+                    state.selection.set(None);
+                }
+            }
+            return;
+        }
         if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
             let (start_x, _) = hand_drag_start.get_untracked();
             let dx = (ev.client_x() as f64 - start_x).abs();
@@ -606,6 +762,20 @@ pub fn Waveform() -> impl IntoView {
         pinch_state.set(None);
 
         let touch = touches.get(0).unwrap();
+        // Route to the time gutter if the finger lands in the bottom strip.
+        if let Some((cx, ly, ch)) = pointer_local(touch.client_x() as f64, touch.client_y() as f64) {
+            if let Some(t) = gutter_time_at(cx, ly, ch) {
+                ev.prevent_default();
+                time_gutter_anchor.set_value(Some(t));
+                state.selection.set(Some(crate::state::Selection {
+                    time_start: t,
+                    time_end: t,
+                    freq_low: None,
+                    freq_high: None,
+                }));
+                return;
+            }
+        }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         // Always start pan drag (bookmark on tap handled in touchend)
         ev.prevent_default();
@@ -640,6 +810,35 @@ pub fn Waveform() -> impl IntoView {
 
         if n != 1 { return; }
         let touch = touches.get(0).unwrap();
+        if let Some(anchor) = time_gutter_anchor.get_value() {
+            ev.prevent_default();
+            if let Some(canvas_el) = canvas_ref.get() {
+                let canvas: &web_sys::HtmlCanvasElement = canvas_el.as_ref();
+                let rect = canvas.get_bounding_client_rect();
+                let cw = rect.width();
+                if cw > 0.0 {
+                    let files = state.files.get_untracked();
+                    let idx = state.current_file_index.get_untracked();
+                    if let Some(file) = idx.and_then(|i| files.get(i)) {
+                        let time_res = file.spectrogram.time_resolution;
+                        let zoom = state.zoom_level.get_untracked();
+                        let scroll = state.scroll_offset.get_untracked();
+                        let visible_time = (cw / zoom) * time_res;
+                        let x = touch.client_x() as f64 - rect.left();
+                        let frac = (x / cw).clamp(0.0, 1.0);
+                        let t = scroll + frac * visible_time;
+                        let (ts, te) = if t < anchor { (t, anchor) } else { (anchor, t) };
+                        state.selection.set(Some(crate::state::Selection {
+                            time_start: ts,
+                            time_end: te,
+                            freq_low: None,
+                            freq_high: None,
+                        }));
+                    }
+                }
+            }
+            return;
+        }
         if !state.is_dragging.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
@@ -665,6 +864,15 @@ pub fn Waveform() -> impl IntoView {
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {
         let remaining = _ev.touches().length();
+        if time_gutter_anchor.get_value().is_some() && remaining == 0 {
+            time_gutter_anchor.set_value(None);
+            if let Some(sel) = state.selection.get_untracked() {
+                if (sel.time_end - sel.time_start).abs() < 1e-4 {
+                    state.selection.set(None);
+                }
+            }
+            return;
+        }
         if remaining < 2 {
             pinch_state.set(None);
         }
@@ -720,43 +928,46 @@ pub fn Waveform() -> impl IntoView {
                 }
             }
         >
-            <canvas
-                node_ref=canvas_ref
-                style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
-                on:wheel=on_wheel
-                on:pointerdown=on_pointerdown
-                on:pointermove=on_pointermove
-                on:pointerup=on_pointerup
-                on:pointerleave=on_pointerleave
-                on:touchstart=on_touchstart
-                on:touchmove=on_touchmove
-                on:touchend=on_touchend
-            />
-            // DOM playhead overlay — decoupled from heavy canvas redraws
-            <div
-                class="playhead-line"
-                style:transform=move || {
-                    let playhead = state.playhead_time.get();
-                    let scroll = state.scroll_offset.get();
-                    let zoom = state.zoom_level.get();
-                    let cw = state.spectrogram_canvas_width.get();
-                    let files = state.files.get_untracked();
-                    let time_res = if let Some(ref tl) = state.active_timeline.get_untracked() {
-                        tl.segments.first().and_then(|s| files.get(s.file_index))
-                            .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
-                    } else {
-                        let idx = state.current_file_index.get_untracked();
-                        idx.and_then(|i| files.get(i))
-                            .map(|f| f.spectrogram.time_resolution)
-                            .unwrap_or(1.0)
-                    };
-                    let visible_time = (cw / zoom) * time_res;
-                    let px_per_sec = if visible_time > 0.0 { cw / visible_time } else { 0.0 };
-                    let x = (playhead - scroll) * px_per_sec;
-                    format!("translateX({:.1}px)", x)
-                }
-                style:display=move || if state.is_playing.get() && !state.clean_view.get() { "block" } else { "none" }
-            />
+            <BandGutter/>
+            <div class="waveform-stage">
+                <canvas
+                    node_ref=canvas_ref
+                    style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
+                    on:wheel=on_wheel
+                    on:pointerdown=on_pointerdown
+                    on:pointermove=on_pointermove
+                    on:pointerup=on_pointerup
+                    on:pointerleave=on_pointerleave
+                    on:touchstart=on_touchstart
+                    on:touchmove=on_touchmove
+                    on:touchend=on_touchend
+                />
+                // DOM playhead overlay — decoupled from heavy canvas redraws
+                <div
+                    class="playhead-line"
+                    style:transform=move || {
+                        let playhead = state.playhead_time.get();
+                        let scroll = state.scroll_offset.get();
+                        let zoom = state.zoom_level.get();
+                        let cw = state.spectrogram_canvas_width.get();
+                        let files = state.files.get_untracked();
+                        let time_res = if let Some(ref tl) = state.active_timeline.get_untracked() {
+                            tl.segments.first().and_then(|s| files.get(s.file_index))
+                                .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+                        } else {
+                            let idx = state.current_file_index.get_untracked();
+                            idx.and_then(|i| files.get(i))
+                                .map(|f| f.spectrogram.time_resolution)
+                                .unwrap_or(1.0)
+                        };
+                        let visible_time = (cw / zoom) * time_res;
+                        let px_per_sec = if visible_time > 0.0 { cw / visible_time } else { 0.0 };
+                        let x = (playhead - scroll) * px_per_sec;
+                        format!("translateX({:.1}px)", x)
+                    }
+                    style:display=move || if state.is_playing.get() && !state.clean_view.get() { "block" } else { "none" }
+                />
+            </div>
         </div>
     }
 }
