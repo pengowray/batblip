@@ -1608,7 +1608,7 @@ impl AppState {
             // New
             canvas_tool: RwSignal::new(CanvasTool::Hand),
             hfr_enabled: RwSignal::new(false),
-            waveform_view: RwSignal::new(WaveformView::Simple),
+            waveform_view: RwSignal::new(WaveformView::Frequency),
             bandpass_mode: RwSignal::new(BandpassMode::Auto),
             bandpass_range: RwSignal::new(BandpassRange::FollowFocus),
             overview_view: RwSignal::new(OverviewView::Waveform),

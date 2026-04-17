@@ -189,43 +189,6 @@ pub fn draw_waveform(
     draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, "#6a6", gain_linear);
 }
 
-/// Draw dual waveform for HFR mode: original in dim color, bandpass-filtered overlay in bright cyan.
-pub fn draw_waveform_hfr(
-    ctx: &CanvasRenderingContext2d,
-    samples: &[f32],
-    filtered_samples: &[f32],
-    sample_rate: u32,
-    scroll_offset: f64,
-    zoom: f64,
-    time_resolution: f64,
-    canvas_width: f64,
-    canvas_height: f64,
-    selection: Option<(f64, f64)>,
-    gain_db: f64,
-    total_duration: f64,
-    region_start_sample: usize,
-) {
-    ctx.set_fill_style_str("#0a0a0a");
-    ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
-
-    if samples.is_empty() {
-        return;
-    }
-
-    let gain_linear = 10.0_f64.powf(gain_db / 20.0);
-    let vp = compute_viewport(total_duration, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height, region_start_sample);
-    draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
-    draw_center_line(ctx, vp.mid_y, canvas_width);
-
-    // Original waveform in dim color
-    draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, "#444", gain_linear);
-
-    // Filtered (HFR content) waveform overlay in bright cyan
-    if !filtered_samples.is_empty() {
-        draw_waveform_layer(ctx, filtered_samples, sample_rate, &vp, canvas_width, "#0cf", gain_linear);
-    }
-}
-
 /// Draw a waveform layer into a vertical sub-region of the canvas.
 /// `y_offset` and `lane_height` define the vertical band to render into.
 fn draw_waveform_layer_lane(
