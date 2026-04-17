@@ -277,6 +277,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
     view! {
         <div class=move || if state.is_mobile.get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
+            class:panel-open=move || state.layer_panel_open.get().is_some()
             node_ref=toolbar_node
             style=move || {
                 match max_height.get() {

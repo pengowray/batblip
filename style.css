@@ -1675,7 +1675,11 @@ body.sidebar-resizing {
 }
 
 /* When a combo dropdown is open, lift toolbar above .main-overlays (z-index: 20)
-   so the panel isn't hidden behind floating overlay buttons like Spec|View */
+   so the panel isn't hidden behind floating overlay buttons like Spec|View.
+   The .panel-open class is driven reactively from state.layer_panel_open — more
+   reliable than :has(), which browsers sometimes fail to re-invalidate when
+   descendant classes flip during rapid mode changes. */
+.bottom-toolbar.panel-open,
 .bottom-toolbar:has(.combo-btn-row.open) {
     z-index: 25;
 }
