@@ -538,15 +538,30 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let waterfall_active = (state.mic_recording.get_untracked()
+            || state.mic_listening.get_untracked())
+            && crate::canvas::live_waterfall::is_active();
+        let time_res = if waterfall_active {
+            crate::canvas::live_waterfall::time_resolution()
+        } else {
+            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+        };
         let zoom = state.zoom_level.get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
         state.suspend_waterfall_follow(2000.0);
-        state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        let new_scroll = if waterfall_active {
+            let total_time = crate::canvas::live_waterfall::total_time();
+            let oldest = crate::canvas::live_waterfall::oldest_time();
+            let max_scroll = (total_time - visible_time).max(oldest);
+            (start_scroll + dt).clamp(oldest, max_scroll)
+        } else {
+            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
+            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
+        };
+        state.scroll_offset.set(new_scroll);
     };
 
     let on_pointerup = move |ev: web_sys::PointerEvent| {
@@ -651,15 +666,30 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let waterfall_active = (state.mic_recording.get_untracked()
+            || state.mic_listening.get_untracked())
+            && crate::canvas::live_waterfall::is_active();
+        let time_res = if waterfall_active {
+            crate::canvas::live_waterfall::time_resolution()
+        } else {
+            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+        };
         let zoom = state.zoom_level.get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-                let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
         state.suspend_waterfall_follow(2000.0);
-                state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        let new_scroll = if waterfall_active {
+            let total_time = crate::canvas::live_waterfall::total_time();
+            let oldest = crate::canvas::live_waterfall::oldest_time();
+            let max_scroll = (total_time - visible_time).max(oldest);
+            (start_scroll + dt).clamp(oldest, max_scroll)
+        } else {
+            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
+            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
+        };
+        state.scroll_offset.set(new_scroll);
         // Record velocity sample for inertia
         let now = web_sys::window().unwrap().performance().unwrap().now();
         velocity_tracker.update_value(|t| t.push(now, touch.client_x() as f64));
@@ -695,9 +725,20 @@ pub fn Waveform() -> impl IntoView {
                         let files = state.files.get_untracked();
                         let idx = state.current_file_index.get_untracked();
                         let file = idx.and_then(|i| files.get(i));
-                        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-                        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+                        let waterfall_active = (state.mic_recording.get_untracked()
+                            || state.mic_listening.get_untracked())
+                            && crate::canvas::live_waterfall::is_active();
+                        let time_res = if waterfall_active {
+                            crate::canvas::live_waterfall::time_resolution()
+                        } else {
+                            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+                        };
+                        let duration = if waterfall_active {
+                            crate::canvas::live_waterfall::total_time()
+                        } else {
+                            file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
+                        };
+                        let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
                         crate::components::inertia::start_inertia(
                             state, vel, cw, time_res, duration, from_here_mode, inertia_generation,
                         );
