@@ -576,7 +576,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         .trim_end_matches(".w4v").trim_end_matches(".W4V")
         .trim_end_matches(".flac").trim_end_matches(".FLAC")
         .trim_end_matches(".ogg").trim_end_matches(".OGG")
-        .trim_end_matches(".mp3").trim_end_matches(".MP3");
+        .trim_end_matches(".mp3").trim_end_matches(".MP3")
+        .trim_end_matches(".m4a").trim_end_matches(".M4A")
+        .trim_end_matches(".m4b").trim_end_matches(".M4B");
     let filename = format!("{base_name}.mp4");
 
     trigger_browser_download(&mp4_bytes, &filename);

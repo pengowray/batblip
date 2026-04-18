@@ -109,8 +109,11 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
 }
 
 pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, xc_hashes: Option<crate::state::SidecarHashes>, state: AppState, load_id: u64, is_demo: bool) -> Result<(), String> {
-    let wav_markers = crate::audio::loader::parse_wav_markers(bytes);
+    let mut wav_markers = crate::audio::loader::parse_wav_markers(bytes);
     let audio = load_audio(bytes)?;
+    if wav_markers.is_empty() && crate::audio::loader::is_m4a(bytes) {
+        wav_markers = crate::audio::loader::parse_m4a_chapters(bytes, audio.sample_rate);
+    }
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
         name,

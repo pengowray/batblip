@@ -164,7 +164,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
             <input
                 node_ref=file_input_ref
                 type="file"
-                accept=".wav,.w4v,.flac,.mp3,.ogg"
+                accept=".wav,.w4v,.flac,.mp3,.ogg,.m4a,.m4b"
                 multiple=true
                 style="display:none"
                 on:change=on_file_input_change

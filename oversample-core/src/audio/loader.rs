@@ -424,8 +424,9 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
         b"RIFF" | b"RF64" => load_wav(bytes),
         b"fLaC" => load_flac(bytes),
         b"OggS" => load_ogg(bytes),
+        _ if is_m4a(bytes) => load_m4a(bytes),
         _ if is_mp3(bytes) => load_mp3(bytes),
-        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, or MP3)".into()),
+        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, MP3, or M4A)".into()),
     }
 }
 
@@ -458,6 +459,12 @@ pub fn id3v2_tag_size(bytes: &[u8]) -> u64 {
 
 pub fn is_ogg(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[0..4] == b"OggS"
+}
+
+/// Detect MPEG-4 / M4A / M4B / MP4 container (ISO BMFF).
+/// Looks for the `ftyp` box at byte offset 4.
+pub fn is_m4a(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[4..8] == b"ftyp"
 }
 
 /// Wildlife Acoustics W4V format tag (0x5741 = "AW" in ASCII).
@@ -1167,4 +1174,235 @@ fn mix_to_mono(samples: &[f32], channels: u32) -> Vec<f32> {
         .chunks_exact(ch)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect()
+}
+
+/// Parsed M4A (MP4 container) header — format metadata extracted by symphonia.
+#[derive(Clone, Debug)]
+pub struct M4aHeader {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub codec: &'static str,
+    /// Per-channel total frames, from mdhd/tkhd duration. 0 if unknown.
+    pub total_frames: u64,
+    /// Text tags (title, artist, album, etc.) stored in the ilst/meta box.
+    /// Reused as a GuanoMetadata container since both are just `Vec<(String, String)>`.
+    pub tags: GuanoMetadata,
+    /// Nero-style chapter markers from the `chpl` atom, if present.
+    /// `position` holds the sample index (computed from chapter time × sample_rate).
+    pub chapters: Vec<WavMarker>,
+}
+
+/// Parse MP4 tags and chapters from the full file bytes.
+/// `sample_rate` is used to convert chapter times (seconds) to sample positions.
+pub fn parse_m4a_chapters(bytes: &[u8], sample_rate: u32) -> Vec<WavMarker> {
+    find_chpl_chapters(bytes)
+        .map(|entries| {
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(i, (secs, title))| WavMarker {
+                    id: (i + 1) as u32,
+                    position: (secs * sample_rate as f64).max(0.0) as u64,
+                    label: if title.is_empty() { None } else { Some(title) },
+                    note: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Walk ISO BMFF atoms to find `moov/udta/chpl` (Nero chapter list).
+/// Returns `Vec<(start_time_seconds, title)>` or `None` if not found.
+fn find_chpl_chapters(bytes: &[u8]) -> Option<Vec<(f64, String)>> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let udta = find_child_atom(moov, *b"udta")?;
+    let chpl = find_child_atom(udta, *b"chpl")?;
+    parse_chpl_atom(chpl)
+}
+
+/// Parse a Nero `chpl` atom body. Layout:
+/// - 1 byte version + 3 bytes flags
+/// - (version >= 1): 4 bytes reserved
+/// - 1 byte chapter count (some writers use 4 bytes — accept both)
+/// - entries: u64 BE (100-ns units) + u8 title length + UTF-8 title
+fn parse_chpl_atom(body: &[u8]) -> Option<Vec<(f64, String)>> {
+    if body.len() < 5 { return None; }
+    let version = body[0];
+    let mut pos = 4; // skip version + flags
+    if version >= 1 {
+        if body.len() < pos + 4 { return None; }
+        pos += 4; // reserved
+    }
+    // Count: try u8 first. If a u32 BE count makes more sense (when u8 count
+    // would underflow the buffer), fall back to u32.
+    let (count, after_count) = if pos < body.len() {
+        let c = body[pos] as usize;
+        // Quick sanity: if the u8 count × 9 exceeds remaining bytes, try u32.
+        let remaining = body.len() - pos - 1;
+        if c > 0 && c * 9 <= remaining + c * 256 {
+            (c, pos + 1)
+        } else if body.len() >= pos + 4 {
+            let c32 = u32::from_be_bytes(body[pos..pos + 4].try_into().ok()?) as usize;
+            (c32, pos + 4)
+        } else {
+            (c, pos + 1)
+        }
+    } else {
+        return None;
+    };
+    pos = after_count;
+
+    let mut out = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        if pos + 9 > body.len() { break; }
+        let time100ns = u64::from_be_bytes(body[pos..pos + 8].try_into().ok()?);
+        let title_len = body[pos + 8] as usize;
+        pos += 9;
+        if pos + title_len > body.len() { break; }
+        let title = String::from_utf8_lossy(&body[pos..pos + title_len]).into_owned();
+        pos += title_len;
+        let secs = time100ns as f64 / 10_000_000.0;
+        out.push((secs, title));
+    }
+    Some(out)
+}
+
+/// Find a top-level atom in the MP4 file with the given fourcc.
+/// Returns the atom body (excluding the 8-byte header).
+fn find_top_level_atom(bytes: &[u8], fourcc: [u8; 4]) -> Option<&[u8]> {
+    let mut pos = 0usize;
+    while pos + 8 <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &bytes[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(bytes, pos, size)?;
+        if id == fourcc {
+            return Some(&bytes[body_start..body_end]);
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Find a child atom within a parent's body. Most container atoms start their
+/// children immediately; `meta` is the exception — it has a 4-byte full-box
+/// header (version+flags) before its children.
+fn find_child_atom(parent: &[u8], fourcc: [u8; 4]) -> Option<&[u8]> {
+    let mut pos = 0usize;
+    while pos + 8 <= parent.len() {
+        let size = u32::from_be_bytes(parent[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &parent[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(parent, pos, size)?;
+        if id == fourcc {
+            return Some(&parent[body_start..body_end]);
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Given an atom header at `pos` with declared `size`, return (body_start, body_end).
+/// Handles size==1 (64-bit extended size) and size==0 (extends to end of container).
+fn mp4_box_body_range(container: &[u8], pos: usize, size: u64) -> Option<(usize, usize)> {
+    let end = if size == 1 {
+        if pos + 16 > container.len() { return None; }
+        let large = u64::from_be_bytes(container[pos + 8..pos + 16].try_into().ok()?);
+        pos as u64 + large
+    } else if size == 0 {
+        container.len() as u64
+    } else {
+        pos as u64 + size
+    };
+    let body_start = if size == 1 { pos + 16 } else { pos + 8 };
+    let end_usize = end.min(container.len() as u64) as usize;
+    if body_start > end_usize { return None; }
+    Some((body_start, end_usize))
+}
+
+fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let cursor = Cursor::new(bytes.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+    let mut hint = Hint::new();
+    hint.with_extension("m4a");
+
+    let mut probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("M4A probe error: {e}"))?;
+
+    let format = &mut probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or("No audio track found in M4A")?;
+
+    let sample_rate = track.codec_params.sample_rate.ok_or("M4A missing sample rate")?;
+    let channels = track.codec_params.channels.ok_or("M4A missing channel info")?.count() as u32;
+    let track_id = track.id;
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("M4A decoder error: {e}"))?;
+
+    // Collect iTunes-style tags from probe metadata + any format-level metadata.
+    let mut tags = GuanoMetadata::new();
+    if let Some(rev) = probed.metadata.get().as_ref().and_then(|m| m.current().cloned()) {
+        for t in rev.tags() {
+            tags.add(&t.key, &t.value.to_string());
+        }
+    }
+    if let Some(rev) = format.metadata().current() {
+        for t in rev.tags() {
+            tags.add(&t.key, &t.value.to_string());
+        }
+    }
+
+    let mut all_samples: Vec<f32> = Vec::new();
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(format!("M4A packet error: {e}")),
+        };
+        if packet.track_id() != track_id { continue; }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                buf.copy_interleaved_ref(decoded);
+                all_samples.extend_from_slice(buf.samples());
+            }
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(e) => return Err(format!("M4A decode error: {e}")),
+        }
+    }
+
+    let (samples, source) = build_source(all_samples, channels, sample_rate);
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+    Ok(AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: bytes.len(),
+            format: "M4A",
+            bits_per_sample: 16,
+            is_float: false,
+            guano: if tags.fields.is_empty() { None } else { Some(tags) },
+            data_offset: None,
+            data_size: None,
+        },
+    })
 }
