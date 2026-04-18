@@ -1655,7 +1655,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     let mut hint = Hint::new();
     hint.with_extension("m4a");
-    let mut probed = symphonia::default::get_probe()
+    let probed = symphonia::default::get_probe()
         .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
         .map_err(|e| format!("M4A probe error: {e}"))?;
 
@@ -1708,12 +1708,13 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
         ));
     }
 
-    // Collect tags for metadata panel.
+    // Collect tags for the metadata panel — same path the in-memory decode
+    // takes, so streaming and non-streaming M4A files show the same
+    // iTunes-style keys (Title/Artist/Album/etc.) and any Nero chapters live
+    // under the same "Audio file metadata" heading.
     let mut tags = crate::audio::guano::GuanoMetadata::new();
-    if let Some(rev) = probed.metadata.get().as_ref().and_then(|m| m.current().cloned()) {
-        for t in rev.tags() {
-            tags.add(&t.key, &t.value.to_string());
-        }
+    for (k, v) in crate::audio::loader::parse_m4a_tags(&all_bytes) {
+        tags.add(&k, &v);
     }
 
     // If symphonia's codec_params are missing channels/sample_rate (Audible,
