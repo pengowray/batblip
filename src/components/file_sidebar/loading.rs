@@ -11,7 +11,7 @@ use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::SpectrogramData;
 use std::sync::Arc;
 
-use super::streaming_load::{SilenceCheck, STREAMING_CHECK_SIZE, try_streaming_wav, try_streaming_flac, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
+use super::streaming_load::{SilenceCheck, STREAMING_CHECK_SIZE, try_streaming_wav, try_streaming_flac, try_streaming_m4a, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
 
 /// Maximum file size the browser can handle for full in-memory decode (~2 GB).
 /// Files above this MUST use the streaming path; if streaming fails, they're rejected.
@@ -88,13 +88,19 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
                 log::info!("OGG streaming not applicable for {}: {}", name, e);
             }
         }
+        match try_streaming_m4a(&file, &name, state, force_streaming, load_id).await {
+            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+            Err(e) => {
+                log::info!("M4A streaming not applicable for {}: {}", name, e);
+            }
+        }
         // Streaming didn't apply — fall through to full decode
         state.loading_update(load_id, crate::state::LoadingStage::Decoding);
     }
 
     if size > MAX_FILE_SIZE {
         let msg = format!(
-            "File too large ({:.1} GB) — only WAV, FLAC, MP3, and OGG files can be streamed above 2 GB",
+            "File too large ({:.1} GB) — only WAV, FLAC, MP3, OGG, and M4A files can be streamed above 2 GB",
             size / 1_000_000_000.0
         );
         state.show_error_toast(&msg);

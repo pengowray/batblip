@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use crate::audio::loader::{FlacHeader, WavHeader};
 
-// Re-export MP3 and OGG sources from their own modules
+// Re-export MP3, OGG, and M4A sources from their own modules
+pub use super::streaming_m4a::StreamingM4aSource;
 pub use super::streaming_mp3::StreamingMp3Source;
 pub use super::streaming_ogg::StreamingOggSource;
 use crate::audio::source::{AudioSource, ChannelView};

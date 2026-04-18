@@ -8,6 +8,7 @@ pub mod mic_backend;
 pub mod microphone;
 pub mod playback;
 pub mod streaming_playback;
+pub mod streaming_m4a;
 pub mod streaming_mp3;
 pub mod streaming_ogg;
 pub mod streaming_source;

@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::File;
 use std::sync::Arc;
-use crate::audio::loader::{id3v2_tag_size, is_mp3, is_ogg, parse_flac_header, parse_mp3_header, parse_ogg_header, parse_wav_header_with_file_size};
-use crate::audio::streaming_source::{FileHandle, StreamingFlacSource, StreamingMp3Source, StreamingOggSource, StreamingWavSource, read_blob_range};
+use crate::audio::loader::{id3v2_tag_size, is_m4a, is_mp3, is_ogg, parse_flac_header, parse_m4a_chapters, parse_mp3_header, parse_ogg_header, parse_wav_header_with_file_size};
+use crate::audio::streaming_source::{FileHandle, StreamingFlacSource, StreamingM4aSource, StreamingMp3Source, StreamingOggSource, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::compute_preview;
 use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::{AudioData, SpectrogramData};
@@ -1612,4 +1612,379 @@ fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMe
         pos = body_start + ((chunk_size + 1) & !1);
     }
     None
+}
+
+/// Attempt to open a large M4A file using the streaming path.
+/// Unlike MP3/OGG, M4A streaming requires the full compressed bytes in RAM
+/// (moov sample table). Refuses files larger than ~1.5 GB compressed.
+pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, force_streaming: bool, load_id: u64) -> Result<(), String> {
+    // Quick sniff from first 64 KB to confirm M4A
+    let sniff_size = 65536.0f64.min(file.size());
+    let sniff_bytes = read_blob_range(file, 0.0, sniff_size).await?;
+    if !is_m4a(&sniff_bytes) {
+        return Err("Not an M4A file".into());
+    }
+
+    let file_size = file.size() as u64;
+
+    // Cap compressed size to stay within WASM's 4 GB address space (we keep
+    // the full compressed file in RAM for the streaming reader).
+    const MAX_COMPRESSED: u64 = 1_500_000_000;
+    if file_size > MAX_COMPRESSED {
+        return Err(format!(
+            "M4A too large to stream in WASM: {:.1} GB > {:.1} GB cap",
+            file_size as f64 / 1_073_741_824.0,
+            MAX_COMPRESSED as f64 / 1_073_741_824.0,
+        ));
+    }
+
+    // Load the whole compressed file.
+    let all_bytes = read_blob_range(file, 0.0, file_size as f64).await?;
+
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let cursor = std::io::Cursor::new(all_bytes.clone());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension("m4a");
+    let mut probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("M4A probe error: {e}"))?;
+
+    let format_ref = &probed.format;
+    let track = format_ref
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or("No audio track in M4A")?;
+
+    let sample_rate = track.codec_params.sample_rate.ok_or("M4A missing sample rate")?;
+    let channels = track.codec_params.channels.ok_or("M4A missing channel info")?.count();
+    let track_id = track.id;
+    let total_frames = track.codec_params.n_frames
+        .ok_or("M4A missing total frame count (sample table incomplete)")?;
+
+    // Decoded size check — only stream if the decoded PCM would be large.
+    let decoded_bytes = total_frames * channels as u64 * 4;
+    should_stream_from_decoded_size(decoded_bytes, force_streaming)?;
+
+    log::info!(
+        "Streaming M4A: {} — {} frames, {} ch, {} Hz, {:.1}s, decoded {:.0} MB",
+        name, total_frames, channels, sample_rate,
+        total_frames as f64 / sample_rate as f64,
+        decoded_bytes as f64 / 1_048_576.0,
+    );
+
+    if force_streaming && decoded_bytes < STREAMING_DECODED_THRESHOLD {
+        state.show_info_toast(format!(
+            "Streaming M4A to keep total open files under control ({:.0} MB)",
+            file.size() / 1_000_000.0
+        ));
+    } else {
+        state.show_info_toast(format!(
+            "Streaming large M4A ({:.0} MB)",
+            file.size() / 1_000_000.0
+        ));
+    }
+
+    // Collect tags for metadata panel.
+    let mut tags = crate::audio::guano::GuanoMetadata::new();
+    if let Some(rev) = probed.metadata.get().as_ref().and_then(|m| m.current().cloned()) {
+        for t in rev.tags() {
+            tags.add(&t.key, &t.value.to_string());
+        }
+    }
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("M4A decoder error: {e}"))?;
+
+    // Decode head (first ~30s).
+    use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+    let head_target_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64)
+        .min(total_frames);
+
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::errors::Error as SymphoniaError;
+
+    let mut format = probed.format;
+    let mut head_interleaved: Vec<f32> = Vec::new();
+    let mut head_frame_count: u64 = 0;
+    let mut next_frame: u64 = 0;
+    let mut frames_since_yield: u64 = 0;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(_) => break,
+        };
+        if packet.track_id() != track_id { continue; }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                buf.copy_interleaved_ref(decoded);
+                let samples = buf.samples();
+                let n_frames = samples.len() / channels;
+                head_interleaved.extend_from_slice(samples);
+                head_frame_count += n_frames as u64;
+                next_frame += n_frames as u64;
+                frames_since_yield += n_frames as u64;
+
+                if frames_since_yield >= 65_536 {
+                    frames_since_yield = 0;
+                    crate::canvas::tile_cache::yield_to_browser().await;
+                }
+                if head_frame_count >= head_target_frames { break; }
+            }
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    if head_frame_count == 0 {
+        return Err("No M4A frames decoded".into());
+    }
+
+    let actual_head_frames = head_frame_count.min(head_target_frames) as usize;
+    head_interleaved.truncate(actual_head_frames * channels);
+
+    let (head_mono, head_raw) = if channels == 1 {
+        (head_interleaved, None)
+    } else {
+        let mono: Vec<f32> = head_interleaved
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+            .collect();
+        (mono, Some(head_interleaved))
+    };
+
+    // Parse Nero chapters from the compressed bytes.
+    let wav_markers = parse_m4a_chapters(&all_bytes, sample_rate);
+
+    let source = Arc::new(StreamingM4aSource::new(
+        FileHandle::WebFile(file.clone()),
+        format,
+        decoder,
+        track_id,
+        sample_rate,
+        channels as u32,
+        total_frames,
+        file_size,
+        head_mono.clone(),
+        head_raw,
+        next_frame,
+    ));
+
+    let duration_secs = total_frames as f64 / sample_rate as f64;
+    let samples = Arc::new(head_mono);
+
+    let audio = AudioData {
+        samples,
+        source: source.clone(),
+        sample_rate,
+        channels: channels as u32,
+        duration_secs,
+        metadata: crate::types::FileMetadata {
+            file_size: file.size() as usize,
+            format: "M4A",
+            bits_per_sample: 16,
+            is_float: false,
+            guano: if tags.fields.is_empty() { None } else { Some(tags) },
+            data_offset: None,
+            data_size: None,
+        },
+    };
+
+    let preview = compute_preview(&audio, 256, 128);
+
+    let (silence_check, cached_peak_db) = {
+        use crate::audio::source::ChannelView;
+        let scan = audio.source.read_region(ChannelView::MonoMix, 0, audio.source.total_samples().min(
+            (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64,
+        ) as usize);
+        let peak = scan.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        if peak < 0.002 {
+            (Some(SilenceCheck::Silent), None)
+        } else if peak > 1e-10 {
+            let peak_db = 20.0 * (peak as f64).log10();
+            let auto_db = -3.0 - peak_db;
+            let sc = if auto_db > 30.0 { Some(SilenceCheck::HighGain(auto_db)) } else { None };
+            (sc, Some(peak_db))
+        } else {
+            (None, None)
+        }
+    };
+
+    const HOP_SIZE: usize = 512;
+    let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
+    let total_len = total_frames as usize;
+    let total_cols = if total_len >= fft_size { (total_len - fft_size) / HOP_SIZE + 1 } else { 0 };
+
+    let spectrogram = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: total_cols,
+        freq_resolution: sample_rate as f64 / fft_size as f64,
+        time_resolution: HOP_SIZE as f64 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
+    let name_owned = name.to_string();
+    let file_index;
+    {
+        let mut idx = 0;
+        state.files.update(|files| {
+            idx = files.len();
+            files.push(LoadedFile {
+                name: name_owned.clone(),
+                audio,
+                spectrogram,
+                preview: Some(preview),
+                overview_image: None,
+                xc_metadata: None,
+                xc_hashes: None,
+                is_demo: false,
+                is_recording: false,
+                is_live_listen: false,
+                settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
+                identity: None,
+                file_handle: Some(FileHandle::WebFile(file.clone())),
+                cached_peak_db,
+                cached_full_peak_db: None,
+                read_only: false,
+                had_sidecar: false,
+                verify_outcome: crate::state::VerifyOutcome::Pending,
+                all_hashes_verified: false,
+                wav_markers,
+                loading_id: Some(load_id),
+            });
+            state.current_file_index.set(Some(idx));
+        });
+        file_index = idx;
+    }
+
+    crate::audio::peak::start_full_peak_scan(state, file_index);
+
+    if let Some(check) = silence_check {
+        match check {
+            SilenceCheck::Silent => {
+                state.auto_gain.set(false);
+                state.gain_db.set(0.0);
+                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
+            }
+            SilenceCheck::HighGain(db) => {
+                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
+            }
+        }
+    }
+
+    use crate::canvas::{spectral_store, tile_cache};
+    spectral_store::init(file_index, total_cols, fft_size);
+
+    // Prefetch first viewport.
+    {
+        let scroll = state.scroll_offset.get_untracked();
+        let zoom = state.zoom_level.get_untracked();
+        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let time_res = HOP_SIZE as f64 / sample_rate as f64;
+        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
+        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
+        let visible_samples = (visible_time * sample_rate as f64) as usize;
+        source.prefetch_region(start_sample, visible_samples + fft_size).await;
+    }
+
+    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
+    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
+    // Spawn background progressive decode to fill remaining chunks.
+    {
+        let source_bg = source.clone();
+        let name_bg = name.to_string();
+        wasm_bindgen_futures::spawn_local(background_m4a_decode(state, file_index, name_bg, source_bg));
+    }
+
+    // Spawn background overview build.
+    {
+        let name_for_overview = name.to_string();
+        wasm_bindgen_futures::spawn_local(build_streaming_overview(state, file_index, name_for_overview));
+    }
+
+    Ok(())
+}
+
+/// Progressively decode remaining chunks of a streaming M4A in the background.
+async fn background_m4a_decode(
+    state: AppState,
+    file_index: usize,
+    expected_name: String,
+    source: Arc<StreamingM4aSource>,
+) {
+    use crate::canvas::tile_cache::{self, TILE_COLS};
+
+    // Initial delay.
+    let p = js_sys::Promise::new(&mut |resolve, _| {
+        web_sys::window().unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
+    });
+    JsFuture::from(p).await.ok();
+
+    let hop_size = 512usize;
+    let tile_samples = TILE_COLS * hop_size;
+    let mut last_tile_scheduled: Option<usize> = None;
+
+    while !source.is_fully_decoded() {
+        let still_valid = state.files.get_untracked()
+            .get(file_index)
+            .map(|f| f.name == expected_name)
+            .unwrap_or(false);
+        if !still_valid { return; }
+
+        let is_busy = state.is_playing.get_untracked()
+            || state.loading_files.with_untracked(|v| !v.is_empty());
+        if is_busy {
+            let p = js_sys::Promise::new(&mut |resolve, _| {
+                web_sys::window().unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
+            });
+            JsFuture::from(p).await.ok();
+            continue;
+        }
+
+        let cursor_before = source.decode_frame_cursor_value();
+        source.prefetch_region(cursor_before, 262_144).await;
+        let cursor_after = source.decode_frame_cursor_value();
+
+        if cursor_after > cursor_before && tile_samples > 0 {
+            let first_tile = cursor_before as usize / tile_samples;
+            let last_tile = cursor_after as usize / tile_samples;
+            let start = last_tile_scheduled.map(|t| t + 1).unwrap_or(first_tile);
+            for t in start..=last_tile {
+                tile_cache::schedule_tile_on_demand(state, file_index, t);
+            }
+            last_tile_scheduled = Some(last_tile);
+            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        }
+
+        // Guard against no-progress stalls.
+        if cursor_after == cursor_before {
+            break;
+        }
+
+        let p = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window().unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
+        });
+        JsFuture::from(p).await.ok();
+    }
+
+    log::info!("Background M4A decode complete for {}", expected_name);
 }
