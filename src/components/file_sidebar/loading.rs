@@ -117,16 +117,42 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
 pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, xc_hashes: Option<crate::state::SidecarHashes>, state: AppState, load_id: u64, is_demo: bool) -> Result<(), String> {
     let mut wav_markers = crate::audio::loader::parse_wav_markers(bytes);
     let is_m4a = crate::audio::loader::is_m4a(bytes);
-    let audio = match load_audio(bytes) {
-        Ok(a) => a,
-        Err(e) if is_m4a => {
-            log::info!("symphonia m4a decode failed ({e}); falling back to browser AudioContext");
-            crate::audio::browser_decode::decode_via_audio_context(bytes, "M4A").await?
+    // For M4A, prefer the browser's AudioContext decoder: it handles every AAC
+    // variant the OS media stack supports (HE-AAC, PS, ELD, and odd ffmpeg
+    // outputs where symphonia can't extract channel info). Fall back to
+    // symphonia only if the browser refuses the file.
+    let mut audio = if is_m4a {
+        match crate::audio::browser_decode::decode_via_audio_context(bytes, "M4A").await {
+            Ok(a) => a,
+            Err(browser_err) => {
+                log::info!("browser AudioContext rejected m4a ({browser_err}); trying symphonia");
+                match load_audio(bytes) {
+                    Ok(a) => a,
+                    Err(sym_err) => {
+                        return Err(format!("browser: {browser_err}; symphonia: {sym_err}"));
+                    }
+                }
+            }
         }
-        Err(e) => return Err(e),
+    } else {
+        load_audio(bytes)?
     };
-    if wav_markers.is_empty() && is_m4a {
-        wav_markers = crate::audio::loader::parse_m4a_chapters(bytes, audio.sample_rate);
+    if is_m4a {
+        if wav_markers.is_empty() {
+            wav_markers = crate::audio::loader::parse_m4a_chapters(bytes, audio.sample_rate);
+        }
+        // Browser decode path yields no tags; parse ilst from raw bytes so the
+        // metadata panel still shows title/artist/etc. for m4a.
+        if audio.metadata.guano.is_none() {
+            let tags = crate::audio::loader::parse_m4a_tags(bytes);
+            if !tags.is_empty() {
+                let mut guano = crate::audio::guano::GuanoMetadata::new();
+                for (k, v) in tags {
+                    guano.add(&k, &v);
+                }
+                audio.metadata.guano = Some(guano);
+            }
+        }
     }
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",

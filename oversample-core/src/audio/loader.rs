@@ -1211,6 +1211,89 @@ pub fn parse_m4a_chapters(bytes: &[u8], sample_rate: u32) -> Vec<WavMarker> {
         .unwrap_or_default()
 }
 
+/// Parse iTunes-style metadata (`moov/udta/meta/ilst`) from raw bytes.
+/// Returns key/value pairs where keys are the fourcc (e.g. "©nam" for title,
+/// "©ART" for artist) rendered as UTF-8 where possible. Empty if nothing found.
+pub fn parse_m4a_tags(bytes: &[u8]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Some(moov) = find_top_level_atom(bytes, *b"moov") else { return out; };
+    let Some(udta) = find_child_atom(moov, *b"udta") else { return out; };
+    let Some(meta) = find_child_atom(udta, *b"meta") else { return out; };
+    // `meta` is a full box: 1 byte version + 3 bytes flags, then children.
+    if meta.len() < 4 { return out; }
+    let meta_body = &meta[4..];
+    let Some(ilst) = find_child_atom(meta_body, *b"ilst") else { return out; };
+
+    // Walk ilst children: each child has a fourcc key + nested `data` atom.
+    let mut pos = 0usize;
+    while pos + 8 <= ilst.len() {
+        let size_bytes: [u8; 4] = match ilst[pos..pos + 4].try_into() {
+            Ok(b) => b,
+            Err(_) => break,
+        };
+        let size = u32::from_be_bytes(size_bytes) as u64;
+        let key_bytes = &ilst[pos + 4..pos + 8];
+        let Some((body_start, body_end)) = mp4_box_body_range(ilst, pos, size) else { break; };
+        if let Some(data) = find_child_atom(&ilst[body_start..body_end], *b"data") {
+            // `data` body: 1 byte version + 3 bytes type_indicator + 4 bytes locale + payload.
+            if data.len() > 8 {
+                let type_indicator = u32::from_be_bytes(data[0..4].try_into().unwrap_or([0; 4])) & 0x00FF_FFFF;
+                let payload = &data[8..];
+                let key = render_fourcc(key_bytes);
+                let value = render_ilst_value(type_indicator, payload);
+                if !value.is_empty() {
+                    out.push((key, value));
+                }
+            }
+        }
+        pos = body_end;
+    }
+
+    out
+}
+
+/// Render an iTunes ilst value according to its type_indicator:
+/// 1 = UTF-8 text, 21 = signed integer BE, 0 = implicit (guess).
+fn render_ilst_value(type_indicator: u32, payload: &[u8]) -> String {
+    match type_indicator {
+        1 => String::from_utf8_lossy(payload).into_owned(),
+        21 | 22 => {
+            // Signed/unsigned integer, big-endian, 1–8 bytes.
+            match payload.len() {
+                1 => (payload[0] as i8).to_string(),
+                2 => i16::from_be_bytes(payload.try_into().unwrap_or([0; 2])).to_string(),
+                4 => i32::from_be_bytes(payload.try_into().unwrap_or([0; 4])).to_string(),
+                8 => i64::from_be_bytes(payload.try_into().unwrap_or([0; 8])).to_string(),
+                _ => String::new(),
+            }
+        }
+        _ => {
+            // Implicit: if it looks like UTF-8 text, treat it as such.
+            if payload.iter().all(|&b| b != 0 && b.is_ascii() || b >= 0x20) {
+                String::from_utf8_lossy(payload).into_owned()
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+/// Best-effort fourcc rendering — replaces the leading `©` byte (0xA9) so
+/// keys display as `©nam`/`©ART` etc. Other non-ASCII bytes become `?`.
+fn render_fourcc(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(4);
+    for &b in bytes.iter().take(4) {
+        if b == 0xA9 {
+            s.push('©');
+        } else if (0x20..=0x7E).contains(&b) {
+            s.push(b as char);
+        } else {
+            s.push('?');
+        }
+    }
+    s
+}
+
 /// Walk ISO BMFF atoms to find `moov/udta/chpl` (Nero chapter list).
 /// Returns `Vec<(start_time_seconds, title)>` or `None` if not found.
 fn find_chpl_chapters(bytes: &[u8]) -> Option<Vec<(f64, String)>> {
