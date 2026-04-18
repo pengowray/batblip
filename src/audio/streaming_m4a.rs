@@ -161,16 +161,20 @@ impl StreamingM4aSource {
         // Cooperative mutex: the FormatReader + Decoder are shared mutable
         // state, so two decode_chunk calls cannot interleave across .await
         // points without corrupting the decoder position. Wait for any
-        // in-flight decode to finish before starting our own.
+        // in-flight decode to finish before starting our own. Sleep 50 ms
+        // per attempt instead of tight polling — avoids spawning hundreds
+        // of setTimeout futures under contention.
         let mut attempts = 0u32;
         while self.decoding_in_progress.get() {
             attempts += 1;
-            if attempts > 600 {
+            if attempts > 120 {
                 return Err("decode_chunk waited >6s for lock".into());
             }
             let p = js_sys::Promise::new(&mut |resolve, _| {
                 web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10).unwrap();
+                    .set_timeout_with_callback_and_timeout_and_arguments_1(
+                        &resolve, 50, &wasm_bindgen::JsValue::NULL,
+                    ).unwrap();
             });
             wasm_bindgen_futures::JsFuture::from(p).await.ok();
         }
@@ -321,8 +325,15 @@ impl StreamingM4aSource {
             }
         }
 
-        // Flush any remaining partial chunk.
-        if !pending_interleaved.is_empty() {
+        // Flush any remaining partial chunk only if we hit EOF. For
+        // mid-decode overshoot (packet boundary straddles chunk_end), the
+        // leftover samples belong to chunk_idx+1 but don't cover the full
+        // CHUNK_FRAMES — caching them would poison that slot, because
+        // prefetch_region uses cache.contains() to decide whether to re-
+        // decode. Discard; decode_chunk(chunk_idx+1) will seek back and
+        // produce a proper full chunk. At EOF the partial is genuinely the
+        // last chunk, so cache it.
+        if !pending_interleaved.is_empty() && self.fully_decoded.get() {
             let (mono, raw) = if channels == 1 {
                 (pending_interleaved, None)
             } else {
