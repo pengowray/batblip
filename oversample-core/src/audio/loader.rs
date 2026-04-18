@@ -920,6 +920,63 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
     })
 }
 
+/// Size of the trailing MP3 metadata (ID3v1 + Lyrics3v2 + APEv2) at the end of `bytes`.
+/// Used so `data_size = file_size - data_offset - trailer` covers only audio frames.
+pub fn mp3_trailer_size(bytes: &[u8]) -> u64 {
+    let mut end = bytes.len();
+    if end >= 128 && &bytes[end - 128..end - 125] == b"TAG" {
+        end -= 128;
+    }
+    if end >= 15 && &bytes[end - 9..end] == b"LYRICS200" {
+        if let Ok(s) = std::str::from_utf8(&bytes[end - 15..end - 9]) {
+            if let Ok(sz) = s.parse::<usize>() {
+                end = end.saturating_sub(sz + 15);
+            }
+        }
+    }
+    if end >= 32 && &bytes[end - 32..end - 24] == b"APETAGEX" {
+        let tag_size = u32::from_le_bytes([
+            bytes[end - 20], bytes[end - 19], bytes[end - 18], bytes[end - 17],
+        ]) as usize;
+        let flags = u32::from_le_bytes([
+            bytes[end - 12], bytes[end - 11], bytes[end - 10], bytes[end - 9],
+        ]);
+        let has_header = (flags & 0x8000_0000) != 0;
+        let total = if has_header { tag_size + 32 } else { tag_size };
+        end = end.saturating_sub(total);
+    }
+    (bytes.len() - end) as u64
+}
+
+/// Return the byte range `(offset, size)` covered by complete Ogg pages.
+/// Returns `(None, None)` if the file doesn't start with a valid Ogg page.
+pub fn ogg_page_region(bytes: &[u8]) -> (Option<u64>, Option<u64>) {
+    if bytes.len() < 27 || &bytes[0..4] != b"OggS" {
+        return (None, None);
+    }
+    let mut pos = 0usize;
+    let mut last_end = 0usize;
+    while pos + 27 <= bytes.len() && &bytes[pos..pos + 4] == b"OggS" {
+        let n_segs = bytes[pos + 26] as usize;
+        let table_end = pos + 27 + n_segs;
+        if table_end > bytes.len() {
+            break;
+        }
+        let segs_sum: usize = bytes[pos + 27..table_end].iter().map(|&b| b as usize).sum();
+        let page_end = table_end + segs_sum;
+        if page_end > bytes.len() {
+            break;
+        }
+        last_end = page_end;
+        pos = page_end;
+    }
+    if last_end == 0 {
+        (None, None)
+    } else {
+        (Some(0), Some(last_end as u64))
+    }
+}
+
 fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
     use lewton::inside_ogg::OggStreamReader;
 
@@ -955,8 +1012,8 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
             bits_per_sample: 16,
             is_float: false,
             guano: None,
-            data_offset: None,
-            data_size: None,
+            data_offset: ogg_page_region(bytes).0,
+            data_size: ogg_page_region(bytes).1,
         },
     })
 }
@@ -1069,7 +1126,11 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
             is_float: false,
             guano: None,
             data_offset: Some(mp3_data_offset),
-            data_size: Some((bytes.len() as u64).saturating_sub(mp3_data_offset)),
+            data_size: Some(
+                (bytes.len() as u64)
+                    .saturating_sub(mp3_data_offset)
+                    .saturating_sub(mp3_trailer_size(bytes)),
+            ),
         },
     })
 }
