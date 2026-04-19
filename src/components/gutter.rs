@@ -172,6 +172,10 @@ pub fn BandGutter() -> impl IntoView {
             />
             // "kHz" header — tiny label at top so the scale orientation is obvious.
             <div class="band-gutter-header">"kHz"</div>
+            // Vertical axis title beneath the gutter, matching the visual
+            // footprint of the waveform's time-gutter strip so the bottom
+            // edge reads as a single labeling band across the row.
+            <div class="band-gutter-footer">"Frequency band"</div>
             // Drag tooltip: floats next to the pointer while dragging, shows the
             // current lo–hi range. Hidden when not dragging.
             <div

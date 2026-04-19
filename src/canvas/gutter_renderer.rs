@@ -10,11 +10,15 @@ use crate::canvas::overlays::{draw_bend_shield, draw_solid_shield};
 use crate::state::ShieldStyle;
 
 /// Size (px) of one checkerboard cell. Two cells fit across the gutter's
-/// short axis, giving a ~40px-wide gutter for finger-drag on mobile.
+/// short axis, giving a ~40px-wide drag surface for finger-drag on mobile.
 pub const CELL: f64 = 20.0;
 
-/// Recommended band gutter width (px) — fits two 20px cells across.
-pub const BAND_GUTTER_WIDTH: f64 = 40.0;
+/// Width (px) reserved on the left side of the band gutter for static
+/// frequency labels + ticks (mirrors the spectrogram's y-axis markers).
+pub const LABEL_COL_WIDTH: f64 = 22.0;
+
+/// Recommended band gutter width (px) — label column + two 20px fog cells.
+pub const BAND_GUTTER_WIDTH: f64 = LABEL_COL_WIDTH + 40.0;
 
 /// Recommended time gutter height (px).
 pub const TIME_GUTTER_HEIGHT: f64 = 24.0;
@@ -73,9 +77,23 @@ pub fn draw_band_gutter(
     hfr_on: bool,
     shield_style: ShieldStyle,
 ) {
+    // Clear the label column to the container background so the fog/shield
+    // strip reads as a distinct interactive surface.
+    ctx.set_fill_style_str("#0d0d0d");
+    ctx.fill_rect(0.0, 0.0, LABEL_COL_WIDTH, h);
+
+    // Fog/shield area lives to the right of the label column.
+    let shield_x = LABEL_COL_WIDTH;
+    let shield_w = (w - shield_x).max(0.0);
+
     // Background fog — slightly dimmer when HFR is off
     let fog_dim = if hfr_on { 1.0 } else { 0.7 };
-    draw_fog(ctx, 0.0, 0.0, w, h, fog_dim);
+    draw_fog(ctx, shield_x, 0.0, shield_w, h, fog_dim);
+
+    // Always draw the passive left-side axis labels + ticks (independent of
+    // selection) so the user can read the frequency scale at a glance.
+    let div_for_labels = pick_div_interval(max_freq);
+    draw_left_axis_labels(ctx, h, max_freq, div_for_labels);
 
     if max_freq <= 0.0 || band_hi <= band_lo || matches!(shield_style, ShieldStyle::Off) {
         return;
@@ -87,7 +105,7 @@ pub fn draw_band_gutter(
     // Match the spectrogram's y-mapping: min_freq=0 at y=h, max_freq at y=0.
     let freq_y = |f: f64| -> f64 { h - (f / max_freq).clamp(0.0, 1.0) * h };
 
-    let div_interval = pick_div_interval(max_freq);
+    let div_interval = div_for_labels;
     let alpha_active = if hfr_on { 0.85 } else { 0.40 };
     let alpha_minor = if hfr_on { 0.55 } else { 0.28 };
 
@@ -109,11 +127,11 @@ pub fn draw_band_gutter(
                     match shield_style {
                         ShieldStyle::Resistor => {
                             let bands = freq_resistor_bands(freq);
-                            draw_bend_shield(ctx, 0.0, y_top, w, bar_h, bands, alpha_active);
+                            draw_bend_shield(ctx, shield_x, y_top, shield_w, bar_h, bands, alpha_active);
                         }
                         ShieldStyle::Solid => {
                             let c = freq_shield_color(freq, div_interval);
-                            draw_solid_shield(ctx, 0.0, y_top, w, bar_h, c, alpha_active);
+                            draw_solid_shield(ctx, shield_x, y_top, shield_w, bar_h, c, alpha_active);
                         }
                         ShieldStyle::Off => {}
                     }
@@ -141,11 +159,11 @@ pub fn draw_band_gutter(
                     match shield_style {
                         ShieldStyle::Resistor => {
                             let bands = freq_resistor_bands(mf);
-                            draw_bend_shield(ctx, 0.0, y_top, w, bar_h, bands, alpha_minor);
+                            draw_bend_shield(ctx, shield_x, y_top, shield_w, bar_h, bands, alpha_minor);
                         }
                         ShieldStyle::Solid => {
                             let c = freq_shield_color(mf, minor_interval);
-                            draw_solid_shield(ctx, 0.0, y_top, w, bar_h, c, alpha_minor);
+                            draw_solid_shield(ctx, shield_x, y_top, shield_w, bar_h, c, alpha_minor);
                         }
                         ShieldStyle::Off => {}
                     }
@@ -173,7 +191,7 @@ pub fn draw_band_gutter(
             &wasm_bindgen::JsValue::from_f64(3.0),
             &wasm_bindgen::JsValue::from_f64(3.0),
         ));
-        ctx.stroke_rect(0.5, y_top + 0.5, w - 1.0, (y_bot - y_top) - 1.0);
+        ctx.stroke_rect(shield_x + 0.5, y_top + 0.5, shield_w - 1.0, (y_bot - y_top) - 1.0);
         let _ = ctx.set_line_dash(&js_sys::Array::new());
         ctx.restore();
     }
@@ -208,6 +226,66 @@ pub fn draw_time_gutter_overlay(
     // Separator line at top of the strip
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
     ctx.fill_rect(x, y, w, 1.0);
+}
+
+/// Draw numeric frequency labels and short coloured ticks in the left
+/// label column of the band gutter. Matches the spectrogram's y-axis
+/// marker style so the two scales read as one consistent system. Always
+/// drawn (independent of selection) — this is the static frequency axis
+/// for the gutter.
+fn draw_left_axis_labels(
+    ctx: &CanvasRenderingContext2d,
+    h: f64,
+    max_freq: f64,
+    div_interval: f64,
+) {
+    if max_freq <= 0.0 || h <= 0.0 { return; }
+
+    // Tick spans the 4px immediately left of the shield edge; label
+    // right-aligned just inside that, with a 2px gap from the tick.
+    let tick_x1 = LABEL_COL_WIDTH;
+    let tick_x0 = LABEL_COL_WIDTH - 4.0;
+    let label_right_x = LABEL_COL_WIDTH - 6.0;
+
+    ctx.save();
+    ctx.set_font("10px sans-serif");
+    ctx.set_text_baseline("middle");
+    ctx.set_text_align("right");
+
+    // Skip labels near the very top/bottom so they don't crowd the gutter
+    // ends (and so the implicit 0 Hz / Nyquist bounds stay uncluttered).
+    let mut freq = div_interval;
+    while freq < max_freq {
+        let y = freq_to_y(freq, max_freq, h);
+        if y < 8.0 || y > h - 6.0 {
+            freq += div_interval;
+            continue;
+        }
+
+        // Tick: colour-tinted by the shield resistor colour, lightened so
+        // it reads against the dark label column.
+        let c = freq_shield_color(freq, div_interval);
+        let r = 160 + (c[0] as u16 * 95 / 255) as u8;
+        let g = 160 + (c[1] as u16 * 95 / 255) as u8;
+        let b = 160 + (c[2] as u16 * 95 / 255) as u8;
+        ctx.set_stroke_style_str(&format!("rgba({},{},{},0.85)", r, g, b));
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(tick_x0, y + 0.5);
+        ctx.line_to(tick_x1, y + 0.5);
+        ctx.stroke();
+
+        // Shadow first (for contrast), then the label in soft white.
+        let label = format!("{}", (freq / 1000.0).round() as u32);
+        ctx.set_fill_style_str("rgba(0,0,0,0.85)");
+        let _ = ctx.fill_text(&label, label_right_x + 0.5, y + 0.5);
+        ctx.set_fill_style_str("rgba(230,230,230,0.92)");
+        let _ = ctx.fill_text(&label, label_right_x, y);
+
+        freq += div_interval;
+    }
+
+    ctx.restore();
 }
 
 /// Draw small coloured tick stubs on the right edge at each major division

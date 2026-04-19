@@ -1024,7 +1024,6 @@ pub fn Waveform() -> impl IntoView {
                 }
             }
         >
-            <BandGutter/>
             <div class="waveform-stage">
                 <canvas
                     node_ref=canvas_ref
@@ -1064,6 +1063,7 @@ pub fn Waveform() -> impl IntoView {
                     style:display=move || if state.is_playing.get() && !state.clean_view.get() { "block" } else { "none" }
                 />
             </div>
+            <BandGutter/>
         </div>
     }
 }
