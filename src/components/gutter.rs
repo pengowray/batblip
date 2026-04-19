@@ -10,13 +10,18 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::gutter_renderer;
+use crate::components::spectrogram_events::{
+    apply_axis_drag, finalize_axis_drag, freq_snap, select_all_frequencies,
+};
 use crate::state::AppState;
 
-/// Vertical band-selection gutter. Each drag creates a fresh range —
-/// there is no edge-resize or middle-pan affordance (intentional, per
-/// design: dragging again over an existing band simply replaces it,
-/// matching the time gutter's behaviour). Modifier-key drag handles can
-/// be added later.
+/// Vertical band-selection gutter. Interactions mirror the spectrogram's
+/// left y-axis so the two feel like one control surface: single tap
+/// toggles HFR off, drag paints a new band (auto-enabling HFR), shift+
+/// drag extends the existing band from its far edge, and double-click
+/// selects the full Nyquist range. All three gestures route through the
+/// shared `apply_axis_drag` / `finalize_axis_drag` helpers so snapping,
+/// focus, and selection-upgrade behaviour stay in lockstep with the axis.
 #[component]
 pub fn BandGutter() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -89,33 +94,48 @@ pub fn BandGutter() -> impl IntoView {
         Some((y, h, max_freq))
     };
 
-    // Write the current drag's [anchor..current] range through the canonical
-    // state setter so focus_stack / downstream band-split memos pick it up.
-    let apply_drag = move |current_freq: f64| {
-        let Some(anchor) = drag_anchor.get_value() else { return };
-        let lo = anchor.min(current_freq).max(0.0);
-        let hi = anchor.max(current_freq);
-        if hi > lo {
-            state.set_band_ff_range(lo, hi);
-        }
-    };
-
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
         let Some((y, h, max_freq)) = pointer_context(&ev) else { return };
         ev.prevent_default();
 
         let freq = gutter_renderer::y_to_freq(y, max_freq, h);
-        drag_anchor.set_value(Some(freq));
+        let shift = ev.shift_key();
+        let band_lo = state.band_ff_freq_lo.get_untracked();
+        let band_hi = state.band_ff_freq_hi.get_untracked();
+        let has_range = band_hi > band_lo;
+
+        // Shift+click extend: anchor at the edge of the existing range
+        // farthest from the click, so dragging grows the band from there.
+        let raw_start = if shift && has_range {
+            if (freq - band_lo).abs() < (freq - band_hi).abs() { band_hi } else { band_lo }
+        } else {
+            freq
+        };
+
+        drag_anchor.set_value(Some(raw_start));
         tooltip_y.set(Some(y));
         // Flag the drag so heavy consumers (waveform band-split) can cache.
         state.band_ff_dragging.set(true);
-        // Seed with a zero-width range — it'll expand as the pointer moves.
-        state.set_band_ff_range(freq, freq);
 
-        // Ensure HFR engages so the new band actually drives playback.
-        if !state.hfr_enabled.get_untracked() {
-            state.hfr_enabled.set(true);
+        // Seed the shared axis-drag state so the spectrogram's y-axis
+        // shields light up in sync, and so finalize_axis_drag can detect
+        // a tap (start ≈ current).
+        let snap_s = freq_snap(raw_start, shift);
+        let snap_e = freq_snap(freq, shift);
+        state.axis_drag_start_freq.set(Some((raw_start / snap_s).round() * snap_s));
+        state.axis_drag_current_freq.set(Some((freq / snap_e).round() * snap_e));
+        state.is_dragging.set(true);
+
+        // Shift-extend should update the band immediately; a fresh drag
+        // waits for pointermove so a pure tap leaves the existing band
+        // intact (tap = toggle HFR, handled in finalize_axis_drag).
+        if shift && has_range {
+            let lo = raw_start.min(freq);
+            let hi = raw_start.max(freq);
+            if hi - lo > 500.0 {
+                state.set_band_ff_range(lo, hi);
+            }
         }
 
         if let Some(target) = ev.target() {
@@ -126,31 +146,26 @@ pub fn BandGutter() -> impl IntoView {
     };
 
     let on_pointermove = move |ev: web_sys::PointerEvent| {
-        if drag_anchor.get_value().is_none() { return; }
+        let Some(raw_start) = drag_anchor.get_value() else { return };
         let Some((y, h, max_freq)) = pointer_context(&ev) else { return };
         tooltip_y.set(Some(y.clamp(0.0, h)));
         let freq = gutter_renderer::y_to_freq(y, max_freq, h);
-        apply_drag(freq);
+        apply_axis_drag(state, raw_start, freq, ev.shift_key());
     };
 
     let on_pointerup = move |_ev: web_sys::PointerEvent| {
-        // If the drag produced a zero-width "tap" range, clear it so we
-        // don't strand an invisible selection.
         if drag_anchor.get_value().is_some() {
             drag_anchor.set_value(None);
             tooltip_y.set(None);
-            let lo = state.band_ff_freq_lo.get_untracked();
-            let hi = state.band_ff_freq_hi.get_untracked();
-            if (hi - lo).abs() < 1.0 {
-                state.set_band_ff_range(0.0, 0.0);
-            }
-            // Drag finished — heavy consumers recompute once with final range.
             state.band_ff_dragging.set(false);
+            // Shared finalize: taps toggle HFR off, meaningful drags
+            // auto-enable HFR and promote focus to FrequencyFocus.
+            finalize_axis_drag(state);
         }
     };
 
     let on_dblclick = move |_ev: web_sys::MouseEvent| {
-        state.set_band_ff_range(0.0, 0.0);
+        select_all_frequencies(state);
     };
 
     // Format "40.0 – 72.5 kHz" for the drag tooltip.
