@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::gutter_renderer;
-use crate::components::spectrogram_events::{
+use crate::components::axis_drag::{
     apply_axis_drag, finalize_axis_drag, freq_snap, select_all_frequencies,
     select_all_time,
 };

@@ -6,7 +6,7 @@ use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, SpectrogramHandle};
-use crate::components::spectrogram_events::{freq_snap, apply_axis_drag};
+use crate::components::axis_drag::{apply_axis_drag, freq_snap};
 use crate::components::gutter::{BandGutter, TimeGutter};
 use crate::components::playhead::Playhead;
 use crate::viewport;
