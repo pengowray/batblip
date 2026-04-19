@@ -589,6 +589,10 @@ pub fn Waveform() -> impl IntoView {
     // progress; None otherwise. When set, pointermove updates state.selection
     // and pan/flick handlers bail out.
     let time_gutter_anchor: StoredValue<Option<f64>> = StoredValue::new(None);
+    // True while the pointer is hovering the time-gutter strip (bottom 24px
+    // of the canvas). Drives the `cell` cursor so the strip feels like the
+    // spectrogram's axes rather than the surrounding hand/selection surface.
+    let time_gutter_hover = RwSignal::new(false);
 
     // Map a client-space position (from a PointerEvent or TouchEvent) to
     // `(client_x, local_y, canvas_height)`. Returns None if the canvas
@@ -690,6 +694,19 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_pointermove = move |ev: web_sys::PointerEvent| {
+        // Track whether the pointer is currently over the time-gutter
+        // strip so the cursor can switch to `cell` even when no drag is
+        // underway. Skip the update while a gutter drag is active — the
+        // cursor is already pinned via the anchor check below.
+        if time_gutter_anchor.get_value().is_none() {
+            let hovering = pointer_local(ev.client_x() as f64, ev.client_y() as f64)
+                .and_then(|(cx, ly, ch)| gutter_time_at(cx, ly, ch))
+                .is_some();
+            if time_gutter_hover.get_untracked() != hovering {
+                time_gutter_hover.set(hovering);
+            }
+        }
+
         // Gutter drag: update selection.time_end.
         if let Some(anchor) = time_gutter_anchor.get_value() {
             if let Some((cx, ly, ch)) = pointer_local(ev.client_x() as f64, ev.client_y() as f64) {
@@ -789,6 +806,12 @@ pub fn Waveform() -> impl IntoView {
         // Don't clear drag state during an active drag — pointer capture keeps events flowing
         if !state.is_dragging.get_untracked() {
             // Only clear hover state when not dragging
+        }
+        // Always drop the time-gutter hover flag on leave so the cursor
+        // resets immediately; an active drag keeps its own cursor via the
+        // `time_gutter_anchor` check in the style closure.
+        if time_gutter_hover.get_untracked() {
+            time_gutter_hover.set(false);
         }
     };
 
@@ -1014,6 +1037,11 @@ pub fn Waveform() -> impl IntoView {
         <div class="waveform-container"
             style=move || {
                 let ta = if state.viewport_zoomed.get() { "pinch-zoom" } else { "none" };
+                // Time-gutter hover or active drag → `cell` cursor, mirroring
+                // the spectrogram axes.
+                if time_gutter_hover.get() || time_gutter_anchor.get_value().is_some() {
+                    return format!("cursor: cell; touch-action: {ta};");
+                }
                 match state.canvas_tool.get() {
                     CanvasTool::Hand => if state.is_dragging.get() {
                         format!("cursor: grabbing; touch-action: {ta};")

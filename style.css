@@ -1619,6 +1619,9 @@ body.sidebar-resizing {
        band. Must stay in sync with gutter_renderer::TIME_GUTTER_HEIGHT. */
     height: calc(100% - 24px);
     display: block;
+    /* Thick-cross `cell` cursor matches the spectrogram's y-axis so the
+       two surfaces read as one continuous frequency-selection control. */
+    cursor: cell;
 }
 
 /* Subtle top/bottom vignette — detaches the gutter visually from the
