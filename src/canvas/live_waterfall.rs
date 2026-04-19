@@ -103,6 +103,20 @@ pub fn total_time() -> f64 {
     })
 }
 
+/// Time of the oldest column still in the circular buffer.
+/// Before this time, data has been evicted and rendering will be blank.
+/// Returns 0.0 while the buffer hasn't filled yet.
+pub fn oldest_time() -> f64 {
+    WATERFALL.with(|w| {
+        w.borrow().as_ref()
+            .map(|wf| {
+                let oldest = wf.total_written.saturating_sub(wf.capacity);
+                oldest as f64 * wf.hop_size as f64 / wf.sample_rate as f64
+            })
+            .unwrap_or(0.0)
+    })
+}
+
 /// Time resolution (seconds per column).
 pub fn time_resolution() -> f64 {
     WATERFALL.with(|w| {

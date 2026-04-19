@@ -328,7 +328,12 @@ pub fn apply_hand_pan(
     let idx = state.current_file_index.get_untracked();
     let file = idx.and_then(|i| files.get(i));
     let timeline = state.active_timeline.get_untracked();
-    let time_res = if let Some(ref tl) = timeline {
+    let waterfall_active = (state.mic_recording.get_untracked()
+        || state.mic_listening.get_untracked())
+        && crate::canvas::live_waterfall::is_active();
+    let time_res = if waterfall_active {
+        crate::canvas::live_waterfall::time_resolution()
+    } else if let Some(ref tl) = timeline {
         tl.segments.first().and_then(|s| files.get(s.file_index))
             .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
     } else {
@@ -336,15 +341,29 @@ pub fn apply_hand_pan(
     };
     let zoom = state.zoom_level.get_untracked();
     let visible_time = viewport::visible_time(cw, zoom, time_res);
-    let duration = if let Some(ref tl) = timeline {
-        tl.total_duration_secs
-    } else {
-        file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
-    };
-    let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
     let dt = -(dx / cw) * visible_time;
     state.suspend_follow();
-    state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+    // During live listen/record, push the waterfall snap-back 2s into the
+    // future so a release between gestures doesn't yank the view to "now".
+    state.suspend_waterfall_follow(2000.0);
+
+    let new_scroll = if waterfall_active {
+        // Bound panning to what the circular buffer actually holds: can't go
+        // earlier than the oldest retained column, can't go past the live edge.
+        let total_time = crate::canvas::live_waterfall::total_time();
+        let oldest = crate::canvas::live_waterfall::oldest_time();
+        let max_scroll = (total_time - visible_time).max(oldest);
+        (start_scroll + dt).clamp(oldest, max_scroll)
+    } else {
+        let duration = if let Some(ref tl) = timeline {
+            tl.total_duration_secs
+        } else {
+            file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
+        };
+        let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+        viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
+    };
+    state.scroll_offset.set(new_scroll);
 }
 
 /// Apply annotation resize based on which handle is being dragged.

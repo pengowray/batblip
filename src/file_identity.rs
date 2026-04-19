@@ -100,19 +100,29 @@ pub async fn compute_spot_hash_b3(
     Ok(finalize_spot_hash(&chunk_hashes))
 }
 
-/// Compute Layers 3 + 4 together: content hash (header-zeroed BLAKE3) and full BLAKE3.
-/// Reads the entire file in 1 MB chunks. For the content hash, bytes in [0, data_offset)
-/// are zeroed before hashing.
+/// Compute Layers 3 + 4 together: content hash (audio-samples-only BLAKE3) and
+/// full BLAKE3 over the whole file. Reads the entire file in 1 MB chunks.
+///
+/// The content hash covers only `file[data_offset .. data_offset+data_size]`,
+/// skipping both the header and any trailing metadata (e.g. GUANO). This means
+/// metadata edits don't change the content hash.
 ///
 /// Returns (content_hash, full_blake3) as hex strings.
 pub async fn compute_full_hashes(
     reader: &(impl AsyncRangeReader + ?Sized),
     file_size: u64,
     data_offset: Option<u64>,
+    data_size: Option<u64>,
     generation: u32,
     check_cancelled: impl Fn(u32) -> bool,
 ) -> Result<(String, String), String> {
-    let header_end = data_offset.unwrap_or(0);
+    let audio_start = data_offset.unwrap_or(0);
+    let audio_end = match data_size {
+        Some(sz) => (audio_start + sz).min(file_size),
+        None => file_size,
+    };
+    let audio_start = audio_start.min(audio_end);
+
     let mut content_hasher = blake3::Hasher::new();
     let mut full_hasher = blake3::Hasher::new();
 
@@ -130,15 +140,15 @@ pub async fn compute_full_hashes(
         // Full hash: always update with original bytes
         full_hasher.update(&bytes);
 
-        // Content hash: zero the header region
-        if offset < header_end {
-            // This chunk overlaps the header
-            let header_bytes_in_chunk = ((header_end - offset) as usize).min(bytes.len());
-            let mut modified = bytes.clone();
-            modified[..header_bytes_in_chunk].fill(0);
-            content_hasher.update(&modified);
-        } else {
-            content_hasher.update(&bytes);
+        // Content hash: only feed the intersection with [audio_start, audio_end)
+        let chunk_start = offset;
+        let chunk_end = offset + len;
+        let slice_start = audio_start.max(chunk_start);
+        let slice_end = audio_end.min(chunk_end);
+        if slice_start < slice_end {
+            let lo = (slice_start - chunk_start) as usize;
+            let hi = (slice_end - chunk_start) as usize;
+            content_hasher.update(&bytes[lo..hi]);
         }
 
         offset += len;
@@ -152,57 +162,6 @@ pub async fn compute_full_hashes(
     let content_hash = content_hasher.finalize().to_hex().to_string();
     let full_hash = full_hasher.finalize().to_hex().to_string();
     Ok((content_hash, full_hash))
-}
-
-/// Compute content hash with a reconstructed header size.
-///
-/// When a file's header has changed size (e.g. metadata was edited), the standard
-/// content_hash won't match because it zeros a different number of header bytes.
-/// This function reconstructs what the content_hash would be if the header were
-/// `original_header_size` bytes long: BLAKE3(zeros[0..original_header_size] || audio_data).
-///
-/// `current_data_offset` is where audio starts in the current file.
-/// `original_header_size` is the inferred header size of the original file
-/// (typically `original_file_size - original_data_size`).
-pub async fn compute_content_hash_reconstructed(
-    reader: &(impl AsyncRangeReader + ?Sized),
-    file_size: u64,
-    current_data_offset: u64,
-    original_header_size: u64,
-    generation: u32,
-    check_cancelled: impl Fn(u32) -> bool,
-) -> Result<String, String> {
-    let mut hasher = blake3::Hasher::new();
-
-    // Feed zeros for the original header size
-    let zero_chunk = vec![0u8; SPOT_CHUNK_SIZE as usize];
-    let mut zeros_remaining = original_header_size;
-    while zeros_remaining > 0 {
-        if check_cancelled(generation) {
-            return Err("Cancelled".into());
-        }
-        let len = (SPOT_CHUNK_SIZE).min(zeros_remaining);
-        hasher.update(&zero_chunk[..len as usize]);
-        zeros_remaining -= len;
-    }
-
-    // Feed the audio data from the current file (starting at current_data_offset)
-    let mut offset = current_data_offset;
-    while offset < file_size {
-        if check_cancelled(generation) {
-            return Err("Cancelled".into());
-        }
-        let len = SPOT_CHUNK_SIZE.min(file_size - offset);
-        let bytes = reader.read(offset, len).await?;
-        hasher.update(&bytes);
-        offset += len;
-
-        if ((offset - current_data_offset) / SPOT_CHUNK_SIZE).is_multiple_of(4) {
-            yield_now().await;
-        }
-    }
-
-    Ok(hasher.finalize().to_hex().to_string())
 }
 
 /// Compute full file SHA-256 via async range reader.
@@ -406,32 +365,6 @@ fn set_verify_outcome(state: AppState, file_index: usize, outcome: crate::state:
     });
 }
 
-/// Check if the content_hash reconstruction fallback should be attempted:
-/// the current file's audio data_size matches the reference's data_size,
-/// meaning only the header changed size.
-fn can_reconstruct_content_hash(
-    identity: &FileIdentity,
-    reference: &crate::state::SidecarHashes,
-) -> Option<u64> {
-    // We need: different file sizes, same data_size, reference has content_hash
-    let ref_size = reference.file_size?;
-    let ref_data_size = reference.data_size?;
-    let cur_data_size = identity.data_size?;
-    let _cur_data_offset = identity.data_offset?;
-    let _ref_content_hash = reference.content_hash.as_ref()?;
-
-    if identity.file_size == ref_size {
-        return None; // Same file size, no reconstruction needed
-    }
-    if cur_data_size != ref_data_size {
-        return None; // Audio data length differs, not a header-only change
-    }
-
-    // Original header size = original file size - original data size
-    let original_header_size = ref_size.checked_sub(ref_data_size)?;
-    Some(original_header_size)
-}
-
 /// Compute Layer 1 identity and kick off async Layer 2 (spot-check) computation.
 /// Call this after a file is added to state.files.
 pub fn start_identity_computation(
@@ -517,19 +450,14 @@ pub fn start_identity_computation(
             if let Some(bytes) = file_bytes {
                 yield_now().await;
 
-                // Layer 3: content hash (header zeroed) + Layer 4: full BLAKE3
-                let header_end = data_offset.unwrap_or(0) as usize;
-                let content_hash = {
-                    let mut hasher = blake3::Hasher::new();
-                    if header_end > 0 && header_end < bytes.len() {
-                        let zeroed = vec![0u8; header_end];
-                        hasher.update(&zeroed);
-                        hasher.update(&bytes[header_end..]);
-                    } else {
-                        hasher.update(&bytes);
-                    }
-                    hasher.finalize().to_hex().to_string()
+                // Layer 3: content hash (audio samples only) + Layer 4: full BLAKE3
+                let audio_start = data_offset.unwrap_or(0) as usize;
+                let audio_end = match data_size {
+                    Some(sz) => (audio_start + sz as usize).min(bytes.len()),
+                    None => bytes.len(),
                 };
+                let audio_start = audio_start.min(audio_end);
+                let content_hash = blake3::hash(&bytes[audio_start..audio_end]).to_hex().to_string();
                 let full_blake3 = blake3::hash(&bytes).to_hex().to_string();
 
                 state.files.update(|files| {
@@ -572,7 +500,7 @@ pub fn start_identity_computation(
                     let reader = reader_from_handle(&handle);
                     let check = |_: u32| false; // no cancellation for fallback
                     if let Ok((content_hash, full_blake3)) =
-                        compute_full_hashes(reader.as_ref(), file_size, data_offset, 0, &check).await
+                        compute_full_hashes(reader.as_ref(), file_size, data_offset, data_size, 0, &check).await
                     {
                         state.files.update(|files| {
                             if let Some(f) = files.get_mut(file_index) {
@@ -590,28 +518,6 @@ pub fn start_identity_computation(
                         });
                         if let Some(ref uid) = updated_id {
                             outcome = run_verification(uid, &reference);
-                        }
-                    }
-                }
-            }
-
-            // On mismatch: try reconstructed content_hash (header size changed)
-            if outcome == crate::state::VerifyOutcome::Mismatch {
-                if let Some(original_header_size) = can_reconstruct_content_hash(id, &reference) {
-                    let cur_data_offset = id.data_offset.unwrap_or(0);
-                    let handle = state.files.with_untracked(|files| {
-                        files.get(file_index).and_then(|f| f.file_handle.clone())
-                    });
-                    if let Some(handle) = handle {
-                        let reader = reader_from_handle(&handle);
-                        let check = |_: u32| false;
-                        if let Ok(reconstructed) = compute_content_hash_reconstructed(
-                            reader.as_ref(), file_size, cur_data_offset,
-                            original_header_size, 0, &check,
-                        ).await {
-                            if reference.content_hash.as_deref() == Some(&reconstructed) {
-                                outcome = crate::state::VerifyOutcome::ContentMatch;
-                            }
                         }
                     }
                 }
@@ -640,6 +546,10 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         files.get(file_index).and_then(|f| f.identity.as_ref().and_then(|id| id.data_offset))
     });
 
+    let data_size = state.files.with_untracked(|files| {
+        files.get(file_index).and_then(|f| f.identity.as_ref().and_then(|id| id.data_size))
+    });
+
     let handle = state.files.with_untracked(|files| {
         files.get(file_index).and_then(|f| f.file_handle.clone())
     });
@@ -655,7 +565,7 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         let check = |g: u32| state.hash_generation.get() != g;
 
         // Compute BLAKE3 layers 3+4
-        match compute_full_hashes(reader.as_ref(), file_size, data_offset, gen, &check).await {
+        match compute_full_hashes(reader.as_ref(), file_size, data_offset, data_size, gen, &check).await {
             Ok((content_hash, full_blake3)) => {
                 state.files.update(|files| {
                     if let Some(f) = files.get_mut(file_index) {

@@ -11,7 +11,7 @@ use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::SpectrogramData;
 use std::sync::Arc;
 
-use super::streaming_load::{SilenceCheck, STREAMING_CHECK_SIZE, try_streaming_wav, try_streaming_flac, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
+use super::streaming_load::{SilenceCheck, try_streaming_wav, try_streaming_flac, try_streaming_m4a, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
 
 /// Maximum file size the browser can handle for full in-memory decode (~2 GB).
 /// Files above this MUST use the streaming path; if streaming fails, they're rejected.
@@ -60,41 +60,48 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
         );
     };
 
-    // For large files, or once the workspace has accumulated enough opened
-    // files, attempt the streaming path for supported formats.
-    if size > STREAMING_CHECK_SIZE || force_streaming {
-        state.loading_update(load_id, crate::state::LoadingStage::Streaming);
-        match try_streaming_wav(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("WAV streaming not applicable for {}: {}", name, e);
-            }
+    // Always attempt the streaming path — each try_streaming_* probes only
+    // the format header (a few dozen KB) and bails fast via the decoded-size
+    // threshold if in-memory would fit. This catches heavily-compressed audio
+    // (HE-AAC audiobooks, low-bitrate MP3) where compressed size is small but
+    // decoded PCM runs into the gigabytes.
+    state.loading_update(load_id, crate::state::LoadingStage::Streaming);
+    match try_streaming_wav(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("WAV streaming not applicable for {}: {}", name, e);
         }
-        match try_streaming_flac(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("FLAC streaming not applicable for {}: {}", name, e);
-            }
-        }
-        match try_streaming_mp3(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("MP3 streaming not applicable for {}: {}", name, e);
-            }
-        }
-        match try_streaming_ogg(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("OGG streaming not applicable for {}: {}", name, e);
-            }
-        }
-        // Streaming didn't apply — fall through to full decode
-        state.loading_update(load_id, crate::state::LoadingStage::Decoding);
     }
+    match try_streaming_flac(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("FLAC streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_mp3(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("MP3 streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_ogg(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("OGG streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_m4a(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("M4A streaming not applicable for {}: {}", name, e);
+        }
+    }
+    // Streaming didn't apply — fall through to full decode
+    state.loading_update(load_id, crate::state::LoadingStage::Decoding);
 
     if size > MAX_FILE_SIZE {
         let msg = format!(
-            "File too large ({:.1} GB) — only WAV, FLAC, MP3, and OGG files can be streamed above 2 GB",
+            "File too large ({:.1} GB) — only WAV, FLAC, MP3, OGG, and M4A files can be streamed above 2 GB",
             size / 1_000_000_000.0
         );
         state.show_error_toast(&msg);
@@ -109,8 +116,46 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
 }
 
 pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, xc_hashes: Option<crate::state::SidecarHashes>, state: AppState, load_id: u64, is_demo: bool) -> Result<(), String> {
-    let wav_markers = crate::audio::loader::parse_wav_markers(bytes);
-    let audio = load_audio(bytes)?;
+    let mut wav_markers = crate::audio::loader::parse_wav_markers(bytes);
+    let is_m4a = crate::audio::loader::is_m4a(bytes);
+    // For M4A, prefer the browser's AudioContext decoder: it handles every AAC
+    // variant the OS media stack supports (HE-AAC, PS, ELD, and odd ffmpeg
+    // outputs where symphonia can't extract channel info). Fall back to
+    // symphonia only if the browser refuses the file.
+    let mut audio = if is_m4a {
+        let native_rate = crate::audio::loader::parse_m4a_sample_rate(bytes);
+        match crate::audio::browser_decode::decode_via_audio_context(bytes, "M4A", native_rate).await {
+            Ok(a) => a,
+            Err(browser_err) => {
+                log::info!("browser AudioContext rejected m4a ({browser_err}); trying symphonia");
+                match load_audio(bytes) {
+                    Ok(a) => a,
+                    Err(sym_err) => {
+                        return Err(format!("browser: {browser_err}; symphonia: {sym_err}"));
+                    }
+                }
+            }
+        }
+    } else {
+        load_audio(bytes)?
+    };
+    if is_m4a {
+        if wav_markers.is_empty() {
+            wav_markers = crate::audio::loader::parse_m4a_chapters(bytes, audio.sample_rate);
+        }
+        // Browser decode path yields no tags; parse ilst from raw bytes so the
+        // metadata panel still shows title/artist/etc. for m4a.
+        if audio.metadata.guano.is_none() {
+            let tags = crate::audio::loader::parse_m4a_tags(bytes);
+            if !tags.is_empty() {
+                let mut guano = crate::audio::guano::GuanoMetadata::new();
+                for (k, v) in tags {
+                    guano.add(&k, &v);
+                }
+                audio.metadata.guano = Some(guano);
+            }
+        }
+    }
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
         name,

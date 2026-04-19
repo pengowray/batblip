@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use crate::audio::loader::{FlacHeader, WavHeader};
 
-// Re-export MP3 and OGG sources from their own modules
+// Re-export MP3, OGG, and M4A sources from their own modules
+pub use super::streaming_m4a::StreamingM4aSource;
 pub use super::streaming_mp3::StreamingMp3Source;
 pub use super::streaming_ogg::StreamingOggSource;
 use crate::audio::source::{AudioSource, ChannelView};
@@ -1017,6 +1018,8 @@ pub async fn prefetch_streaming(source: &dyn AudioSource, start: u64, len: usize
         }
     } else if let Some(s) = source.as_any().downcast_ref::<StreamingOggSource>() {
         s.prefetch_region(start, len).await;
+    } else if let Some(s) = source.as_any().downcast_ref::<StreamingM4aSource>() {
+        s.prefetch_region(start, len).await;
     }
     (false, false)
 }
@@ -1027,6 +1030,7 @@ pub fn is_streaming(source: &dyn AudioSource) -> bool {
         || source.as_any().downcast_ref::<StreamingFlacSource>().is_some()
         || source.as_any().downcast_ref::<StreamingMp3Source>().is_some()
         || source.as_any().downcast_ref::<StreamingOggSource>().is_some()
+        || source.as_any().downcast_ref::<StreamingM4aSource>().is_some()
 }
 
 /// Read a byte range from a `web_sys::File` using `File.slice()` + `FileReader`.

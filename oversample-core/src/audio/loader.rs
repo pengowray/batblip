@@ -424,8 +424,9 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
         b"RIFF" | b"RF64" => load_wav(bytes),
         b"fLaC" => load_flac(bytes),
         b"OggS" => load_ogg(bytes),
+        _ if is_m4a(bytes) => load_m4a(bytes),
         _ if is_mp3(bytes) => load_mp3(bytes),
-        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, or MP3)".into()),
+        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, MP3, or M4A)".into()),
     }
 }
 
@@ -458,6 +459,12 @@ pub fn id3v2_tag_size(bytes: &[u8]) -> u64 {
 
 pub fn is_ogg(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[0..4] == b"OggS"
+}
+
+/// Detect MPEG-4 / M4A / M4B / MP4 container (ISO BMFF).
+/// Looks for the `ftyp` box at byte offset 4.
+pub fn is_m4a(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[4..8] == b"ftyp"
 }
 
 /// Wildlife Acoustics W4V format tag (0x5741 = "AW" in ASCII).
@@ -920,6 +927,63 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
     })
 }
 
+/// Size of the trailing MP3 metadata (ID3v1 + Lyrics3v2 + APEv2) at the end of `bytes`.
+/// Used so `data_size = file_size - data_offset - trailer` covers only audio frames.
+pub fn mp3_trailer_size(bytes: &[u8]) -> u64 {
+    let mut end = bytes.len();
+    if end >= 128 && &bytes[end - 128..end - 125] == b"TAG" {
+        end -= 128;
+    }
+    if end >= 15 && &bytes[end - 9..end] == b"LYRICS200" {
+        if let Ok(s) = std::str::from_utf8(&bytes[end - 15..end - 9]) {
+            if let Ok(sz) = s.parse::<usize>() {
+                end = end.saturating_sub(sz + 15);
+            }
+        }
+    }
+    if end >= 32 && &bytes[end - 32..end - 24] == b"APETAGEX" {
+        let tag_size = u32::from_le_bytes([
+            bytes[end - 20], bytes[end - 19], bytes[end - 18], bytes[end - 17],
+        ]) as usize;
+        let flags = u32::from_le_bytes([
+            bytes[end - 12], bytes[end - 11], bytes[end - 10], bytes[end - 9],
+        ]);
+        let has_header = (flags & 0x8000_0000) != 0;
+        let total = if has_header { tag_size + 32 } else { tag_size };
+        end = end.saturating_sub(total);
+    }
+    (bytes.len() - end) as u64
+}
+
+/// Return the byte range `(offset, size)` covered by complete Ogg pages.
+/// Returns `(None, None)` if the file doesn't start with a valid Ogg page.
+pub fn ogg_page_region(bytes: &[u8]) -> (Option<u64>, Option<u64>) {
+    if bytes.len() < 27 || &bytes[0..4] != b"OggS" {
+        return (None, None);
+    }
+    let mut pos = 0usize;
+    let mut last_end = 0usize;
+    while pos + 27 <= bytes.len() && &bytes[pos..pos + 4] == b"OggS" {
+        let n_segs = bytes[pos + 26] as usize;
+        let table_end = pos + 27 + n_segs;
+        if table_end > bytes.len() {
+            break;
+        }
+        let segs_sum: usize = bytes[pos + 27..table_end].iter().map(|&b| b as usize).sum();
+        let page_end = table_end + segs_sum;
+        if page_end > bytes.len() {
+            break;
+        }
+        last_end = page_end;
+        pos = page_end;
+    }
+    if last_end == 0 {
+        (None, None)
+    } else {
+        (Some(0), Some(last_end as u64))
+    }
+}
+
 fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
     use lewton::inside_ogg::OggStreamReader;
 
@@ -955,8 +1019,8 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
             bits_per_sample: 16,
             is_float: false,
             guano: None,
-            data_offset: None,
-            data_size: None,
+            data_offset: ogg_page_region(bytes).0,
+            data_size: ogg_page_region(bytes).1,
         },
     })
 }
@@ -1069,7 +1133,11 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
             is_float: false,
             guano: None,
             data_offset: Some(mp3_data_offset),
-            data_size: Some((bytes.len() as u64).saturating_sub(mp3_data_offset)),
+            data_size: Some(
+                (bytes.len() as u64)
+                    .saturating_sub(mp3_data_offset)
+                    .saturating_sub(mp3_trailer_size(bytes)),
+            ),
         },
     })
 }
@@ -1106,4 +1174,554 @@ fn mix_to_mono(samples: &[f32], channels: u32) -> Vec<f32> {
         .chunks_exact(ch)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect()
+}
+
+/// Parsed M4A (MP4 container) header — format metadata extracted by symphonia.
+#[derive(Clone, Debug)]
+pub struct M4aHeader {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub codec: &'static str,
+    /// Per-channel total frames, from mdhd/tkhd duration. 0 if unknown.
+    pub total_frames: u64,
+    /// Text tags (title, artist, album, etc.) stored in the ilst/meta box.
+    /// Reused as a GuanoMetadata container since both are just `Vec<(String, String)>`.
+    pub tags: GuanoMetadata,
+    /// Nero-style chapter markers from the `chpl` atom, if present.
+    /// `position` holds the sample index (computed from chapter time × sample_rate).
+    pub chapters: Vec<WavMarker>,
+}
+
+/// Parse MP4 tags and chapters from the full file bytes.
+/// `sample_rate` is used to convert chapter times (seconds) to sample positions.
+pub fn parse_m4a_chapters(bytes: &[u8], sample_rate: u32) -> Vec<WavMarker> {
+    find_chpl_chapters(bytes)
+        .map(|entries| {
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(i, (secs, title))| WavMarker {
+                    id: (i + 1) as u32,
+                    position: (secs * sample_rate as f64).max(0.0) as u64,
+                    label: if title.is_empty() { None } else { Some(title) },
+                    note: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Read the audio track's duration (in timescale units) from `mdhd`.
+/// For audio tracks the timescale usually equals the sample rate, so the
+/// returned value is roughly the total output-sample count.
+pub fn parse_m4a_track_duration(bytes: &[u8]) -> Option<u64> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let mut pos = 0usize;
+    while pos + 8 <= moov.len() {
+        let size = u32::from_be_bytes(moov[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &moov[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(moov, pos, size)?;
+        if id == b"trak" {
+            let trak = &moov[body_start..body_end];
+            if let Some(mdia) = find_child_atom(trak, *b"mdia") {
+                let is_audio = find_child_atom(mdia, *b"hdlr")
+                    .map(|h| h.len() >= 12 && &h[8..12] == b"soun")
+                    .unwrap_or(false);
+                if is_audio {
+                    if let Some(mdhd) = find_child_atom(mdia, *b"mdhd") {
+                        if mdhd.len() >= 4 {
+                            let version = mdhd[0];
+                            if version == 1 && mdhd.len() >= 32 {
+                                let b: [u8; 8] = mdhd[24..32].try_into().ok()?;
+                                return Some(u64::from_be_bytes(b));
+                            } else if version == 0 && mdhd.len() >= 20 {
+                                let b: [u8; 4] = mdhd[16..20].try_into().ok()?;
+                                return Some(u32::from_be_bytes(b) as u64);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Estimate decoded PCM byte size for an M4A file, given bytes that contain
+/// `moov`. Returns `None` if moov isn't parseable from the provided bytes —
+/// common for files where moov is at the end (read the whole file then).
+/// The estimate is an upper bound (ignores HE-AAC SBR halving), which biases
+/// routing slightly toward streaming — correct behaviour for the gate.
+pub fn estimate_m4a_decoded_bytes(bytes: &[u8]) -> Option<u64> {
+    let (channels, _) = parse_m4a_audio_entry(bytes)?;
+    let duration = parse_m4a_track_duration(bytes)?;
+    Some(duration.saturating_mul(channels as u64).saturating_mul(4))
+}
+
+/// Find the audio-track `mp4a` / `enca` sample entry and return its
+/// `(channel_count, sample_rate)`. Some ffmpeg/Audible files have a malformed
+/// AudioSpecificConfig which leaves symphonia's `codec_params.channels` as
+/// `None`; this walker reads the values straight from the sample description.
+pub fn parse_m4a_audio_entry(bytes: &[u8]) -> Option<(u16, u32)> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let mut pos = 0usize;
+    while pos + 8 <= moov.len() {
+        let size = u32::from_be_bytes(moov[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &moov[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(moov, pos, size)?;
+        if id == b"trak" {
+            let trak = &moov[body_start..body_end];
+            if let Some(mdia) = find_child_atom(trak, *b"mdia") {
+                // Confirm audio track via hdlr.
+                let is_audio = find_child_atom(mdia, *b"hdlr")
+                    .map(|h| h.len() >= 12 && &h[8..12] == b"soun")
+                    .unwrap_or(false);
+                if is_audio {
+                    if let Some(minf) = find_child_atom(mdia, *b"minf") {
+                        if let Some(stbl) = find_child_atom(minf, *b"stbl") {
+                            if let Some(stsd) = find_child_atom(stbl, *b"stsd") {
+                                // stsd: 1B version + 3B flags + 4B entry_count, then entries
+                                if stsd.len() >= 8 {
+                                    if let Some(entry) = parse_first_audio_sample_entry(&stsd[8..]) {
+                                        return Some(entry);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Parse the first audio sample entry (mp4a/enca/etc.) in a stsd body.
+/// Returns (channel_count, sample_rate). Sample rate is stored in the upper 16
+/// bits for rates <= 65535; higher rates live in esds/AudioSpecificConfig and
+/// this function may return 0 or a truncated value for those.
+fn parse_first_audio_sample_entry(entries_body: &[u8]) -> Option<(u16, u32)> {
+    if entries_body.len() < 8 { return None; }
+    // First entry: 4B size + 4B type + body
+    let size = u32::from_be_bytes(entries_body[0..4].try_into().ok()?) as u64;
+    let type_code = &entries_body[4..8];
+    let (body_start, body_end) = mp4_box_body_range(entries_body, 0, size)?;
+    // Recognize any audio sample entry type — we only read the fixed-layout fields.
+    // mp4a/enca/alac/opus/Opus/fLaC/etc. all share the same AudioSampleEntry prefix.
+    let _ = type_code;
+    let body = &entries_body[body_start..body_end];
+    // AudioSampleEntry layout (version 0):
+    //   6B reserved + 2B data_ref_idx + 8B reserved(0) + 2B channel_count
+    //   + 2B sample_size + 4B pre_defined/reserved + 4B sample_rate (upper 16 = integer)
+    if body.len() < 28 { return None; }
+    let channels = u16::from_be_bytes(body[16..18].try_into().ok()?);
+    // sample_rate is at offset 24, upper 16 bits = integer part
+    let sr_int = u16::from_be_bytes(body[24..26].try_into().ok()?);
+    Some((channels, sr_int as u32))
+}
+
+/// Read the audio track's native sample rate from the MP4's `mdhd` atom timescale.
+/// Returns `None` if the sample table can't be walked. Used so the browser's
+/// AudioContext can be instantiated at the source rate instead of the default
+/// output rate (otherwise high-frequency content above 24 kHz gets discarded).
+pub fn parse_m4a_sample_rate(bytes: &[u8]) -> Option<u32> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let mut pos = 0usize;
+    while pos + 8 <= moov.len() {
+        let size = u32::from_be_bytes(moov[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &moov[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(moov, pos, size)?;
+        if id == b"trak" {
+            let trak = &moov[body_start..body_end];
+            let mdia = find_child_atom(trak, *b"mdia")?;
+            // Require this track to be audio ("soun"). hdlr layout:
+            // 1B version + 3B flags + 4B pre_defined + 4B handler_type + ...
+            if let Some(hdlr) = find_child_atom(mdia, *b"hdlr") {
+                if hdlr.len() >= 12 && &hdlr[8..12] == b"soun" {
+                    if let Some(mdhd) = find_child_atom(mdia, *b"mdhd") {
+                        if mdhd.len() >= 4 {
+                            let version = mdhd[0];
+                            let ts_off = if version == 1 { 4 + 8 + 8 } else { 4 + 4 + 4 };
+                            if mdhd.len() >= ts_off + 4 {
+                                let ts_bytes: [u8; 4] = mdhd[ts_off..ts_off + 4].try_into().ok()?;
+                                let ts = u32::from_be_bytes(ts_bytes);
+                                if ts > 0 { return Some(ts); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Parse iTunes-style metadata (`moov/udta/meta/ilst`) from raw bytes.
+/// Returns key/value pairs where keys are the fourcc (e.g. "©nam" for title,
+/// "©ART" for artist) rendered as UTF-8 where possible. Empty if nothing found.
+pub fn parse_m4a_tags(bytes: &[u8]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Some(moov) = find_top_level_atom(bytes, *b"moov") else { return out; };
+    let Some(udta) = find_child_atom(moov, *b"udta") else { return out; };
+    let Some(meta) = find_child_atom(udta, *b"meta") else { return out; };
+    // `meta` is a full box: 1 byte version + 3 bytes flags, then children.
+    if meta.len() < 4 { return out; }
+    let meta_body = &meta[4..];
+    let Some(ilst) = find_child_atom(meta_body, *b"ilst") else { return out; };
+
+    // Walk ilst children: each child has a fourcc key + nested `data` atom.
+    let mut pos = 0usize;
+    while pos + 8 <= ilst.len() {
+        let size_bytes: [u8; 4] = match ilst[pos..pos + 4].try_into() {
+            Ok(b) => b,
+            Err(_) => break,
+        };
+        let size = u32::from_be_bytes(size_bytes) as u64;
+        let key_bytes = &ilst[pos + 4..pos + 8];
+        let Some((body_start, body_end)) = mp4_box_body_range(ilst, pos, size) else { break; };
+        if let Some(data) = find_child_atom(&ilst[body_start..body_end], *b"data") {
+            // `data` body: 1 byte version + 3 bytes type_indicator + 4 bytes locale + payload.
+            if data.len() > 8 {
+                let type_indicator = u32::from_be_bytes(data[0..4].try_into().unwrap_or([0; 4])) & 0x00FF_FFFF;
+                let payload = &data[8..];
+                let key_raw: [u8; 4] = key_bytes.try_into().unwrap_or([0; 4]);
+                // Skip binary blob tags (cover art, preview jpeg, etc.)
+                if matches!(&key_raw, b"covr" | b"----") { pos = body_end; continue; }
+                let key = friendly_ilst_key(key_raw).unwrap_or_else(|| render_fourcc(key_bytes));
+                let value = render_ilst_value(type_indicator, key_raw, payload);
+                if !value.is_empty() {
+                    out.push((key, value));
+                }
+            }
+        }
+        pos = body_end;
+    }
+
+    out
+}
+
+/// Render an iTunes ilst value according to its type_indicator:
+/// 1 = UTF-8 text, 21 = signed integer BE, 0 = implicit (guess).
+/// Some keys use structured binary payloads (`trkn`, `disk`) that we format
+/// specially.
+fn render_ilst_value(type_indicator: u32, key: [u8; 4], payload: &[u8]) -> String {
+    // `trkn` and `disk` payloads are 8 bytes: 2 reserved + u16 BE index + u16 BE total.
+    if (&key == b"trkn" || &key == b"disk") && payload.len() >= 6 {
+        let index = u16::from_be_bytes(payload[2..4].try_into().unwrap_or([0; 2]));
+        let total = u16::from_be_bytes(payload[4..6].try_into().unwrap_or([0; 2]));
+        return if total > 0 { format!("{index}/{total}") } else { index.to_string() };
+    }
+    // `gnre` (legacy genre): 2-byte BE index into ID3 genre list.
+    if &key == b"gnre" && payload.len() >= 2 {
+        let idx = u16::from_be_bytes(payload[0..2].try_into().unwrap_or([0; 2]));
+        return format!("Genre #{idx}");
+    }
+    match type_indicator {
+        1 => String::from_utf8_lossy(payload).into_owned(),
+        21 | 22 => {
+            match payload.len() {
+                1 => (payload[0] as i8).to_string(),
+                2 => i16::from_be_bytes(payload.try_into().unwrap_or([0; 2])).to_string(),
+                4 => i32::from_be_bytes(payload.try_into().unwrap_or([0; 4])).to_string(),
+                8 => i64::from_be_bytes(payload.try_into().unwrap_or([0; 8])).to_string(),
+                _ => String::new(),
+            }
+        }
+        _ => {
+            // Implicit: only surface if it parses as valid UTF-8 and looks
+            // text-like (no control bytes except common whitespace).
+            if let Ok(s) = std::str::from_utf8(payload) {
+                if s.chars().all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r')) {
+                    return s.to_string();
+                }
+            }
+            String::new()
+        }
+    }
+}
+
+/// Translate a well-known iTunes fourcc to a friendlier display label.
+/// Returns `None` for unknown keys so the caller can fall back to the raw fourcc.
+fn friendly_ilst_key(key: [u8; 4]) -> Option<String> {
+    let name = match &key {
+        b"\xA9nam" => "Title",
+        b"\xA9ART" => "Artist",
+        b"aART"   => "Album Artist",
+        b"\xA9alb" => "Album",
+        b"\xA9day" => "Year",
+        b"\xA9gen" => "Genre",
+        b"gnre"   => "Genre",
+        b"\xA9cmt" => "Comment",
+        b"\xA9wrt" => "Composer",
+        b"\xA9too" => "Encoder",
+        b"\xA9grp" => "Grouping",
+        b"\xA9lyr" => "Lyrics",
+        b"trkn"   => "Track",
+        b"disk"   => "Disc",
+        b"cprt"   => "Copyright",
+        b"desc"   => "Description",
+        b"ldes"   => "Long Description",
+        b"tvsh"   => "TV Show",
+        b"tven"   => "TV Episode ID",
+        b"tvsn"   => "TV Season",
+        b"tves"   => "TV Episode",
+        b"pcst"   => "Podcast",
+        b"catg"   => "Category",
+        b"keyw"   => "Keywords",
+        b"purd"   => "Purchase Date",
+        b"rtng"   => "Rating",
+        b"stik"   => "Media Kind",
+        _ => return None,
+    };
+    Some(name.to_string())
+}
+
+/// Best-effort fourcc rendering — replaces the leading `©` byte (0xA9) so
+/// keys display as `©nam`/`©ART` etc. Other non-ASCII bytes become `?`.
+fn render_fourcc(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(4);
+    for &b in bytes.iter().take(4) {
+        if b == 0xA9 {
+            s.push('©');
+        } else if (0x20..=0x7E).contains(&b) {
+            s.push(b as char);
+        } else {
+            s.push('?');
+        }
+    }
+    s
+}
+
+/// Walk ISO BMFF atoms to find `moov/udta/chpl` (Nero chapter list).
+/// Returns `Vec<(start_time_seconds, title)>` or `None` if not found.
+fn find_chpl_chapters(bytes: &[u8]) -> Option<Vec<(f64, String)>> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let udta = find_child_atom(moov, *b"udta")?;
+    let chpl = find_child_atom(udta, *b"chpl")?;
+    parse_chpl_atom(chpl)
+}
+
+/// Parse a Nero `chpl` atom body. Layout:
+/// - 1 byte version + 3 bytes flags
+/// - (version >= 1): 4 bytes reserved
+/// - 1 byte chapter count (some writers use 4 bytes — accept both)
+/// - entries: u64 BE (100-ns units) + u8 title length + UTF-8 title
+fn parse_chpl_atom(body: &[u8]) -> Option<Vec<(f64, String)>> {
+    if body.len() < 5 { return None; }
+    let version = body[0];
+    let mut pos = 4; // skip version + flags
+    if version >= 1 {
+        if body.len() < pos + 4 { return None; }
+        pos += 4; // reserved
+    }
+    // Count: try u8 first. If a u32 BE count makes more sense (when u8 count
+    // would underflow the buffer), fall back to u32.
+    let (count, after_count) = if pos < body.len() {
+        let c = body[pos] as usize;
+        // Quick sanity: if the u8 count × 9 exceeds remaining bytes, try u32.
+        let remaining = body.len() - pos - 1;
+        if c > 0 && c * 9 <= remaining + c * 256 {
+            (c, pos + 1)
+        } else if body.len() >= pos + 4 {
+            let c32 = u32::from_be_bytes(body[pos..pos + 4].try_into().ok()?) as usize;
+            (c32, pos + 4)
+        } else {
+            (c, pos + 1)
+        }
+    } else {
+        return None;
+    };
+    pos = after_count;
+
+    let mut out = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        if pos + 9 > body.len() { break; }
+        let time100ns = u64::from_be_bytes(body[pos..pos + 8].try_into().ok()?);
+        let title_len = body[pos + 8] as usize;
+        pos += 9;
+        if pos + title_len > body.len() { break; }
+        let title = String::from_utf8_lossy(&body[pos..pos + title_len]).into_owned();
+        pos += title_len;
+        let secs = time100ns as f64 / 10_000_000.0;
+        out.push((secs, title));
+    }
+    Some(out)
+}
+
+/// Find a top-level atom in the MP4 file with the given fourcc.
+/// Returns the atom body (excluding the 8-byte header).
+fn find_top_level_atom(bytes: &[u8], fourcc: [u8; 4]) -> Option<&[u8]> {
+    let mut pos = 0usize;
+    while pos + 8 <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &bytes[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(bytes, pos, size)?;
+        if id == fourcc {
+            return Some(&bytes[body_start..body_end]);
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Find a child atom within a parent's body. Most container atoms start their
+/// children immediately; `meta` is the exception — it has a 4-byte full-box
+/// header (version+flags) before its children.
+fn find_child_atom(parent: &[u8], fourcc: [u8; 4]) -> Option<&[u8]> {
+    let mut pos = 0usize;
+    while pos + 8 <= parent.len() {
+        let size = u32::from_be_bytes(parent[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &parent[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(parent, pos, size)?;
+        if id == fourcc {
+            return Some(&parent[body_start..body_end]);
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Given an atom header at `pos` with declared `size`, return (body_start, body_end).
+/// Handles size==1 (64-bit extended size) and size==0 (extends to end of container).
+fn mp4_box_body_range(container: &[u8], pos: usize, size: u64) -> Option<(usize, usize)> {
+    let end = if size == 1 {
+        if pos + 16 > container.len() { return None; }
+        let large = u64::from_be_bytes(container[pos + 8..pos + 16].try_into().ok()?);
+        pos as u64 + large
+    } else if size == 0 {
+        container.len() as u64
+    } else {
+        pos as u64 + size
+    };
+    let body_start = if size == 1 { pos + 16 } else { pos + 8 };
+    let end_usize = end.min(container.len() as u64) as usize;
+    if body_start > end_usize { return None; }
+    Some((body_start, end_usize))
+}
+
+fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let cursor = Cursor::new(bytes.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+    let mut hint = Hint::new();
+    hint.with_extension("m4a");
+
+    let mut probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("M4A probe error: {e}"))?;
+
+    let format = &mut probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or("No audio track found in M4A")?;
+
+    // Fall back to the mp4a sample entry for files where symphonia can't
+    // derive channels/sample_rate from the AudioSpecificConfig.
+    let atom_entry = parse_m4a_audio_entry(bytes);
+    let sample_rate = track.codec_params.sample_rate
+        .or_else(|| atom_entry.map(|(_, sr)| sr).filter(|&sr| sr > 0))
+        .or_else(|| parse_m4a_sample_rate(bytes))
+        .ok_or("M4A missing sample rate")?;
+    let channels = match track.codec_params.channels {
+        Some(c) => c.count() as u32,
+        None => atom_entry
+            .map(|(c, _)| c as u32)
+            .filter(|&c| (1..=8).contains(&c))
+            .ok_or("M4A missing channel info (not in codec_params nor mp4a atom)")?,
+    };
+    let track_id = track.id;
+
+    let mut codec_params = track.codec_params.clone();
+    if codec_params.channels.is_none() {
+        use symphonia::core::audio::Channels;
+        let layout = match channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => Channels::from_bits_truncate((1u32 << channels).saturating_sub(1)),
+        };
+        codec_params.channels = Some(layout);
+    }
+    if codec_params.sample_rate.is_none() {
+        codec_params.sample_rate = Some(sample_rate);
+    }
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("M4A decoder error: {e}"))?;
+
+    // Collect iTunes-style tags from probe metadata + any format-level metadata.
+    let mut tags = GuanoMetadata::new();
+    if let Some(rev) = probed.metadata.get().as_ref().and_then(|m| m.current().cloned()) {
+        for t in rev.tags() {
+            tags.add(&t.key, &t.value.to_string());
+        }
+    }
+    if let Some(rev) = format.metadata().current() {
+        for t in rev.tags() {
+            tags.add(&t.key, &t.value.to_string());
+        }
+    }
+
+    let mut all_samples: Vec<f32> = Vec::new();
+    // Authoritative from the decoder — mp4a can report pre-SBR/PS values that
+    // don't match what symphonia's AAC decoder actually emits.
+    let mut actual_rate: Option<u32> = None;
+    let mut actual_channels: Option<u32> = None;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(format!("M4A packet error: {e}")),
+        };
+        if packet.track_id() != track_id { continue; }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                if actual_rate.is_none() {
+                    actual_rate = Some(spec.rate);
+                    actual_channels = Some(spec.channels.count() as u32);
+                }
+                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                buf.copy_interleaved_ref(decoded);
+                all_samples.extend_from_slice(buf.samples());
+            }
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(e) => return Err(format!("M4A decode error: {e}")),
+        }
+    }
+
+    let sample_rate = actual_rate.unwrap_or(sample_rate);
+    let channels = actual_channels.unwrap_or(channels);
+    let (samples, source) = build_source(all_samples, channels, sample_rate);
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+    Ok(AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: bytes.len(),
+            format: "M4A",
+            bits_per_sample: 16,
+            is_float: false,
+            guano: if tags.fields.is_empty() { None } else { Some(tags) },
+            data_offset: None,
+            data_size: None,
+        },
+    })
 }

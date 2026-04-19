@@ -467,7 +467,11 @@ pub fn export_selected(state: &AppState) {
         .trim_end_matches(".ogg")
         .trim_end_matches(".OGG")
         .trim_end_matches(".mp3")
-        .trim_end_matches(".MP3");
+        .trim_end_matches(".MP3")
+        .trim_end_matches(".m4a")
+        .trim_end_matches(".M4A")
+        .trim_end_matches(".m4b")
+        .trim_end_matches(".M4B");
 
     let regions = get_selected_regions(state);
 

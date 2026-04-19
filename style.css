@@ -2743,7 +2743,11 @@ body.sidebar-resizing {
 
 .bottom-toolbar.mobile {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* minmax(0, 1fr) prevents grid tracks from expanding to fit min-content of
+       nowrap button text (e.g. "🎤 Listen" + "HET"). Without this, cells exceed
+       their fractional share, making the toolbar wider than the viewport —
+       which cascades up the layout and clips right-edge content on iOS. */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     overflow: visible;

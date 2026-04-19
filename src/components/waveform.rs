@@ -38,9 +38,13 @@ pub fn Waveform() -> impl IntoView {
 
         idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
+            // For streaming sources, file.audio.samples is only the head (~30s);
+            // match that length for non-MonoMix reads instead of pulling the
+            // whole file (which would OOM on multi-hour m4b/m4a files).
+            let read_len = file.audio.samples.len();
             let ch_samples = match cv {
                 ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
-                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize)),
+                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, read_len)),
             };
             let samples = if filter_enabled {
                 match quality {
@@ -88,9 +92,12 @@ pub fn Waveform() -> impl IntoView {
 
         let result = idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
+            // See zc_bins memo above — cap the read to the in-memory head
+            // length so streaming sources don't try to allocate gigabytes.
+            let read_len = file.audio.samples.len();
             let ch_samples = match cv {
                 ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
-                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize)),
+                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, read_len)),
             };
 
             // Brick-wall band separation via overlap-add FFT. Cascaded IIR
@@ -428,6 +435,52 @@ pub fn Waveform() -> impl IntoView {
                 );
             }
 
+            // File-embedded time markers (WAV cue points, M4A chapters)
+            // and user annotation markers.
+            if !clean_view {
+                if !file.wav_markers.is_empty() {
+                    let sr = file.audio.sample_rate as f64;
+                    let markers: Vec<(f64, Option<String>)> = file.wav_markers.iter()
+                        .map(|m| (m.position as f64 / sr, m.label.clone()))
+                        .collect();
+                    crate::canvas::overlays::draw_time_marker_lines(
+                        &ctx,
+                        &markers,
+                        crate::canvas::overlays::TimeMarkerStyle::FileEmbedded,
+                        buf_scroll,
+                        file.spectrogram.time_resolution,
+                        zoom,
+                        display_w as f64,
+                        display_h as f64,
+                    );
+                }
+                if let Some(file_idx_val) = idx {
+                    let store = state.annotation_store.get();
+                    if let Some(Some(set)) = store.sets.get(file_idx_val) {
+                        let ann_markers: Vec<(f64, Option<String>)> = set.annotations.iter()
+                            .filter_map(|a| match &a.kind {
+                                crate::annotations::AnnotationKind::Marker(m) => {
+                                    Some((m.time, m.label.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        if !ann_markers.is_empty() {
+                            crate::canvas::overlays::draw_time_marker_lines(
+                                &ctx,
+                                &ann_markers,
+                                crate::canvas::overlays::TimeMarkerStyle::Annotation,
+                                buf_scroll,
+                                file.spectrogram.time_resolution,
+                                zoom,
+                                display_w as f64,
+                                display_h as f64,
+                            );
+                        }
+                    }
+                }
+            }
+
             // Draw "play here" marker when not playing
             if !clean_view && state.play_start_mode.get() .uses_from_here() && !is_playing && canvas_tool == CanvasTool::Hand {
                 let visible_time = viewport::visible_time(display_w as f64, zoom, file.spectrogram.time_resolution);
@@ -682,14 +735,30 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let waterfall_active = (state.mic_recording.get_untracked()
+            || state.mic_listening.get_untracked())
+            && crate::canvas::live_waterfall::is_active();
+        let time_res = if waterfall_active {
+            crate::canvas::live_waterfall::time_resolution()
+        } else {
+            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+        };
         let zoom = state.zoom_level.get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        state.suspend_waterfall_follow(2000.0);
+        let new_scroll = if waterfall_active {
+            let total_time = crate::canvas::live_waterfall::total_time();
+            let oldest = crate::canvas::live_waterfall::oldest_time();
+            let max_scroll = (total_time - visible_time).max(oldest);
+            (start_scroll + dt).clamp(oldest, max_scroll)
+        } else {
+            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
+            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
+        };
+        state.scroll_offset.set(new_scroll);
     };
 
     let on_pointerup = move |ev: web_sys::PointerEvent| {
@@ -849,14 +918,30 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
+        let waterfall_active = (state.mic_recording.get_untracked()
+            || state.mic_listening.get_untracked())
+            && crate::canvas::live_waterfall::is_active();
+        let time_res = if waterfall_active {
+            crate::canvas::live_waterfall::time_resolution()
+        } else {
+            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+        };
         let zoom = state.zoom_level.get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
-        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-                let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-                state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        state.suspend_waterfall_follow(2000.0);
+        let new_scroll = if waterfall_active {
+            let total_time = crate::canvas::live_waterfall::total_time();
+            let oldest = crate::canvas::live_waterfall::oldest_time();
+            let max_scroll = (total_time - visible_time).max(oldest);
+            (start_scroll + dt).clamp(oldest, max_scroll)
+        } else {
+            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
+            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
+        };
+        state.scroll_offset.set(new_scroll);
         // Record velocity sample for inertia
         let now = web_sys::window().unwrap().performance().unwrap().now();
         velocity_tracker.update_value(|t| t.push(now, touch.client_x() as f64));
@@ -901,9 +986,20 @@ pub fn Waveform() -> impl IntoView {
                         let files = state.files.get_untracked();
                         let idx = state.current_file_index.get_untracked();
                         let file = idx.and_then(|i| files.get(i));
-                        let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                        let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-                        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+                        let waterfall_active = (state.mic_recording.get_untracked()
+                            || state.mic_listening.get_untracked())
+                            && crate::canvas::live_waterfall::is_active();
+                        let time_res = if waterfall_active {
+                            crate::canvas::live_waterfall::time_resolution()
+                        } else {
+                            file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
+                        };
+                        let duration = if waterfall_active {
+                            crate::canvas::live_waterfall::total_time()
+                        } else {
+                            file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
+                        };
+                        let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
                         crate::components::inertia::start_inertia(
                             state, vel, cw, time_res, duration, from_here_mode, inertia_generation,
                         );

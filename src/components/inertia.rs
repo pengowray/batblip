@@ -129,7 +129,17 @@ pub fn start_inertia(
     // Convert px velocity to time velocity (same sign convention as apply_hand_pan: negate)
     let v0_time = -(velocity_px_per_sec / canvas_width) * visible_time;
     let start_scroll = state.scroll_offset.get_untracked();
-    let (min_scroll, max_scroll) = viewport::scroll_bounds_for_mode(duration, visible_time, from_here_mode);
+    let waterfall_active = (state.mic_recording.get_untracked()
+        || state.mic_listening.get_untracked())
+        && crate::canvas::live_waterfall::is_active();
+    let (min_scroll, max_scroll) = if waterfall_active {
+        let total_time = crate::canvas::live_waterfall::total_time();
+        let oldest = crate::canvas::live_waterfall::oldest_time();
+        let max = (total_time - visible_time).max(oldest);
+        (oldest, max)
+    } else {
+        viewport::scroll_bounds_for_mode(duration, visible_time, from_here_mode)
+    };
 
     // Threshold in time-domain units
     let stop_threshold = (STOP_VELOCITY / canvas_width) * visible_time;
@@ -162,6 +172,7 @@ pub fn start_inertia(
 
         state.scroll_offset.set(clamped);
         state.suspend_follow();
+        state.suspend_waterfall_follow(2000.0);
 
         // Stop conditions: velocity too low, or hit bounds
         let hit_bound = (clamped <= min_scroll && current_v < 0.0)

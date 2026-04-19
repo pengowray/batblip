@@ -218,6 +218,123 @@ pub fn cached_audio_path(root: &Path, id: u64) -> Option<PathBuf> {
     None
 }
 
+/// Detect the audio-sample region of a file by format. Returns
+/// `(data_offset, data_size)` such that `data[data_offset..data_offset+data_size]`
+/// spans only the audio samples (WAV PCM, MP3 frames, or Ogg pages), excluding
+/// the container header and any trailing metadata (e.g. ID3v1/APE/Lyrics3 for
+/// MP3, RIFF metadata or GUANO chunks after the `data` chunk for WAV, or
+/// garbage after the final Ogg page).
+///
+/// Returns `(None, None)` for unknown/unsupported formats — callers should then
+/// treat the whole file as audio.
+pub fn detect_audio_region(data: &[u8]) -> (Option<u64>, Option<u64>) {
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WAVE" {
+        return detect_wav_data_region(data);
+    }
+    if data.len() >= 4 && &data[0..4] == b"OggS" {
+        return detect_ogg_data_region(data);
+    }
+    if is_mp3(data) {
+        return detect_mp3_data_region(data);
+    }
+    (None, None)
+}
+
+/// Magic-byte MP3 detector: ID3v2 tag at start, or a plausible MPEG audio sync.
+pub fn is_mp3(data: &[u8]) -> bool {
+    if data.len() >= 3 && &data[0..3] == b"ID3" {
+        return true;
+    }
+    // MPEG frame sync: 11 ones in the top bits, and a valid (non-reserved) layer/version.
+    data.len() >= 2
+        && data[0] == 0xFF
+        && (data[1] & 0xE0) == 0xE0
+        && (data[1] & 0x18) != 0x08   // not reserved MPEG version
+        && (data[1] & 0x06) != 0x00   // not reserved layer
+}
+
+/// Size of the ID3v2 tag at `data[0..]`, or 0 if none.
+fn id3v2_tag_size(data: &[u8]) -> u64 {
+    if data.len() >= 10 && &data[0..3] == b"ID3" {
+        let size = ((data[6] as u64 & 0x7F) << 21)
+            | ((data[7] as u64 & 0x7F) << 14)
+            | ((data[8] as u64 & 0x7F) << 7)
+            | (data[9] as u64 & 0x7F);
+        10 + size
+    } else {
+        0
+    }
+}
+
+/// Detect MP3 audio region, skipping ID3v2 at the start and ID3v1 / APEv2 /
+/// Lyrics3v2 at the end.
+pub fn detect_mp3_data_region(data: &[u8]) -> (Option<u64>, Option<u64>) {
+    let len = data.len();
+    let start = id3v2_tag_size(data);
+    let mut end = len;
+
+    // ID3v1: trailing 128 bytes starting with "TAG"
+    if end >= 128 && &data[end - 128..end - 125] == b"TAG" {
+        end -= 128;
+    }
+
+    // Lyrics3v2: ends with "LYRICS200" preceded by 6-digit ASCII size
+    if end >= 15 && &data[end - 9..end] == b"LYRICS200" {
+        if let Ok(s) = std::str::from_utf8(&data[end - 15..end - 9]) {
+            if let Ok(sz) = s.parse::<u64>() {
+                end = end.saturating_sub((sz as usize) + 15);
+            }
+        }
+    }
+
+    // APEv2/v1 footer: 32-byte footer at the end starting with "APETAGEX".
+    // Footer layout: "APETAGEX"(8) | version(4 LE) | tag_size(4 LE: items+footer)
+    //              | item_count(4) | flags(4 LE) | reserved(8). Bit 31 of flags
+    // indicates a 32-byte header precedes the tag body.
+    if end >= 32 && &data[end - 32..end - 24] == b"APETAGEX" {
+        let tag_size = u32::from_le_bytes([
+            data[end - 20], data[end - 19], data[end - 18], data[end - 17],
+        ]) as u64;
+        let flags = u32::from_le_bytes([
+            data[end - 12], data[end - 11], data[end - 10], data[end - 9],
+        ]);
+        let has_header = (flags & 0x8000_0000) != 0;
+        let total = if has_header { tag_size + 32 } else { tag_size };
+        end = end.saturating_sub(total as usize);
+    }
+
+    let start = (start as usize).min(end);
+    (Some(start as u64), Some((end - start) as u64))
+}
+
+/// Detect the region spanned by complete Ogg pages, trimming any trailing
+/// garbage after the last fully-valid page.
+pub fn detect_ogg_data_region(data: &[u8]) -> (Option<u64>, Option<u64>) {
+    if data.len() < 27 || &data[0..4] != b"OggS" {
+        return (None, None);
+    }
+    let mut pos = 0usize;
+    let mut last_end = 0usize;
+    while pos + 27 <= data.len() && &data[pos..pos + 4] == b"OggS" {
+        let n_segs = data[pos + 26] as usize;
+        let table_end = pos + 27 + n_segs;
+        if table_end > data.len() {
+            break;
+        }
+        let segs_sum: usize = data[pos + 27..table_end].iter().map(|&b| b as usize).sum();
+        let page_end = table_end + segs_sum;
+        if page_end > data.len() {
+            break;
+        }
+        last_end = page_end;
+        pos = page_end;
+    }
+    if last_end == 0 {
+        return (None, None);
+    }
+    (Some(0), Some(last_end as u64))
+}
+
 /// Detect WAV audio data region by scanning for the "data" chunk in a RIFF file.
 /// Returns (data_offset, data_size) or (None, None) for non-WAV files.
 pub fn detect_wav_data_region(data: &[u8]) -> (Option<u64>, Option<u64>) {
@@ -280,18 +397,17 @@ pub fn compute_spot_hash_b3(data: &[u8], data_offset: Option<u64>, data_size: Op
     blake3::hash(&combined).to_hex().to_string()
 }
 
-/// Compute content hash: BLAKE3 of entire file with header bytes zeroed.
-pub fn compute_content_hash(data: &[u8], data_offset: Option<u64>) -> String {
-    let header_end = data_offset.unwrap_or(0) as usize;
-    let mut hasher = blake3::Hasher::new();
-    if header_end > 0 && header_end < data.len() {
-        let zeroed = vec![0u8; header_end];
-        hasher.update(&zeroed);
-        hasher.update(&data[header_end..]);
-    } else {
-        hasher.update(data);
-    }
-    hasher.finalize().to_hex().to_string()
+/// Compute content hash: BLAKE3 over just the audio samples
+/// (`file[data_offset..data_offset+data_size]`). Header and any trailing
+/// metadata (e.g. GUANO) are excluded, so metadata edits don't change it.
+pub fn compute_content_hash(data: &[u8], data_offset: Option<u64>, data_size: Option<u64>) -> String {
+    let start = data_offset.unwrap_or(0) as usize;
+    let end = match data_size {
+        Some(sz) => (start + sz as usize).min(data.len()),
+        None => data.len(),
+    };
+    let start = start.min(end);
+    blake3::hash(&data[start..end]).to_hex().to_string()
 }
 
 /// Compute hashes and size from audio bytes.
@@ -300,8 +416,8 @@ pub fn compute_file_hashes(data: &[u8]) -> FileHashes {
 
     let size_bytes = data.len() as u64;
 
-    // Detect WAV data region for audio-aware hashing
-    let (data_offset, data_size) = detect_wav_data_region(data);
+    // Detect audio-sample region (WAV / MP3 / OGG) for audio-aware hashing
+    let (data_offset, data_size) = detect_audio_region(data);
 
     // SHA-256
     let sha256 = {
@@ -316,8 +432,8 @@ pub fn compute_file_hashes(data: &[u8]) -> FileHashes {
     // Multi-point spot hash (16×1MB chunks, matches main app Layer 2)
     let spot_hash_b3 = compute_spot_hash_b3(data, data_offset, data_size);
 
-    // Content hash (BLAKE3 with header zeroed)
-    let content_hash = compute_content_hash(data, data_offset);
+    // Content hash (BLAKE3 of audio samples only)
+    let content_hash = compute_content_hash(data, data_offset, data_size);
 
     FileHashes { size_bytes, sha256, blake3, spot_hash_b3, content_hash, data_offset, data_size }
 }

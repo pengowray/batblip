@@ -472,11 +472,13 @@ pub fn App() -> impl IntoView {
             let Some(file) = files.get(idx).cloned() else { return; };
 
             learning.set(true);
-            let total = file.audio.source.total_samples() as usize;
-            let samples = std::sync::Arc::new(
-                file.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total)
-            );
             let sample_rate = file.audio.sample_rate;
+            // Noise-floor learning only looks at the first 500ms — no need to
+            // clone the entire file. Reuse audio.samples (already in-memory
+            // mono-mix) and slice the head out of it.
+            let needed = (0.5 * sample_rate as f64).ceil() as usize;
+            let slice_len = needed.min(file.audio.samples.len());
+            let samples = std::sync::Arc::new(file.audio.samples[..slice_len].to_vec());
 
             wasm_bindgen_futures::spawn_local(async move {
                 crate::canvas::tile_cache::yield_to_browser().await;
@@ -678,6 +680,14 @@ pub fn App() -> impl IntoView {
         if (ev.key() == "b" || ev.key() == "B") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
             state_kb.bat_book_open.update(|v| *v = !*v);
+        }
+        // M = drop a marker annotation at the current playhead position.
+        if (ev.key() == "m" || ev.key() == "M") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
+            // If something else wants the key (label editor, etc.), skip.
+            if state_kb.annotation_editing.get_untracked() { return; }
+            ev.prevent_default();
+            let t = state_kb.playhead_time.get_untracked();
+            crate::components::overflow_menu::add_marker_at_time(&state_kb, t);
         }
         // Q = toggle frequency bounds on current selection or selected annotations (region ↔ segment)
         if (ev.key() == "q" || ev.key() == "Q") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
@@ -941,16 +951,20 @@ pub fn App() -> impl IntoView {
                 let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
                 // Filter to audio-ish extensions
                 let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-                if !matches!(ext.as_str(), "wav" | "w4v" | "flac" | "ogg" | "mp3") {
+                if !matches!(ext.as_str(), "wav" | "w4v" | "flac" | "ogg" | "mp3" | "m4a" | "m4b") {
                     log::info!("Skipping non-audio drop: {name}");
                     continue;
                 }
                 let state = state_drop;
                 let load_id = state.loading_start(&name);
+                let name_for_err = name.clone();
                 leptos::task::spawn_local(async move {
                     match crate::components::file_sidebar::load_native_file(path, state, load_id).await {
                         Ok(()) => {}
-                        Err(e) => log::error!("Failed to load dropped file: {e}"),
+                        Err(e) => {
+                            log::error!("Failed to load {}: {}", name_for_err, e);
+                            state.show_error_toast(&format!("Couldn't open {name_for_err}: {e}"));
+                        }
                     }
                     state.loading_done(load_id);
                 });
