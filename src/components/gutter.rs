@@ -38,6 +38,16 @@ pub fn BandGutter() -> impl IntoView {
         let band_hi = state.band_ff_freq_hi.get();
         let hfr_on = state.hfr_enabled.get();
         let shield_style = state.shield_style.get();
+        // Live drag range from either this gutter or the spectrogram's
+        // y-axis — when Some, overrides the stored band so the shield
+        // lights up mid-drag even before the band has been committed.
+        let drag_range = match (
+            state.axis_drag_start_freq.get(),
+            state.axis_drag_current_freq.get(),
+        ) {
+            (Some(s), Some(c)) => Some((s, c)),
+            _ => None,
+        };
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let _sidebar = state.sidebar_collapsed.get();
@@ -74,6 +84,7 @@ pub fn BandGutter() -> impl IntoView {
             band_hi,
             hfr_on,
             shield_style,
+            drag_range,
         );
     });
 

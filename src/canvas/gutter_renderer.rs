@@ -67,6 +67,12 @@ fn pick_div_interval(range_hz: f64) -> f64 {
 /// is off, the shields are drawn dim so the user still sees the last
 /// selection.
 ///
+/// `drag_range` is the live [start, current] range of an in-progress axis
+/// drag (either from the gutter itself or from the spectrogram's y-axis).
+/// When present it overrides the stored band and is always drawn at full
+/// alpha — mirroring the spectrogram's `axis_drag_in_range` behaviour so
+/// users see the band light up during the first drag even when HFR is off.
+///
 /// Coordinate mapping: `max_freq` is at y=0 (top), 0 Hz is at y=h (bottom).
 pub fn draw_band_gutter(
     ctx: &CanvasRenderingContext2d,
@@ -76,6 +82,7 @@ pub fn draw_band_gutter(
     band_hi: f64,
     hfr_on: bool,
     shield_style: ShieldStyle,
+    drag_range: Option<(f64, f64)>,
 ) {
     // Clear the label column to the container background so the fog/shield
     // strip reads as a distinct interactive surface.
@@ -86,8 +93,10 @@ pub fn draw_band_gutter(
     let shield_x = LABEL_COL_WIDTH;
     let shield_w = (w - shield_x).max(0.0);
 
-    // Background fog — slightly dimmer when HFR is off
-    let fog_dim = if hfr_on { 1.0 } else { 0.7 };
+    // Background fog — slightly dimmer when HFR is off and no drag is
+    // active. An in-progress drag brightens the fog too, so the whole
+    // strip reads as "hot" during selection.
+    let fog_dim = if hfr_on || drag_range.is_some() { 1.0 } else { 0.7 };
     draw_fog(ctx, shield_x, 0.0, shield_w, h, fog_dim);
 
     // Always draw the passive left-side axis labels + ticks (independent of
@@ -95,19 +104,29 @@ pub fn draw_band_gutter(
     let div_for_labels = pick_div_interval(max_freq);
     draw_left_axis_labels(ctx, h, max_freq, div_for_labels);
 
-    if max_freq <= 0.0 || band_hi <= band_lo || matches!(shield_style, ShieldStyle::Off) {
+    // Pick the range to paint: prefer the live drag range over the stored
+    // band, so a fresh drag lights up immediately (before it's committed).
+    let (draw_lo, draw_hi) = match drag_range {
+        Some((s, c)) => (s.min(c), s.max(c)),
+        None => (band_lo, band_hi),
+    };
+
+    if max_freq <= 0.0 || draw_hi <= draw_lo || matches!(shield_style, ShieldStyle::Off) {
         return;
     }
-    let lo_clamped = band_lo.max(0.0).min(max_freq);
-    let hi_clamped = band_hi.max(0.0).min(max_freq);
+    let lo_clamped = draw_lo.max(0.0).min(max_freq);
+    let hi_clamped = draw_hi.max(0.0).min(max_freq);
     if hi_clamped <= lo_clamped { return; }
 
     // Match the spectrogram's y-mapping: min_freq=0 at y=h, max_freq at y=0.
     let freq_y = |f: f64| -> f64 { h - (f / max_freq).clamp(0.0, 1.0) * h };
 
     let div_interval = div_for_labels;
-    let alpha_active = if hfr_on { 0.85 } else { 0.40 };
-    let alpha_minor = if hfr_on { 0.55 } else { 0.28 };
+    // Drag always paints bright; steady state fades when HFR is off so the
+    // dashed-outline hint still reads as "last selection, inactive".
+    let is_drag = drag_range.is_some();
+    let alpha_active = if hfr_on || is_drag { 0.85 } else { 0.40 };
+    let alpha_minor = if hfr_on || is_drag { 0.55 } else { 0.28 };
 
     // Major divisions ≥ 20 kHz (or the full range if div_interval is small).
     let first_div = ((0.0_f64 / div_interval).ceil() * div_interval).max(div_interval);
@@ -180,8 +199,9 @@ pub fn draw_band_gutter(
     draw_right_edge_ticks(ctx, w, h, max_freq, div_interval);
 
     // Dashed outline around the selected range when HFR is off (signals
-    // "previously selected — tap to resume listening").
-    if !hfr_on {
+    // "previously selected — tap to resume listening"). Skipped during an
+    // active drag — the bright shields already convey "being selected".
+    if !hfr_on && !is_drag {
         let y_top = freq_y(hi_clamped);
         let y_bot = freq_y(lo_clamped);
         ctx.save();
