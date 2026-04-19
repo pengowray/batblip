@@ -1164,6 +1164,19 @@ pub fn BottomToolbar() -> impl IntoView {
                 </button>
             })}
 
+            // ── Bat book strip toggle ──
+            // Replaces the old edge-tab handle on the right side of the main
+            // view — the strip now lives behind a discoverable toolbar button
+            // next to the other view toggles.
+            <button
+                class=move || if state.bat_book_open.get() { "layer-btn active" } else { "layer-btn" }
+                on:click=move |_| { state.bat_book_open.update(|v| *v = !*v); }
+                title=move || if state.bat_book_open.get() { "Hide bat book" } else { "Show bat book" }
+            >
+                <span class="layer-btn-category">"Bat"</span>
+                <span class="layer-btn-value">{move || if state.bat_book_open.get() { "On" } else { "Off" }}</span>
+            </button>
+
             // ── Tool button (Hand / Selection, only when file is open; hidden on mobile) ──
             {move || (!state.is_mobile.get() && has_file()).then(|| view! {
                 <div class="bottom-toolbar-sep"></div>

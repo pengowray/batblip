@@ -17,7 +17,6 @@ use crate::components::xc_browser::XcBrowser;
 use crate::components::zc_chart::ZcDotChart;
 use crate::components::chromagram_view::ChromagramView;
 use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
-use crate::components::bat_book_tab::BatBookTab;
 use crate::components::bat_book_strip::BatBookStrip;
 use crate::components::bat_book_ref_panel::BatBookRefPanel;
 use crate::components::display_filter_button::DspFilterRow;
@@ -1201,7 +1200,6 @@ fn MainArea() -> impl IntoView {
                                 <ViewAndDspButtons />
                                 <CanvasOverflowMenus />
                                 <AnnotationLabelEditor />
-                                <BatBookTab />
                             </div>
 
                             // Bat book reference panel (floating overlay, right side)
@@ -1222,9 +1220,6 @@ fn MainArea() -> impl IntoView {
                     view! {
                         <div class="empty-state">
                             {empty_msg}
-                            <div class="main-overlays">
-                                <BatBookTab />
-                            </div>
                         </div>
                         {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
                         {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}

@@ -4657,47 +4657,6 @@ button.toolbar-overflow-btn {
 /* ── Bat Book ─────────────────────────────────────────────────────────────── */
 
 /* Tab handle on the right edge; hidden while strip is open */
-.bat-book-tab {
-    position: absolute;
-    bottom: 8px;
-    right: 0;
-    width: 24px;
-    min-height: 56px;
-    background: rgba(20, 20, 20, 0.88);
-    border: 1px solid rgba(80, 80, 80, 0.45);
-    border-right: none;
-    border-radius: 6px 0 0 6px;
-    color: #777;
-    cursor: pointer;
-    padding: 6px 3px;
-    z-index: 11;
-    pointer-events: auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.bat-book-tab:hover {
-    background: rgba(45, 45, 45, 0.95);
-    color: #ccc;
-}
-
-.bat-book-tab.open {
-    display: none;
-}
-
-.bat-book-tab-label {
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    white-space: nowrap;
-    user-select: none;
-}
-
 /* Strip (horizontal scrolling area) */
 .bat-book-strip {
     flex-shrink: 0;
@@ -4927,11 +4886,14 @@ button.toolbar-overflow-btn {
     margin: 3px 0;
 }
 
-/* Reference panel (floating overlay, right side of main view) */
+/* Reference panel (floating overlay, right side of main view). Right-
+   offset clears the waveform's band-gutter column (64px + 2px border +
+   3px margin ≈ 69px) so the panel doesn't overlap it when extended to
+   full height. Must stay in sync with gutter_renderer::BAND_GUTTER_WIDTH. */
 .bat-book-ref-panel {
     position: absolute;
     top: 8px;
-    right: 8px;
+    right: 80px;
     width: 160px;
     max-height: calc(100% - 16px);
     background: rgba(14, 14, 14, 0.93);
