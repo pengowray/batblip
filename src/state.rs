@@ -510,25 +510,31 @@ impl MainView {
 pub enum FftMode {
     /// Fixed FFT size at all LOD levels (128–8192).
     Single(usize),
-    /// Adaptive S: [1024, 1024, 512, 512, 256, 128]
+    /// Adaptive XS: [1024, 1024, 512, 256, 128, 64, 32, 16]
+    /// Halves FFT at each LOD past baseline for maximum temporal detail.
+    AdaptiveXS,
+    /// Adaptive S: [1024, 1024, 512, 512, 256, 128, 64, 32]
     AdaptiveS,
-    /// Adaptive M: [1024, 1024, 1024, 512, 512, 256]
+    /// Adaptive M: [1024, 1024, 1024, 512, 512, 256, 128, 64]
     AdaptiveM,
-    /// Adaptive L: [2048, 2048, 2048, 1024, 512, 512]
+    /// Adaptive L: [2048, 2048, 2048, 1024, 512, 512, 256, 128]
     AdaptiveL,
 }
 
 impl FftMode {
-    /// Per-LOD FFT sizes for each adaptive mode. Index = LOD level (0–6).
-    const ADAPTIVE_S: [usize; 7] = [1024, 1024, 512, 512, 256, 128, 64];
-    const ADAPTIVE_M: [usize; 7] = [1024, 1024, 1024, 512, 512, 256, 128];
-    const ADAPTIVE_L: [usize; 7] = [2048, 2048, 2048, 1024, 512, 512, 256];
+    /// Per-LOD FFT sizes for each adaptive mode. Index = LOD level (0–7).
+    /// XS halves at every step past baseline (LOD 2) — finest time, coarsest freq.
+    const ADAPTIVE_XS: [usize; 8] = [1024, 1024, 512, 256, 128, 64, 32, 16];
+    const ADAPTIVE_S: [usize; 8] = [1024, 1024, 512, 512, 256, 128, 64, 32];
+    const ADAPTIVE_M: [usize; 8] = [1024, 1024, 1024, 512, 512, 256, 128, 64];
+    const ADAPTIVE_L: [usize; 8] = [2048, 2048, 2048, 1024, 512, 512, 256, 128];
 
-    /// The actual FFT size to use for a given LOD level (0–6).
+    /// The actual FFT size to use for a given LOD level (0–7).
     pub fn fft_for_lod(&self, lod: u8) -> usize {
-        let idx = (lod as usize).min(6);
+        let idx = (lod as usize).min(7);
         match self {
             FftMode::Single(sz) => *sz,
+            FftMode::AdaptiveXS => Self::ADAPTIVE_XS[idx],
             FftMode::AdaptiveS => Self::ADAPTIVE_S[idx],
             FftMode::AdaptiveM => Self::ADAPTIVE_M[idx],
             FftMode::AdaptiveL => Self::ADAPTIVE_L[idx],
@@ -540,6 +546,7 @@ impl FftMode {
     pub fn max_fft_size(&self) -> usize {
         match self {
             FftMode::Single(sz) => *sz,
+            FftMode::AdaptiveXS => 1024,
             FftMode::AdaptiveS => 1024,
             FftMode::AdaptiveM => 1024,
             FftMode::AdaptiveL => 2048,

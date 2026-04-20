@@ -11,8 +11,11 @@
 //! - LOD 3: hop=128, covers ~33K samples/tile (zoomed in)
 //! - LOD 4: hop=32, covers ~8K samples/tile (deep zoom)
 //! - LOD 5: hop=8, covers ~2K samples/tile (extreme zoom)
+//! - LOD 6: hop=2, covers ~512 samples/tile (sample-level zoom)
+//! - LOD 7: hop=1, covers ~256 samples/tile (finest; hop cannot go below 1)
 //!
-//! Each level is 4x finer than the previous. The renderer picks the ideal LOD
+//! Levels 0–6 step 4× apart; LOD 7 is 2× finer than LOD 6 (since hop must be
+//! an integer ≥ 1). The renderer picks the ideal LOD
 //! for the current zoom and falls back to coarser LODs when tiles aren't cached.
 //! FFT size is adaptive per LOD via `FftMode::fft_for_lod()`.
 //!
@@ -167,7 +170,7 @@ pub struct LodConfig {
     pub hop_size: usize,
 }
 
-pub const NUM_LODS: usize = 7;
+pub const NUM_LODS: usize = 8;
 
 /// The LOD level used as the spatial coordinate baseline (hop=512).
 /// All scroll positions, total_cols, etc. are expressed in this LOD's column space.
@@ -184,12 +187,15 @@ pub const LOD_CONFIGS: [LodConfig; NUM_LODS] = [
     LodConfig { fft_size: 256, hop_size: 32 },   // LOD 4 — deep zoom
     LodConfig { fft_size: 256, hop_size: 8 },    // LOD 5 — extreme zoom
     LodConfig { fft_size: 256, hop_size: 2 },    // LOD 6 — sample-level zoom
+    LodConfig { fft_size: 128, hop_size: 1 },    // LOD 7 — per-sample zoom (finest possible)
 ];
 
 /// Select the ideal LOD level for the current zoom.
 /// `zoom` is pixels per baseline (LOD2) column.
 pub fn select_lod(zoom: f64) -> u8 {
-    if zoom >= 128.0 { 6 }
+    // LOD 7 is only 2× finer than LOD 6 (hop 1 vs 2), so its threshold is 2×.
+    if zoom >= 256.0 { 7 }
+    else if zoom >= 128.0 { 6 }
     else if zoom >= 32.0 { 5 }
     else if zoom >= 8.0 { 4 }
     else if zoom >= 2.0 { 3 }
@@ -199,7 +205,7 @@ pub fn select_lod(zoom: f64) -> u8 {
 }
 
 /// Ratio of baseline (LOD2) columns to LOD_L columns (how many LOD_L cols per baseline col).
-/// LOD0: 0.0625, LOD1: 0.25, LOD2: 1.0, LOD3: 4.0, LOD4: 16.0, LOD5: 64.0, LOD6: 256.0
+/// LOD0: 0.0625, LOD1: 0.25, LOD2: 1.0, LOD3: 4.0, LOD4: 16.0, LOD5: 64.0, LOD6: 256.0, LOD7: 512.0
 pub fn lod_ratio(lod: u8) -> f64 {
     BASELINE_HOP as f64 / LOD_CONFIGS[lod as usize].hop_size as f64
 }

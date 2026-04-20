@@ -1619,6 +1619,7 @@ fn MainViewButton() -> impl IntoView {
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let val = select.value();
                             let mode = match val.as_str() {
+                                "ax" => FftMode::AdaptiveXS,
                                 "as" => FftMode::AdaptiveS,
                                 "am" => FftMode::AdaptiveM,
                                 "al" => FftMode::AdaptiveL,
@@ -1635,7 +1636,8 @@ fn MainViewButton() -> impl IntoView {
                     >
                         {move || {
                             let current = state.spect_fft_mode.get();
-                            let options: [(&str, &str); 12] = [
+                            let options: [(&str, &str); 13] = [
+                                ("ax", "Adaptive XS"),
                                 ("as", "Adaptive S"),
                                 ("am", "Adaptive M"),
                                 ("al", "Adaptive L"),
@@ -1651,6 +1653,7 @@ fn MainViewButton() -> impl IntoView {
                             ];
                             options.into_iter().map(|(value, label)| {
                                 let is_selected = match (value, current) {
+                                    ("ax", FftMode::AdaptiveXS) => true,
                                     ("as", FftMode::AdaptiveS) => true,
                                     ("am", FftMode::AdaptiveM) => true,
                                     ("al", FftMode::AdaptiveL) => true,
