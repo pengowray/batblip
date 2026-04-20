@@ -1458,30 +1458,33 @@ body.sidebar-resizing {
 }
 
 .bats-for-you {
-    width: 100%;
-    margin-top: 10px;
+    margin: 12px 10px 10px 10px;
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding: 6px 8px 8px 8px;
+    background: #1e1e22;
+    border: 1px solid #3a3a44;
+    border-radius: 6px;
 }
 
 .bats-for-you-header {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 2px;
+    padding: 2px 2px;
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
-    color: #bbb;
+    color: #b0a088;
     font-size: 0.82em;
-    font-weight: 500;
-    letter-spacing: 0.02em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
 }
 
 .bats-for-you-header:hover {
-    color: #ddd;
+    color: #d0c0a0;
 }
 
 .bats-for-you-caret {
@@ -1489,7 +1492,7 @@ body.sidebar-resizing {
     width: 12px;
     display: inline-block;
     text-align: center;
-    opacity: 0.7;
+    opacity: 0.8;
 }
 
 .bats-for-you-title {
@@ -1498,8 +1501,8 @@ body.sidebar-resizing {
 
 .bats-for-you-refresh {
     background: transparent;
-    color: #aaa;
-    border: 1px solid #444;
+    color: #9a8a70;
+    border: 1px solid #4a4a50;
     border-radius: 4px;
     padding: 2px 8px;
     cursor: pointer;
@@ -1508,22 +1511,22 @@ body.sidebar-resizing {
 }
 
 .bats-for-you-refresh:hover {
-    background: #2a2a2a;
-    color: #fff;
-    border-color: #666;
+    background: #2a2a2e;
+    color: #d0c0a0;
+    border-color: #6a6a70;
 }
 
 .bats-for-you-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 6px;
+    gap: 5px;
     width: 100%;
 }
 
 .bats-for-you-empty {
     grid-column: 1 / -1;
-    padding: 10px;
-    color: #888;
+    padding: 8px;
+    color: #777;
     font-size: 0.8em;
     text-align: center;
     font-style: italic;
@@ -1535,10 +1538,11 @@ body.sidebar-resizing {
     align-items: stretch;
     text-align: left;
     gap: 2px;
-    padding: 6px 8px;
-    background: #232323;
+    padding: 6px 10px;
+    background: #26262a;
     color: #ccc;
-    border: 1px solid #3a3a3a;
+    border: 1px solid #3a3a40;
+    border-left: 3px solid #8a7048;
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
@@ -1546,15 +1550,24 @@ body.sidebar-resizing {
 }
 
 .bats-for-you-card:hover {
-    background: #323232;
-    border-color: #5a7a9a;
+    background: #2e2e34;
+    border-color: #55555c;
     color: #fff;
 }
+
+.bats-for-you-card:nth-child(3n+1) { border-left-color: #a88050; }
+.bats-for-you-card:nth-child(3n+2) { border-left-color: #5a9088; }
+.bats-for-you-card:nth-child(3n+3) { border-left-color: #9070a8; }
+
+.bats-for-you-card:nth-child(3n+1):hover { border-left-color: #d0a060; }
+.bats-for-you-card:nth-child(3n+2):hover { border-left-color: #78b8ac; }
+.bats-for-you-card:nth-child(3n+3):hover { border-left-color: #b090c8; }
 
 .bats-for-you-card-name {
     font-size: 0.82em;
     font-weight: 600;
     line-height: 1.2;
+    color: #e0d8c0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1563,7 +1576,7 @@ body.sidebar-resizing {
 .bats-for-you-card-species {
     font-size: 0.72em;
     font-style: italic;
-    color: #999;
+    color: #9a9080;
     line-height: 1.2;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1572,7 +1585,7 @@ body.sidebar-resizing {
 
 .bats-for-you-card-details {
     font-size: 0.7em;
-    color: #8ab;
+    color: #a89878;
     line-height: 1.2;
     margin-top: 2px;
     overflow: hidden;
