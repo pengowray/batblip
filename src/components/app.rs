@@ -1199,7 +1199,6 @@ fn MainArea() -> impl IntoView {
                                     })
                                 }}
                                 <BookmarkPopup />
-                                <ViewAndDspButtons />
                                 <CanvasOverflowMenus />
                                 <AnnotationLabelEditor />
                             </div>
@@ -1327,10 +1326,10 @@ fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
 }
 
-/// Floating split-button (top-left of main overlays): click cycles Spec/Wave,
-/// down-arrow opens a dropdown with all view modes + DSP settings.
+/// Split-button: click cycles Spec/Wave, down-arrow opens a dropdown with all
+/// view modes + DSP settings. Rendered in the bottom toolbar.
 #[component]
-fn MainViewButton() -> impl IntoView {
+pub fn MainViewButton() -> impl IntoView {
     use crate::components::combo_button::ComboButton;
     let state = expect_context::<AppState>();
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::MainView));
@@ -1473,6 +1472,7 @@ fn MainViewButton() -> impl IntoView {
             toggle_menu=toggle_menu
             left_title="Toggle view (Spectrogram / Waveform)"
             right_title="View mode menu"
+            menu_direction="above"
             panel_style="min-width: 240px;"
         >
             <div class="layer-panel-title">"View Mode"</div>
@@ -2156,17 +2156,3 @@ fn MainViewButton() -> impl IntoView {
     }
 }
 
-/// Places the View button in the top-left overlay area.
-#[component]
-fn ViewAndDspButtons() -> impl IntoView {
-    let state = expect_context::<AppState>();
-    view! {
-        <div
-            class="view-dsp-buttons"
-            style=move || format!("position: absolute; top: 10px; left: 56px; display: flex; gap: 6px; pointer-events: none; opacity: {}; transition: opacity 0.1s;",
-                if state.mouse_in_label_area.get() { "0" } else { "1" })
-        >
-            <MainViewButton />
-        </div>
-    }
-}

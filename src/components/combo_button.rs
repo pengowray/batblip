@@ -41,6 +41,9 @@ pub fn ComboButton(
     /// "below" or "above" — direction the panel opens
     #[prop(default = "below")]
     menu_direction: &'static str,
+    /// "left" or "right" — horizontal edge the panel is anchored to
+    #[prop(default = "left")]
+    panel_align: &'static str,
     /// Extra inline style for the dropdown panel (e.g. "min-width: 210px;")
     #[prop(default = "")]
     panel_style: &'static str,
@@ -100,11 +103,13 @@ pub fn ComboButton(
 
     // Panel visibility style: hidden when closed, positioned when open
     let hidden_style = format!("display: none; {panel_style}");
-    let visible_style = if menu_direction == "above" {
-        format!("bottom: calc(100% + 2px); left: 0; {panel_style}")
+    let vert = if menu_direction == "above" {
+        "bottom: calc(100% + 2px);"
     } else {
-        format!("top: calc(100% + 2px); left: 0; {panel_style}")
+        "top: calc(100% + 2px);"
     };
+    let horiz = if panel_align == "right" { "right: 0;" } else { "left: 0;" };
+    let visible_style = format!("{vert} {horiz} {panel_style}");
 
     view! {
         <div

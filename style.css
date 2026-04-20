@@ -5196,10 +5196,6 @@ button.toolbar-overflow-btn {
     font-variant-numeric: tabular-nums;
 }
 
-.view-dsp-buttons {
-    pointer-events: none;
-}
-
 .dsp-slider-label {
     font-size: 9px;
     color: #888;

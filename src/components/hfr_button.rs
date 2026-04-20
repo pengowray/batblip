@@ -447,6 +447,7 @@ pub fn HfrButton() -> impl IntoView {
                 left_title="Toggle High Frequency mode"
                 right_title="HF playback mode"
                 menu_direction="above"
+                panel_align="right"
                 panel_style="min-width: 210px;"
             >
                 // ── OFF option ──

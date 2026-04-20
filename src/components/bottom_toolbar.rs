@@ -6,6 +6,7 @@ use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::audio::source::ChannelView;
 use crate::components::hfr_button::HfrButton;
 use crate::components::combo_button::ComboButton;
+use crate::components::app::MainViewButton;
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -1139,6 +1140,9 @@ pub fn BottomToolbar() -> impl IntoView {
                     </ComboButton>
                 }
             }
+
+            // ── View combo button (Spec / Wave / XformedSpec + DSP panel) ──
+            <MainViewButton />
 
             // ── Annotations visibility toggle ──
             // Single-word button — on/off state is carried by the `active`
