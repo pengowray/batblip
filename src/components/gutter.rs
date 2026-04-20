@@ -16,7 +16,42 @@ use crate::components::axis_drag::{
     apply_axis_drag, finalize_axis_drag, freq_snap, select_all_frequencies,
     select_all_time,
 };
+use crate::components::pinch::{apply_freq_pinch, two_finger_y_geometry, FreqPinchState};
 use crate::state::{ActiveFocus, AppState, Selection};
+
+/// Slack (CSS px) before a pointer press on a gutter is promoted from
+/// "tap" to "drag". Wider than the spectrogram's 3 px because touch
+/// wobble on a narrow strip reliably exceeded 3 px, turning every tap
+/// into a spurious 1 kHz band + HFR toggle-on.
+const TAP_SLOP_PX: f64 = 10.0;
+
+/// Max gap (ms) between taps for double-tap detection on touch devices,
+/// where browsers sometimes suppress synthetic `dblclick` after
+/// `touch-action: none`.
+const DBLTAP_WINDOW_MS: f64 = 400.0;
+
+/// File Nyquist (Hz) — ceiling for display-freq clamping. Mirrors
+/// `spectrogram_events::file_nyquist` but duplicated here to keep the
+/// gutter self-contained.
+fn gutter_nyquist(state: AppState) -> f64 {
+    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    if is_mic_active && crate::canvas::live_waterfall::is_active() {
+        crate::canvas::live_waterfall::max_freq()
+    } else {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        idx.and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .unwrap_or(96_000.0)
+    }
+}
+
+/// True if the primary pointer is a finger — used to reserve the larger
+/// slop / explicit-dbltap paths for touch only, so mouse precision
+/// isn't degraded.
+fn pointer_is_touch(ev: &web_sys::PointerEvent) -> bool {
+    ev.pointer_type() == "touch" || ev.pointer_type() == "pen"
+}
 
 /// Vertical band-selection gutter. Interactions mirror the spectrogram's
 /// left y-axis so the two feel like one control surface: single tap
@@ -31,6 +66,23 @@ pub fn BandGutter() -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     // Start-of-drag anchor in Hz; None when not dragging.
     let drag_anchor: StoredValue<Option<f64>> = StoredValue::new(None);
+    // Canvas-local y at pointerdown — used with TAP_SLOP_PX to block
+    // apply_axis_drag firings until the pointer has moved far enough for
+    // the press to count as a drag (stops taps from creating tiny bands).
+    let drag_start_y: StoredValue<Option<f64>> = StoredValue::new(None);
+    // Flipped true once the pointer has moved past the slop — after that,
+    // pointermove feeds apply_axis_drag and pointerup finalizes the drag
+    // instead of treating it as a tap.
+    let drag_active: StoredValue<bool> = StoredValue::new(false);
+    // Last tap timestamp / canvas-y for explicit double-tap detection on
+    // touch. Browsers synthesize `dblclick` unreliably with
+    // `touch-action: none`, so we detect it ourselves from the pointer
+    // stream to keep double-tap → "select all frequencies" working on
+    // mobile.
+    let last_tap_time: StoredValue<f64> = StoredValue::new(0.0);
+    let last_tap_y: StoredValue<f64> = StoredValue::new(0.0);
+    // Two-finger pinch state — Some while a pinch gesture is in progress.
+    let pinch_state: StoredValue<Option<FreqPinchState>> = StoredValue::new(None);
     // Tooltip position (canvas-local y, in px) — drives the drag tooltip.
     // None while not dragging.
     let tooltip_y = RwSignal::new_local(Option::<f64>::None);
@@ -154,8 +206,34 @@ pub fn BandGutter() -> impl IntoView {
 
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
+        // Two-finger touch is handled by the touchstart path (pinch/pan).
+        // Skip the pointer path so it doesn't race with the pinch state.
+        if pinch_state.get_value().is_some() { return; }
         let Some((y, h, min_freq, max_freq)) = pointer_context(&ev) else { return };
         ev.prevent_default();
+
+        // Explicit double-tap on touch: browsers don't always fire
+        // dblclick with `touch-action: none`, so we detect it ourselves
+        // from the pointer stream and route to "select all frequencies".
+        if pointer_is_touch(&ev) {
+            let now = js_sys::Date::now();
+            let last_t = last_tap_time.get_value();
+            let last_y = last_tap_y.get_value();
+            if now - last_t < DBLTAP_WINDOW_MS && (y - last_y).abs() < 30.0 {
+                last_tap_time.set_value(0.0);
+                // Clear any in-progress tap bookkeeping before the dbl-tap
+                // swaps the selection out from under us.
+                drag_anchor.set_value(None);
+                drag_start_y.set_value(None);
+                drag_active.set_value(false);
+                state.band_ff_dragging.set(false);
+                state.axis_drag_start_freq.set(None);
+                state.axis_drag_current_freq.set(None);
+                state.is_dragging.set(false);
+                select_all_frequencies(state);
+                return;
+            }
+        }
 
         let freq = gutter_renderer::y_to_freq(y, min_freq, max_freq, h);
         let shift = ev.shift_key();
@@ -172,13 +250,16 @@ pub fn BandGutter() -> impl IntoView {
         };
 
         drag_anchor.set_value(Some(raw_start));
+        drag_start_y.set_value(Some(y));
+        drag_active.set_value(false);
         tooltip_y.set(Some(y));
         // Flag the drag so heavy consumers (waveform band-split) can cache.
         state.band_ff_dragging.set(true);
 
-        // Seed the shared axis-drag state so the spectrogram's y-axis
-        // shields light up in sync, and so finalize_axis_drag can detect
-        // a tap (start ≈ current).
+        // Seed the shared axis-drag state so the fog/shield glows in
+        // response to the press. Both endpoints seed to the same snapped
+        // freq so finalize_axis_drag will still detect a tap (start == end)
+        // if the pointer never leaves the slop zone.
         let snap_s = freq_snap(raw_start, shift);
         let snap_e = freq_snap(freq, shift);
         state.axis_drag_start_freq.set(Some((raw_start / snap_s).round() * snap_s));
@@ -194,6 +275,7 @@ pub fn BandGutter() -> impl IntoView {
             if hi - lo > 500.0 {
                 state.set_band_ff_range(lo, hi);
             }
+            drag_active.set_value(true);
         }
 
         if let Some(target) = ev.target() {
@@ -207,23 +289,176 @@ pub fn BandGutter() -> impl IntoView {
         let Some(raw_start) = drag_anchor.get_value() else { return };
         let Some((y, h, min_freq, max_freq)) = pointer_context(&ev) else { return };
         tooltip_y.set(Some(y.clamp(0.0, h)));
+
+        // Tap-zone gate: don't promote a press into a drag (which would
+        // snap a 1 kHz range and auto-enable HFR) until the pointer has
+        // moved past TAP_SLOP_PX vertically. Finger jitter on the narrow
+        // gutter routinely exceeded 1–2 px on mobile, causing every tap
+        // to register as a drag.
+        if !drag_active.get_value() {
+            let dy = drag_start_y.get_value().map(|s0| (y - s0).abs()).unwrap_or(0.0);
+            if dy < TAP_SLOP_PX {
+                return;
+            }
+            drag_active.set_value(true);
+        }
+
         let freq = gutter_renderer::y_to_freq(y, min_freq, max_freq, h);
         apply_axis_drag(state, raw_start, freq, ev.shift_key());
     };
 
-    let on_pointerup = move |_ev: web_sys::PointerEvent| {
-        if drag_anchor.get_value().is_some() {
-            drag_anchor.set_value(None);
-            tooltip_y.set(None);
-            state.band_ff_dragging.set(false);
-            // Shared finalize: taps toggle HFR off, meaningful drags
-            // auto-enable HFR and promote focus to FrequencyFocus.
+    let on_pointerup = move |ev: web_sys::PointerEvent| {
+        if drag_anchor.get_value().is_none() { return; }
+        let was_active = drag_active.get_value();
+        drag_anchor.set_value(None);
+        drag_start_y.set_value(None);
+        drag_active.set_value(false);
+        tooltip_y.set(None);
+        state.band_ff_dragging.set(false);
+
+        if was_active {
+            // Shared finalize: meaningful drag auto-enables HFR and
+            // promotes focus to FrequencyFocus.
             finalize_axis_drag(state);
+        } else {
+            // Never promoted to a drag — treat as a tap. Toggle HFR off
+            // if on, otherwise leave band untouched. Record the tap time
+            // so a follow-up tap within DBLTAP_WINDOW_MS is seen as a
+            // double-tap ("select all frequencies").
+            state.axis_drag_start_freq.set(None);
+            state.axis_drag_current_freq.set(None);
+            state.is_dragging.set(false);
+            let stack = state.focus_stack.get_untracked();
+            if stack.hfr_enabled() {
+                state.toggle_hfr();
+            }
+            if pointer_is_touch(&ev) {
+                if let Some((y, _, _, _)) = pointer_context(&ev) {
+                    last_tap_time.set_value(js_sys::Date::now());
+                    last_tap_y.set_value(y);
+                }
+            }
         }
     };
 
-    let on_dblclick = move |_ev: web_sys::MouseEvent| {
+    let on_dblclick = move |ev: web_sys::MouseEvent| {
+        // Dedupe with the explicit touch double-tap path above: suppress
+        // browser-synthesized dblclicks too close to the last touch tap,
+        // otherwise we'd run select_all_frequencies twice.
+        let now = js_sys::Date::now();
+        if now - last_tap_time.get_value() < DBLTAP_WINDOW_MS + 50.0 {
+            last_tap_time.set_value(0.0);
+            ev.prevent_default();
+            return;
+        }
         select_all_frequencies(state);
+    };
+
+    // Two-finger pinch + pan on the gutter. Pinch-in/out changes the
+    // spectrogram's visible frequency range (zoom on the host view, not
+    // on the gutter). Two-finger parallel drag in y pans the range.
+    let on_touchstart = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() == 2 {
+            ev.prevent_default();
+            // Kill any single-finger drag that may have started before the
+            // second finger landed — otherwise the pointer path keeps
+            // applying apply_axis_drag underneath the pinch.
+            drag_anchor.set_value(None);
+            drag_start_y.set_value(None);
+            drag_active.set_value(false);
+            tooltip_y.set(None);
+            state.band_ff_dragging.set(false);
+            state.axis_drag_start_freq.set(None);
+            state.axis_drag_current_freq.set(None);
+            state.is_dragging.set(false);
+
+            let Some(canvas_el) = canvas_ref.get() else { return };
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let rect = canvas.get_bounding_client_rect();
+            if rect.height() <= 0.0 { return; }
+            let Some((mid_client_y, dist_y)) = two_finger_y_geometry(&touches) else { return };
+
+            let nyquist = gutter_nyquist(state);
+            let initial_min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
+            let initial_max_freq = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+            pinch_state.set_value(Some(FreqPinchState {
+                initial_dist_y: dist_y.max(1.0),
+                initial_min_freq,
+                initial_max_freq,
+                initial_mid_canvas_y: mid_client_y - rect.top(),
+                nyquist,
+            }));
+        }
+    };
+
+    let on_touchmove = move |ev: web_sys::TouchEvent| {
+        let touches = ev.touches();
+        if touches.length() != 2 { return; }
+        let Some(ps) = pinch_state.get_value() else { return };
+        ev.prevent_default();
+
+        let Some((mid_client_y, dist_y)) = two_finger_y_geometry(&touches) else { return };
+        let Some(canvas_el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let canvas_h = rect.height();
+        if canvas_h <= 0.0 { return; }
+        let current_mid_canvas_y = mid_client_y - rect.top();
+
+        let (new_min, new_max) = apply_freq_pinch(&ps, dist_y, current_mid_canvas_y, canvas_h);
+        state.min_display_freq.set(Some(new_min));
+        state.max_display_freq.set(Some(new_max));
+    };
+
+    let on_touchend = move |ev: web_sys::TouchEvent| {
+        if ev.touches().length() < 2 {
+            pinch_state.set_value(None);
+        }
+    };
+
+    // Mouse wheel over the gutter: plain wheel pans the visible frequency
+    // range vertically (mirrors the two-finger pan on touch); modifier
+    // keys zoom around the pointer so the gutter is a one-stop vertical
+    // navigation control on desktop too.
+    let on_wheel = move |ev: web_sys::WheelEvent| {
+        ev.prevent_default();
+        let Some(canvas_el) = canvas_ref.get() else { return };
+        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+        let rect = canvas.get_bounding_client_rect();
+        let h = rect.height();
+        if h <= 0.0 { return; }
+        let nyquist = gutter_nyquist(state);
+        if nyquist <= 0.0 { return; }
+        let cur_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
+        let cur_max = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+        let range = (cur_max - cur_min).max(1.0);
+
+        if ev.shift_key() || ev.ctrl_key() || ev.meta_key() {
+            // Zoom around pointer y. delta_y > 0 (wheel down) → zoom out.
+            let local_y = ev.client_y() as f64 - rect.top();
+            let anchor_frac = (local_y / h).clamp(0.0, 1.0);
+            let anchor_freq = cur_max - anchor_frac * range;
+            let factor = if ev.delta_y() > 0.0 { 1.15 } else { 1.0 / 1.15 };
+            let new_range = (range * factor).clamp(500.0_f64.min(nyquist), nyquist);
+            let mut new_max = anchor_freq + anchor_frac * new_range;
+            let mut new_min = new_max - new_range;
+            if new_min < 0.0 { new_min = 0.0; new_max = new_range.min(nyquist); }
+            if new_max > nyquist { new_max = nyquist; new_min = (new_max - new_range).max(0.0); }
+            state.min_display_freq.set(Some(new_min));
+            state.max_display_freq.set(Some(new_max));
+        } else {
+            // Plain wheel: pan by ~10% of the visible range per tick.
+            // delta_y > 0 (wheel down) → see lower freqs (max decreases).
+            let raw = ev.delta_y() + ev.delta_x();
+            let step = raw.signum() * range * 0.1 * (raw.abs() / 100.0).min(3.0);
+            let mut new_max = cur_max - step;
+            let mut new_min = cur_min - step;
+            if new_min < 0.0 { new_min = 0.0; new_max = range.min(nyquist); }
+            if new_max > nyquist { new_max = nyquist; new_min = (new_max - range).max(0.0); }
+            state.min_display_freq.set(Some(new_min));
+            state.max_display_freq.set(Some(new_max));
+        }
     };
 
     // Format "40.0 – 72.5 kHz" for the drag tooltip.
@@ -242,6 +477,11 @@ pub fn BandGutter() -> impl IntoView {
                 on:pointermove=on_pointermove
                 on:pointerup=on_pointerup
                 on:dblclick=on_dblclick
+                on:touchstart=on_touchstart
+                on:touchmove=on_touchmove
+                on:touchend=on_touchend
+                on:touchcancel=on_touchend
+                on:wheel=on_wheel
             />
             // Drag tooltip: floats next to the pointer while dragging, shows the
             // current lo–hi range. Hidden when not dragging.
@@ -276,6 +516,9 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
     let drag_anchor: StoredValue<Option<f64>> = StoredValue::new(None);
     // Client-space start so we can detect a "tap" (no meaningful drag).
     let drag_start_client: StoredValue<(f64, f64)> = StoredValue::new((0.0, 0.0));
+    // Last tap timestamp / client-x for explicit double-tap on touch.
+    let last_tap_time: StoredValue<f64> = StoredValue::new(0.0);
+    let last_tap_x: StoredValue<f64> = StoredValue::new(0.0);
     // Bumped by a ResizeObserver so the draw Effect re-runs when the
     // parent's box changes height (see BandGutter for the same pattern).
     let canvas_size_tick: RwSignal<u32> = RwSignal::new(0);
@@ -433,6 +676,23 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         if ev.button() != 0 { return; }
         let Some(t) = x_to_time(ev.client_x() as f64) else { return };
         ev.prevent_default();
+
+        // Explicit double-tap on touch: browsers sometimes suppress
+        // synthetic `dblclick` when `touch-action: none` is set, so we
+        // detect the gesture ourselves and route it to select_all_time.
+        if pointer_is_touch(&ev) {
+            let now = js_sys::Date::now();
+            let last_t = last_tap_time.get_value();
+            let last_x = last_tap_x.get_value();
+            if now - last_t < DBLTAP_WINDOW_MS && (ev.client_x() as f64 - last_x).abs() < 30.0 {
+                last_tap_time.set_value(0.0);
+                drag_anchor.set_value(None);
+                state.is_dragging.set(false);
+                select_all_time(state);
+                return;
+            }
+        }
+
         drag_anchor.set_value(Some(t));
         drag_start_client.set_value((ev.client_x() as f64, ev.client_y() as f64));
         // Seed a zero-width selection so the highlight starts drawing; the
@@ -468,7 +728,11 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let (sx, sy) = drag_start_client.get_value();
         let dx = (ev.client_x() as f64 - sx).abs();
         let dy = (ev.client_y() as f64 - sy).abs();
-        let was_tap = dx < 3.0 && dy < 3.0;
+        // Tap slop: generous enough to ride through finger wobble on
+        // touch; the tight 3 px threshold used to force a mobile tap to
+        // carve out a half-second selection before the user could release.
+        let slop = if pointer_is_touch(&ev) { TAP_SLOP_PX } else { 3.0 };
+        let was_tap = dx < slop && dy < slop;
         drag_anchor.set_value(None);
         state.is_dragging.set(false);
         if was_tap {
@@ -476,6 +740,13 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
             // "fog returns" metaphor the waveform's old in-canvas strip had.
             if state.selection.get_untracked().is_some() {
                 state.selection.set(None);
+            }
+            // Record this tap so a second one within DBLTAP_WINDOW_MS
+            // still fires select_all_time even when the browser eats the
+            // dblclick event.
+            if pointer_is_touch(&ev) {
+                last_tap_time.set_value(js_sys::Date::now());
+                last_tap_x.set_value(ev.client_x() as f64);
             }
             return;
         }
@@ -498,7 +769,16 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         state.active_focus.set(Some(ActiveFocus::TransientSelection));
     };
 
-    let on_dblclick = move |_ev: web_sys::MouseEvent| {
+    let on_dblclick = move |ev: web_sys::MouseEvent| {
+        // De-dupe with explicit touch double-tap detection: if a
+        // synthetic dblclick arrives right after we already handled the
+        // touch gesture, swallow it.
+        let now = js_sys::Date::now();
+        if now - last_tap_time.get_value() < DBLTAP_WINDOW_MS + 50.0 {
+            last_tap_time.set_value(0.0);
+            ev.prevent_default();
+            return;
+        }
         select_all_time(state);
     };
 

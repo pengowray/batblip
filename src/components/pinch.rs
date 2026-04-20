@@ -2,6 +2,78 @@
 
 use crate::viewport;
 
+/// Snapshot of display-freq state at the moment a 2-finger touch begins
+/// on the band gutter — drives vertical pinch-to-zoom + two-finger pan
+/// of `min_display_freq` / `max_display_freq` on the host view.
+#[derive(Clone, Copy, Debug)]
+pub struct FreqPinchState {
+    /// Pixel y-distance between the two fingers at gesture start.
+    pub initial_dist_y: f64,
+    /// Resolved min_display_freq at gesture start.
+    pub initial_min_freq: f64,
+    /// Resolved max_display_freq at gesture start.
+    pub initial_max_freq: f64,
+    /// Gutter-canvas-local y of the midpoint at gesture start.
+    pub initial_mid_canvas_y: f64,
+    /// File Nyquist. new_min/new_max are clamped to [0, nyquist].
+    pub nyquist: f64,
+}
+
+/// Two-finger y-geometry on a touch list — (midpoint_client_y, |y1 - y0|).
+pub fn two_finger_y_geometry(touches: &web_sys::TouchList) -> Option<(f64, f64)> {
+    if touches.length() != 2 {
+        return None;
+    }
+    let t0 = touches.get(0)?;
+    let t1 = touches.get(1)?;
+    let y0 = t0.client_y() as f64;
+    let y1 = t1.client_y() as f64;
+    let mid_y = (y0 + y1) / 2.0;
+    let dist = (y1 - y0).abs();
+    Some((mid_y, dist))
+}
+
+/// Given a freq-pinch snapshot and current gesture geometry, compute
+/// (new_min, new_max) display frequencies. The frequency under the
+/// initial midpoint stays pinned to the current midpoint y, which
+/// combines anchor-zoom + two-finger vertical pan in one formula.
+pub fn apply_freq_pinch(
+    ps: &FreqPinchState,
+    current_dist_y: f64,
+    current_mid_canvas_y: f64,
+    canvas_h: f64,
+) -> (f64, f64) {
+    if canvas_h <= 0.0 || ps.initial_dist_y < 5.0 {
+        return (ps.initial_min_freq, ps.initial_max_freq);
+    }
+    let initial_range = (ps.initial_max_freq - ps.initial_min_freq).max(1.0);
+
+    // Larger finger-gap → narrower visible range (zoom in).
+    let scale = ps.initial_dist_y / current_dist_y.max(1.0);
+    let min_range_hz = 500.0_f64.min(ps.nyquist.max(500.0));
+    let new_range = (initial_range * scale).clamp(min_range_hz, ps.nyquist.max(min_range_hz));
+
+    // Anchor: freq under the initial midpoint y.
+    let initial_mid_frac = (ps.initial_mid_canvas_y / canvas_h).clamp(0.0, 1.0);
+    let anchor_freq = ps.initial_max_freq - initial_mid_frac * initial_range;
+
+    // Place that freq at the CURRENT midpoint y — this handles both zoom
+    // (scale change) and two-finger pan (midpoint shift) simultaneously.
+    let current_mid_frac = (current_mid_canvas_y / canvas_h).clamp(0.0, 1.0);
+    let mut new_max = anchor_freq + current_mid_frac * new_range;
+    let mut new_min = new_max - new_range;
+
+    if new_min < 0.0 {
+        new_min = 0.0;
+        new_max = new_range.min(ps.nyquist);
+    }
+    if new_max > ps.nyquist {
+        new_max = ps.nyquist;
+        new_min = (new_max - new_range).max(0.0);
+    }
+    (new_min, new_max)
+}
+
 /// Snapshot of state at the moment a 2-finger touch begins.
 #[derive(Clone, Copy, Debug)]
 pub struct PinchState {

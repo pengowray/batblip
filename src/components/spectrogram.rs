@@ -747,17 +747,37 @@ pub fn Spectrogram() -> impl IntoView {
             } else {
                 marker_state
             };
-            spectrogram_renderer::draw_freq_markers(
-                &ctx,
-                min_freq,
-                max_freq,
-                display_h as f64,
-                display_w as f64,
-                if xform_on { FreqShiftMode::None } else { shift_mode },
-                &marker_state,
-                het_cutoff,
-                xform_on,
-            );
+            // Hide the y-axis when the spectrogram is showing its full
+            // [0, Nyquist] range — the sibling <BandGutter/> already
+            // provides the frequency scale there, and the axis just adds
+            // clutter over the data. Draw it only when vertically zoomed
+            // (so the user has a visible cue that a sub-range is active),
+            // when the pointer is over the label-hover area (keeps the
+            // drag-to-pan affordance discoverable), or when the
+            // transform/decimation label column is in play.
+            let vertically_zoomed = {
+                let nyq = file_max_freq;
+                let lo = min_display_freq.unwrap_or(0.0);
+                let hi = max_display_freq.unwrap_or(nyq);
+                lo > 1.0 || (nyq - hi).abs() > 1.0
+            };
+            let show_freq_axis = vertically_zoomed
+                || marker_state.mouse_in_label_area
+                || xform_on
+                || decim_effective > 0;
+            if show_freq_axis {
+                spectrogram_renderer::draw_freq_markers(
+                    &ctx,
+                    min_freq,
+                    max_freq,
+                    display_h as f64,
+                    display_w as f64,
+                    if xform_on { FreqShiftMode::None } else { shift_mode },
+                    &marker_state,
+                    het_cutoff,
+                    xform_on,
+                );
+            }
 
             // Time scale moved out of the canvas — it now lives in the
             // <TimeGutter/> strip below, which keeps the bottom rows of
