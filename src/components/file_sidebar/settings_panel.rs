@@ -392,9 +392,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     class="setting-button"
                                     on:click=move |_| {
                                         state.resonator_bandwidth_hz.set(20.0);
-                                        state.resonator_fft_mode.set(ResonatorFftMode::Adaptive);
+                                        state.resonator_fft_mode.set(ResonatorFftMode::Single(256));
                                         state.resonator_layout.set(ResonatorLayout::Linear);
-                                        state.resonator_viewport_bins.set(false);
+                                        state.resonator_viewport_bins.set(true);
                                     }
                                 >"Reset"</button>
                             </div>
