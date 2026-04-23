@@ -23,6 +23,39 @@
 use crate::types::SpectrogramColumn;
 use resonators::{ResonatorBank, ResonatorConfig, alpha_from_tau};
 
+/// Frequency-bin spacing for a resonator bank.
+///
+/// Output always has `fft_size/2 + 1` rows (matching STFT so the rest of the
+/// rendering pipeline stays linear); this enum only affects where the actual
+/// resonators sit in frequency space. `Log` bins are resampled to the linear
+/// output rows by nearest-bin-in-log-space mapping, which draws bat harmonics
+/// as clean stripes while keeping the axis / overlay code unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ResonatorLayout {
+    /// Evenly-spaced linear bins from 0 to Nyquist — same layout as the STFT.
+    #[default]
+    Linear,
+    /// Log-spaced bins from `LOG_MIN_FREQ_HZ` to Nyquist. Gives more detail
+    /// at low frequencies and concentrates bins where harmonic bat calls
+    /// actually live.
+    Log,
+}
+
+impl ResonatorLayout {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Linear => "Linear",
+            Self::Log => "Log",
+        }
+    }
+
+    pub const ALL: &'static [ResonatorLayout] = &[Self::Linear, Self::Log];
+}
+
+/// Lowest frequency for log-spaced layouts. Below this the display shows the
+/// lowest log bin's magnitude (no subsonic resonators).
+pub const LOG_MIN_FREQ_HZ: f32 = 20.0;
+
 /// Recommended warm-up samples for a given bandwidth.
 ///
 /// Returns ≈5τ samples, where τ = 1/(2π·bandwidth) is the EMA time constant.
@@ -57,37 +90,56 @@ pub fn compute_resonator_columns(
     col_start: usize,
     col_count: usize,
     bandwidth_hz: f32,
+    layout: ResonatorLayout,
 ) -> Vec<SpectrogramColumn> {
-    let num_bins = fft_size / 2 + 1;
-    if samples.is_empty() || num_bins == 0 || col_count == 0 || hop_size == 0 {
+    let output_bins = fft_size / 2 + 1;
+    if samples.is_empty() || output_bins == 0 || col_count == 0 || hop_size == 0 {
         return vec![];
     }
 
     let sr_f = sample_rate as f32;
     let nyq = sr_f * 0.5;
-    let denom = (num_bins - 1).max(1) as f32;
 
-    // Clamp bandwidth to a stable range and convert to the library's alpha
-    // convention via tau. `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the
-    // library's "alpha large = fast response" is the mirror image of our
-    // prior scalar implementation's "alpha large = slow", so this conversion
-    // hides that difference from the caller.
+    // Clamp bandwidth and convert to the library's alpha convention via tau.
+    // `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the library's
+    // "alpha large = fast response" is the mirror of our prior scalar
+    // impl's "alpha large = slow"; this conversion hides that from callers.
     let bw = bandwidth_hz.clamp(0.1, nyq * 0.99);
     let tau = 1.0 / (std::f32::consts::TAU * bw);
     let alpha = alpha_from_tau(tau, sr_f);
 
-    // Build one ResonatorConfig per bin. Bin 0 is nominally DC (freq=0) but
-    // the library rejects freq <= 0; use a tiny positive freq so it behaves
-    // as a very-low bandpass (contribution negligible for bat audio).
-    //
+    // Build the resonator frequency list per chosen layout. Bin count equals
+    // output_bins so log and linear have comparable compute cost and tile
+    // detail — Log just distributes the same bins across a perceptually
+    // useful axis.
+    let bank_freqs: Vec<f32> = match layout {
+        ResonatorLayout::Linear => {
+            let denom = (output_bins - 1).max(1) as f32;
+            (0..output_bins)
+                .map(|k| (k as f32 * nyq / denom).max(0.01))
+                .collect()
+        }
+        ResonatorLayout::Log => {
+            let min = LOG_MIN_FREQ_HZ.max(0.01);
+            let max = nyq.max(min * 2.0);
+            if output_bins == 1 {
+                vec![min]
+            } else {
+                let ratio = (max / min).powf(1.0 / (output_bins - 1) as f32);
+                (0..output_bins)
+                    .map(|k| min * ratio.powi(k as i32))
+                    .collect()
+            }
+        }
+    };
+    let bank_bins = bank_freqs.len();
+
     // beta=1.0 disables the library's second-stage output EWMA so we get a
     // single-EWMA response matching the prior hand-rolled implementation,
-    // which is what the user has tuned their bandwidth slider against.
-    let configs: Vec<ResonatorConfig> = (0..num_bins)
-        .map(|k| {
-            let f_k = (k as f32 * nyq / denom).max(0.01);
-            ResonatorConfig::new(f_k, alpha, 1.0)
-        })
+    // which is what the bandwidth slider has been tuned against.
+    let configs: Vec<ResonatorConfig> = bank_freqs
+        .iter()
+        .map(|&f| ResonatorConfig::new(f, alpha, 1.0))
         .collect();
     let mut bank = ResonatorBank::new(&configs, sr_f);
 
@@ -102,7 +154,7 @@ pub fn compute_resonator_columns(
     let slice = &samples[..need_samples];
 
     let complex_out = bank.resonate(slice, hop_size);
-    let n_frames = complex_out.len() / num_bins;
+    let n_frames = complex_out.len() / bank_bins;
     if n_frames <= col_start {
         return vec![];
     }
@@ -111,18 +163,73 @@ pub fn compute_resonator_columns(
     let last = (col_start + col_count).min(n_frames);
     let mag_scale = (fft_size as f32) * 0.5;
 
+    // For Log layout, pre-compute a bank-bin index for each linear output
+    // row so the per-frame loop is a cheap gather. For Linear the mapping
+    // is the identity (bank_bins == output_bins).
+    let row_to_bank: Option<Vec<usize>> = match layout {
+        ResonatorLayout::Linear => None,
+        ResonatorLayout::Log => Some(build_log_row_map(output_bins, &bank_freqs, nyq)),
+    };
+
     let mut out: Vec<SpectrogramColumn> = Vec::with_capacity(last - first);
     for frame in first..last {
-        let offset = frame * num_bins;
-        let mags: Vec<f32> = complex_out[offset..offset + num_bins]
-            .iter()
-            .map(|c| (c.re * c.re + c.im * c.im).sqrt() * mag_scale)
-            .collect();
+        let offset = frame * bank_bins;
+        let bank_slice = &complex_out[offset..offset + bank_bins];
+
+        let mags: Vec<f32> = if let Some(map) = &row_to_bank {
+            map.iter()
+                .map(|&k| {
+                    let c = bank_slice[k];
+                    (c.re * c.re + c.im * c.im).sqrt() * mag_scale
+                })
+                .collect()
+        } else {
+            bank_slice
+                .iter()
+                .map(|c| (c.re * c.re + c.im * c.im).sqrt() * mag_scale)
+                .collect()
+        };
+
         // Library emits at the end of each hop; frame 0 = after sample hop-1.
         let time_offset = ((frame + 1) * hop_size) as f64 / sample_rate as f64;
         out.push(SpectrogramColumn { magnitudes: mags, time_offset });
     }
     out
+}
+
+/// For each linear output row (covering 0..Nyquist uniformly), pick the
+/// closest bank bin in log-frequency distance. Rows below the lowest bank
+/// frequency use the lowest bank bin.
+fn build_log_row_map(output_bins: usize, bank_freqs: &[f32], nyq: f32) -> Vec<usize> {
+    let denom = (output_bins - 1).max(1) as f32;
+    let last_bank = bank_freqs.len() - 1;
+    (0..output_bins)
+        .map(|row| {
+            let row_freq = (row as f32 * nyq / denom).max(0.01);
+            if row_freq <= bank_freqs[0] {
+                return 0;
+            }
+            if row_freq >= bank_freqs[last_bank] {
+                return last_bank;
+            }
+            // Binary search for the first bank freq >= row_freq, then pick
+            // whichever of idx-1 and idx is closer in log space.
+            let idx = bank_freqs
+                .binary_search_by(|&f| {
+                    f.partial_cmp(&row_freq).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or_else(|i| i)
+                .min(last_bank);
+            if idx == 0 {
+                return 0;
+            }
+            let prev = bank_freqs[idx - 1];
+            let curr = bank_freqs[idx];
+            let dprev = (row_freq / prev).ln().abs();
+            let dcurr = (row_freq / curr).ln().abs();
+            if dprev <= dcurr { idx - 1 } else { idx }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -143,7 +250,9 @@ mod tests {
             .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
             .collect();
 
-        let cols = compute_resonator_columns(&samples, sr, fft_size, hop, 0, 100, 200.0);
+        let cols = compute_resonator_columns(
+            &samples, sr, fft_size, hop, 0, 100, 200.0, ResonatorLayout::Linear,
+        );
         assert!(!cols.is_empty());
 
         // Look at a column well past warm-up.

@@ -290,10 +290,11 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         crate::canvas::tile_cache::clear_reassign_cache();
     });
 
-    // Clear resonator tile cache when bandwidth or bin-count mode changes
+    // Clear resonator tile cache when bandwidth, bin-count mode, or layout changes
     Effect::new(move || {
         let _bw = state.resonator_bandwidth_hz.get();
         let _mode = state.resonator_fft_mode.get();
+        let _layout = state.resonator_layout.get();
         crate::canvas::tile_cache::clear_resonator_cache();
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });

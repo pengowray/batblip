@@ -380,6 +380,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 // bounded regardless of total recording length.
                 let new_cols = if state.main_view.get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
+                    let layout = state.resonator_layout.get_untracked();
                     let warmup = warmup_samples(sample_rate, bandwidth_hz);
                     let warmup_cols = warmup.div_ceil(hop_size);
                     let skip_cols = warmup_cols.min(last_processed_col);
@@ -397,6 +398,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                             skip_cols,
                             new_col_count,
                             bandwidth_hz,
+                            layout,
                         )
                     }
                 } else {

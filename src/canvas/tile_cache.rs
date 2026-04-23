@@ -2220,6 +2220,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let reson_fft = state.resonator_fft_mode.get_untracked().fft_for_lod(lod).max(16);
     let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
+    let layout = state.resonator_layout.get_untracked();
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -2287,6 +2288,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             pre_pad_cols,
             TILE_COLS,
             bandwidth_hz,
+            layout,
         );
 
         RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

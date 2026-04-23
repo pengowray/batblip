@@ -4,8 +4,9 @@ use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, ChromaColormap, ChromaRange, DisplayFilterMode, FftMode, FileSettings,
     FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy,
-    MicAcquisitionState, PlayStartMode, PlaybackMode, ResonatorFftMode, SpectrogramDisplay,
-    WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider, resonator_slider_to_bw,
+    MicAcquisitionState, PlayStartMode, PlaybackMode, ResonatorFftMode, ResonatorLayout,
+    SpectrogramDisplay, WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider,
+    resonator_slider_to_bw,
 };
 use crate::audio::playback;
 use crate::audio::microphone;
@@ -1674,6 +1675,28 @@ pub fn MainViewButton() -> impl IntoView {
                             <option value="256">"129"</option>
                             <option value="512">"257"</option>
                             <option value="1024">"513"</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" style="padding: 4px 8px;">
+                        <span class="setting-label">"Layout"</span>
+                        <select
+                            class="setting-select"
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                                let new_layout = match select.value().as_str() {
+                                    "log" => ResonatorLayout::Log,
+                                    _ => ResonatorLayout::Linear,
+                                };
+                                state.resonator_layout.set(new_layout);
+                            }
+                            prop:value=move || match state.resonator_layout.get() {
+                                ResonatorLayout::Linear => "linear",
+                                ResonatorLayout::Log => "log",
+                            }
+                        >
+                            <option value="linear">"Linear"</option>
+                            <option value="log">"Log"</option>
                         </select>
                     </div>
                 }

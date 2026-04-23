@@ -283,6 +283,11 @@ impl SpectrogramDisplay {
 // FlowColorScheme is defined in oversample-core and re-exported here for backward compatibility.
 pub use oversample_core::types::FlowColorScheme;
 
+// Resonator layout lives in the DSP crate — it needs to be the same type used
+// by compute_resonator_columns. Re-exported so UI code can reference it via
+// `crate::state::ResonatorLayout`.
+pub use oversample_core::dsp::resonators::ResonatorLayout;
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum RightSidebarTab {
     #[default]
@@ -1394,6 +1399,8 @@ pub struct AppState {
     pub resonator_bandwidth_hz: RwSignal<f32>,
     // Resonator view: bin-count mode (fixed or adaptive-per-LOD).
     pub resonator_fft_mode: RwSignal<ResonatorFftMode>,
+    // Resonator view: frequency-bin spacing (linear or log).
+    pub resonator_layout: RwSignal<ResonatorLayout>,
     // Colormap preference used when HFR mode is active
     pub hfr_colormap_preference: RwSignal<Colormap>,
     // When false, the Range button is hidden at full range
@@ -1838,6 +1845,7 @@ impl AppState {
             chroma_range: RwSignal::new(ChromaRange::Full),
             resonator_bandwidth_hz: RwSignal::new(20.0),
             resonator_fft_mode: RwSignal::new(ResonatorFftMode::Adaptive),
+            resonator_layout: RwSignal::new(ResonatorLayout::Linear),
             hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 

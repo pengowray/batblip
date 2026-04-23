@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::{
-    AppState, FlowColorScheme, MainView, ResonatorFftMode, SpectrogramDisplay,
+    AppState, FlowColorScheme, MainView, ResonatorFftMode, ResonatorLayout, SpectrogramDisplay,
     RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider, resonator_slider_to_bw,
 };
 use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Group, generate_uuid, now_iso8601, build_annotation_tree, AnnotationNode, collect_descendants, renumber_children};
@@ -351,11 +351,34 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 </select>
                             </div>
                             <div class="setting-row">
+                                <span class="setting-label">"Layout"</span>
+                                <select
+                                    class="setting-select"
+                                    on:change=move |ev: web_sys::Event| {
+                                        let target = ev.target().unwrap();
+                                        let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                                        let new_layout = match select.value().as_str() {
+                                            "log" => ResonatorLayout::Log,
+                                            _ => ResonatorLayout::Linear,
+                                        };
+                                        state.resonator_layout.set(new_layout);
+                                    }
+                                    prop:value=move || match state.resonator_layout.get() {
+                                        ResonatorLayout::Linear => "linear",
+                                        ResonatorLayout::Log => "log",
+                                    }
+                                >
+                                    <option value="linear">"Linear"</option>
+                                    <option value="log">"Log (20 Hz \u{2192} Nyquist)"</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
                                 <button
                                     class="setting-button"
                                     on:click=move |_| {
                                         state.resonator_bandwidth_hz.set(20.0);
                                         state.resonator_fft_mode.set(ResonatorFftMode::Adaptive);
+                                        state.resonator_layout.set(ResonatorLayout::Linear);
                                     }
                                 >"Reset"</button>
                             </div>
