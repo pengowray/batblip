@@ -176,7 +176,11 @@ pub fn BandGutter() -> impl IntoView {
         let canvas: &HtmlCanvasElement = el.as_ref();
         let Some(parent) = canvas.parent_element() else { return };
         let cb = Closure::<dyn Fn(js_sys::Array)>::new(move |_entries: js_sys::Array| {
-            canvas_size_tick.set(canvas_size_tick.get_untracked().wrapping_add(1));
+            // Bail if the component (and this signal) was disposed between
+            // the DOM mutation and the observer firing — otherwise
+            // `get_untracked` on a disposed signal panics.
+            let Some(cur) = canvas_size_tick.try_get_untracked() else { return };
+            canvas_size_tick.set(cur.wrapping_add(1));
         });
         if let Ok(observer) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             observer.observe(&parent);
@@ -646,7 +650,11 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let canvas: &HtmlCanvasElement = el.as_ref();
         let Some(parent) = canvas.parent_element() else { return };
         let cb = Closure::<dyn Fn(js_sys::Array)>::new(move |_entries: js_sys::Array| {
-            canvas_size_tick.set(canvas_size_tick.get_untracked().wrapping_add(1));
+            // Bail if the component (and this signal) was disposed between
+            // the DOM mutation and the observer firing — otherwise
+            // `get_untracked` on a disposed signal panics.
+            let Some(cur) = canvas_size_tick.try_get_untracked() else { return };
+            canvas_size_tick.set(cur.wrapping_add(1));
         });
         if let Ok(observer) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             observer.observe(&parent);
