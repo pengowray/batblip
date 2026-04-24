@@ -330,7 +330,9 @@ pub fn bench_simd_vs_scalar<F: FnMut() -> f64>(
     let mut scalar_bank = ResonatorBank::new(&configs, sr_f);
     let t0 = now_ms();
     for _ in 0..iterations {
-        scalar_bank.process_samples_scalar(&signal);
+        for &s in &signal {
+            scalar_bank.process_sample_scalar(s);
+        }
     }
     let scalar_ms = now_ms() - t0;
     let _sink_scalar = scalar_bank.power(num_bins / 2);
