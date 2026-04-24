@@ -31,14 +31,17 @@ fn format_hz(hz: f64) -> String {
     }
 }
 
-/// Run a fixed SIMD-vs-scalar benchmark on the resonator hot loop and log
-/// the result to the in-app Debug panel (right sidebar). Uses
+/// Time the resonator hot loop over a range of bank sizes and log the
+/// result to the in-app Debug panel (right sidebar). Uses
 /// `performance.now()` for wall time and yields to the browser between
-/// every iteration so the main thread isn't blocked for the multi-second
-/// scalar pass — that would starve queued reactive-graph work and can
-/// trigger disposed-value panics downstream.
+/// every iteration so the main thread isn't blocked during the bench.
+///
+/// Upstream `process_samples` autovectorizes under LLVM when the target
+/// feature is enabled at compile time, so this is a single timing (no
+/// SIMD-vs-scalar comparison) — useful for perf regression tracking and
+/// sanity-checking that simd128 is actually on in the current build.
 pub(crate) fn run_resonator_bench(state: AppState) {
-    use crate::dsp::resonators::bench_simd_vs_scalar;
+    use crate::dsp::resonators::bench_resonator_bank;
 
     wasm_bindgen_futures::spawn_local(async move {
         let Some(perf) = web_sys::window().and_then(|w| w.performance()) else {
@@ -68,16 +71,13 @@ pub(crate) fn run_resonator_bench(state: AppState) {
             // Yield before each size so browser can run reactive work.
             crate::canvas::tile_cache::yield_to_browser().await;
 
-            // Sum per-iteration timings, yielding between iterations so the
-            // worst single-iteration block stays under ~250 ms (the scalar
-            // 513-bin pass runs ~230 ms per iteration in current SIMD
-            // builds, ~5× that without SIMD). Each call builds a fresh
-            // bank — construction cost is ~microseconds, negligible.
-            let mut simd_total = 0.0;
-            let mut scalar_total = 0.0;
+            // Sum per-iteration timings, yielding between iterations to
+            // keep individual main-thread blocks short. Each call builds
+            // a fresh bank — construction cost is negligible.
+            let mut total_ms = 0.0;
             for _ in 0..iterations {
                 crate::canvas::tile_cache::yield_to_browser().await;
-                let r = bench_simd_vs_scalar(
+                let r = bench_resonator_bank(
                     num_bins,
                     samples_per_iter,
                     1,
@@ -85,16 +85,11 @@ pub(crate) fn run_resonator_bench(state: AppState) {
                     sample_rate,
                     now_ms.clone(),
                 );
-                simd_total += r.simd_ms;
-                scalar_total += r.scalar_ms;
+                total_ms += r.elapsed_ms;
             }
-            let speedup = if simd_total > 0.0 { scalar_total / simd_total } else { 0.0 };
             state.log_debug(
                 "info",
-                format!(
-                    "bins={:>4}: SIMD {:>7.2} ms,  scalar {:>7.2} ms,  speedup {:.2}x",
-                    num_bins, simd_total, scalar_total, speedup,
-                ),
+                format!("bins={:>4}: {:>7.2} ms ({} iters)", num_bins, total_ms, iterations),
             );
         }
     });
