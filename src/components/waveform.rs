@@ -830,6 +830,7 @@ pub fn Waveform() -> impl IntoView {
             }
         >
             <div class="chart-row">
+            <BandGutter/>
             <div class="chart-stage">
                 <canvas
                     node_ref=canvas_ref
@@ -845,11 +846,10 @@ pub fn Waveform() -> impl IntoView {
                 />
                 <Playhead/>
             </div>
-            <BandGutter/>
             </div>
             <div class="view-bottom-row">
-                <TimeGutter/>
                 <div class="view-bottom-corner"></div>
+                <TimeGutter/>
             </div>
         </div>
     }

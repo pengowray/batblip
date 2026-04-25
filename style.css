@@ -1799,9 +1799,9 @@ body.sidebar-resizing {
     position: relative;
     /* Visible gap between the gutter and the wave canvas so the scale
        distinction (frequency vs. amplitude) reads at a glance. */
-    margin-left: 3px;
+    margin-right: 3px;
     background: #0d0d0d;
-    border-left: 2px solid #2a2a2a;
+    border-right: 2px solid #2a2a2a;
     overflow: hidden;
     touch-action: none;
 }
@@ -1894,11 +1894,11 @@ body.sidebar-resizing {
 
 .band-gutter-tooltip {
     position: absolute;
-    /* Float the tooltip to the left of the gutter (over the waveform) so
+    /* Float the tooltip to the right of the gutter (over the waveform) so
        it doesn't spill outside the container now that the gutter is the
-       rightmost element. */
-    right: 100%;
-    margin-right: 4px;
+       leftmost element. */
+    left: 100%;
+    margin-left: 4px;
     transform: translateY(-50%);
     padding: 2px 6px;
     background: rgba(20, 20, 20, 0.92);

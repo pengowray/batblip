@@ -812,6 +812,7 @@ pub fn ZcDotChart() -> impl IntoView {
             }
         >
             <div class="chart-row">
+            <BandGutter/>
             <div class="chart-stage">
                 <canvas
                     node_ref=canvas_ref
@@ -827,11 +828,10 @@ pub fn ZcDotChart() -> impl IntoView {
                 />
                 <Playhead x_offset=LABEL_AREA_WIDTH/>
             </div>
-            <BandGutter/>
             </div>
             <div class="view-bottom-row">
-                <TimeGutter data_left_offset=LABEL_AREA_WIDTH/>
                 <div class="view-bottom-corner"></div>
+                <TimeGutter data_left_offset=LABEL_AREA_WIDTH/>
             </div>
         </div>
     }

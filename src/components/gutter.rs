@@ -90,10 +90,11 @@ pub fn BandGutter() -> impl IntoView {
     // box changes height (see Spectrogram for the same pattern and rationale).
     let canvas_size_tick: RwSignal<u32> = RwSignal::new(0);
 
-    // Resolve the visible frequency window for the gutter. On the
-    // spectrogram this tracks min/max_display_freq so the gutter ticks
-    // line up 1:1 with the spectrogram's y-axis; on views that don't set
-    // those signals it falls back to 0..Nyquist.
+    // Always paint the gutter at the file's full 0..Nyquist range so it
+    // acts as a stable frequency reference / overview while the main
+    // canvas independently V-zooms. The gutter is wide enough to drag-
+    // select bands at file scale; v-zoom navigation lives on the main
+    // canvas y-axis.
     let display_range = move || -> (f64, f64) {
         let files = state.files.get();
         let idx = state.current_file_index.get();
@@ -101,9 +102,7 @@ pub fn BandGutter() -> impl IntoView {
             .and_then(|i| files.get(i))
             .map(|f| f.audio.sample_rate as f64 / 2.0)
             .unwrap_or(0.0);
-        let lo = state.min_display_freq.get().unwrap_or(0.0);
-        let hi = state.max_display_freq.get().unwrap_or(nyquist);
-        (lo, hi)
+        (0.0, nyquist)
     };
 
     // Redraw when any relevant signal changes.
