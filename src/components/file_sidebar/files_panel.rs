@@ -385,6 +385,20 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
                         let on_close = move |ev: MouseEvent| {
                             ev.stop_propagation();
+                            // Refuse to close the live doc while it's actively
+                            // listening or recording — user has to stop first
+                            // so finalize_recording / cleanup_listen_file can
+                            // run on the right slot. Closing mid-stream would
+                            // race the async stop path and likely lose data.
+                            let is_live_doc = state.mic_live_file_idx.get_untracked() == Some(i);
+                            let mic_active = state.mic_listening.get_untracked()
+                                || state.mic_recording.get_untracked();
+                            if is_live_doc && mic_active {
+                                state.show_info_toast(
+                                    "Stop listening or recording before closing this file.",
+                                );
+                                return;
+                            }
                             if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
                                 playback::stop(&state);
                             }
@@ -399,6 +413,18 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         else if i > 0 { Some(i - 1) }
                                         else { Some(0) }
                                     },
+                                    Some(cur) if cur > i => Some(cur - 1),
+                                    other => other,
+                                };
+                            });
+                            // Keep mic_live_file_idx in sync with the shift.
+                            // If the live doc itself was closed (only possible
+                            // for an armed/empty doc — guard above blocks the
+                            // mic-active case), drop the reference. Otherwise
+                            // decrement when its slot moved.
+                            state.mic_live_file_idx.update(|idx| {
+                                *idx = match *idx {
+                                    Some(cur) if cur == i => None,
                                     Some(cur) if cur > i => Some(cur - 1),
                                     other => other,
                                 };
