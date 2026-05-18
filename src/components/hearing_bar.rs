@@ -502,7 +502,12 @@ pub fn HearingBar() -> impl IntoView {
         }
     });
     let cell_content = move || {
-        if state.hfr_enabled.get() {
+        // Show the range whenever HFR is on, OR while the user is
+        // actively dragging on the band gutter (HFR will be enabled on
+        // pointer-up, so showing the in-progress range gives a live
+        // preview of what's about to be selected).
+        let show_range = state.hfr_enabled.get() || state.band_ff_dragging.get();
+        if show_range {
             let lo = state.band_ff_freq_lo.get();
             let hi = state.band_ff_freq_hi.get();
             if hi > lo {
