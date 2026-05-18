@@ -490,26 +490,40 @@ pub fn HearingBar() -> impl IntoView {
             }
         }
     });
-    // Label reads "HEARING" by default; when HFR is on and a band is
-    // set, it switches to show the active frequency range — gives the
-    // user the numeric answer at a glance.
-    let bar_label = Signal::derive(move || {
+    // "BAND" cell — a column the width of the band gutter below it, so the
+    // hearing bar's leftmost slot reads as a continuation of the gutter
+    // column. Shows "BAND" by default; when HFR is on with a range set,
+    // the range fills the cell on two lines (lo on top, hi+units below).
+    let cell_title = Signal::derive(move || {
+        if state.hfr_enabled.get() {
+            "Band — the active high-frequency reception range. Drag on the gutter below to adjust; click HFR to disable.".to_string()
+        } else {
+            "Band — the slice of spectrum to focus on, filter, and listen to. Turn HFR on (or drag on the gutter below) to set a range.".to_string()
+        }
+    });
+    let cell_content = move || {
         if state.hfr_enabled.get() {
             let lo = state.band_ff_freq_lo.get();
             let hi = state.band_ff_freq_hi.get();
             if hi > lo {
-                return format!("{:.1}\u{2013}{:.1} kHz", lo / 1000.0, hi / 1000.0);
+                return view! {
+                    <div class="band-cell-lo">{format!("{:.1}\u{2013}", lo / 1000.0)}</div>
+                    <div class="band-cell-hi">{format!("{:.1} kHz", hi / 1000.0)}</div>
+                }.into_any();
             }
         }
-        "HEARING".to_string()
-    });
+        view! { <div class="band-cell-name">"BAND"</div> }.into_any()
+    };
     view! {
         <div class="hearing-bar"
             class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Hearing))
         >
-            <span class="bar-label" class:bar-label-range=move || state.hfr_enabled.get()>
-                {move || bar_label.get()}
-            </span>
+            <div class="band-cell"
+                class:band-cell-active=move || state.hfr_enabled.get()
+                title=move || cell_title.get()
+            >
+                {cell_content}
+            </div>
             <div class="bar-controls">
                 <div class=move || cell_class.get()>
                     <HfrButton/>

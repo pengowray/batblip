@@ -2774,7 +2774,7 @@ body.sidebar-resizing {
 .view-bar {
     flex-shrink: 0;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: 8px;
     padding: 4px 8px;
     background: #181818;
@@ -2783,11 +2783,22 @@ body.sidebar-resizing {
     z-index: 6;
 }
 
+/* Hearing bar leaves its left edge flush so the BAND cell can sit
+   exactly above the band gutter column. Internal spacing is provided
+   by the bar-controls. */
+.hearing-bar {
+    padding-left: 0;
+    gap: 0;
+    align-items: stretch;
+    min-height: 44px;
+}
+
 /* The view-bar is a half-step lighter and a touch thinner to signal a
    different conceptual category (visualization, not audio). */
 .view-bar {
     background: #1d1d1d;
     padding: 3px 8px;
+    align-items: center;
 }
 
 /* When any combo dropdown is open, lift the bar above .main-overlays
@@ -2813,14 +2824,57 @@ body.sidebar-resizing {
     padding: 0 4px 0 0;
 }
 
-/* When the HEARING label is showing the active band range instead of
-   the section name, give it more visual weight and color it with the
-   same yellow as HFR brightness. */
-.bar-label.bar-label-range {
-    font-size: 11px;
-    text-transform: none;
-    letter-spacing: 0.3px;
+/* ── BAND cell — leftmost column of the hearing bar ───────────────────
+   Width and right edge mirror the band-gutter column directly below
+   (64px + 3px margin + 2px border). When HFR is on with a range set,
+   the cell displays the range stacked on two lines. */
+.band-cell {
+    flex: 0 0 64px;
+    margin-right: 3px;
+    border-right: 2px solid #2a2a2a;
+    background: #0d0d0d;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.05;
+    user-select: none;
+    cursor: help;
+    transition: background 0.15s;
+}
+.band-cell:hover {
+    background: #141414;
+}
+.band-cell-name {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: #666;
+}
+.band-cell-active .band-cell-name {
     color: #f0c050;
+}
+.band-cell-lo,
+.band-cell-hi {
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #f0c050;
+}
+.band-cell-hi {
+    font-size: 11px;
+}
+
+/* On mobile the gutter widens to 84px — match it here too. */
+.app.mobile .band-cell {
+    flex: 0 0 84px;
+}
+.app.mobile .band-cell-lo {
+    font-size: 14px;
+}
+.app.mobile .band-cell-hi {
+    font-size: 13px;
 }
 
 /* Mute-blink: the Mode button's right value when listening + muted.
@@ -2861,6 +2915,13 @@ body.sidebar-resizing {
     min-width: 0;
     flex-wrap: wrap;
     row-gap: 4px;
+}
+
+/* Hearing-bar's controls sit after the BAND cell (which provides its
+   own border separator), so add a touch of breathing room and keep
+   buttons centered vertically since the bar uses align-items: stretch. */
+.hearing-bar .bar-controls {
+    padding: 0 0 0 8px;
 }
 
 /* Thin vertical divider between button sub-groups. */
