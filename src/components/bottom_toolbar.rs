@@ -6,7 +6,7 @@
 
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, RecordMode};
+use crate::state::{AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, RecordMode};
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
 use crate::components::combo_button::ComboButton;
@@ -281,14 +281,17 @@ pub fn BottomToolbar() -> impl IntoView {
 
     view! {
         <div class=move || if state.is_mobile.get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
-            class:panel-open=move || state.layer_panel_open.get().is_some()
+            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Transport))
             node_ref=toolbar_node
             style=move || {
                 // Inline z-index is the load-bearing lift: keeps combo dropdowns
                 // above .main-overlays (z-index: 20) immediately and across all
                 // views, regardless of :has() invalidation quirks or Leptos
                 // class-diff timing. Matches the CSS-backup rule at line ~1793.
-                let mut s = if state.layer_panel_open.get().is_some() {
+                // Scoped to transport-bar panels so opening a Hearing/View bar
+                // popup doesn't also lift this bar (which would otherwise win
+                // DOM order and cover the real popup).
+                let mut s = if matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Transport)) {
                     String::from("z-index: 25;")
                 } else {
                     String::new()

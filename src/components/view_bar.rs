@@ -9,7 +9,7 @@
 use leptos::prelude::*;
 
 use crate::components::app::MainViewButton;
-use crate::state::{ActiveFocus, AppState, CanvasTool, LayerPanel};
+use crate::state::{ActiveFocus, AppState, Bar, CanvasTool, LayerPanel};
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -124,7 +124,7 @@ pub fn ViewBar() -> impl IntoView {
 
     view! {
         <div class="view-bar"
-            class:panel-open=move || state.layer_panel_open.get().is_some()
+            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::View))
         >
             <span class="bar-label">"VIEW"</span>
             <div class="bar-controls">

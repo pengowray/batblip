@@ -19,7 +19,7 @@ use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::HfrButton;
 use crate::components::listen_button::ListenButton;
 use crate::state::{
-    ActiveFocus, AppState, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
+    ActiveFocus, AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
     PeakSource, PlaybackMode, RightSidebarTab,
 };
 
@@ -856,7 +856,7 @@ pub fn HearingBar() -> impl IntoView {
     });
     view! {
         <div class="hearing-bar"
-            class:panel-open=move || state.layer_panel_open.get().is_some()
+            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Hearing))
         >
             <span class="bar-label">"HEARING"</span>
             <div class="bar-controls">

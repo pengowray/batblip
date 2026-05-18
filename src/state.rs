@@ -758,6 +758,38 @@ pub enum LayerPanel {
     Bandpass,
 }
 
+impl LayerPanel {
+    /// Which bar this panel belongs to. Each bar uses this to decide
+    /// whether to lift its own z-index above sibling bars — set the
+    /// `.panel-open` class only for the bar that actually owns the open
+    /// panel, otherwise an unrelated bar lifts itself and (being later
+    /// in DOM) hides the real popup.
+    pub fn bar(self) -> Bar {
+        match self {
+            LayerPanel::HfrMode
+            | LayerPanel::BandPresets
+            | LayerPanel::Bandpass
+            | LayerPanel::Notch
+            | LayerPanel::Gain
+            | LayerPanel::ListenMode => Bar::Hearing,
+            LayerPanel::MainView | LayerPanel::Tool => Bar::View,
+            LayerPanel::PlayMode | LayerPanel::RecordMode | LayerPanel::Channel => Bar::Transport,
+            // FreqRange floats over the canvas — not anchored to a bar.
+            LayerPanel::FreqRange => Bar::Floating,
+        }
+    }
+}
+
+/// Which toolbar (if any) a `LayerPanel` is anchored to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bar {
+    Hearing,
+    View,
+    Transport,
+    /// Not anchored to a bar — opened from a floating overlay button.
+    Floating,
+}
+
 /// A navigation history entry (for overview back/forward buttons).
 #[derive(Clone, Copy, Debug)]
 pub struct NavEntry {
