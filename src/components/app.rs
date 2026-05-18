@@ -1278,12 +1278,12 @@ fn MainArea() -> impl IntoView {
                         // Overview strip (top)
                         <OverviewPanel />
 
-                        // Hearing Bar — sound-output / DSP row above the main view
-                        <HearingBar />
-
                         // View Bar — visualization-layer controls (which view,
                         // which overlays, canvas tool)
                         <ViewBar />
+
+                        // Hearing Bar — sound-output / DSP row above the main view
+                        <HearingBar />
 
                         // Main view (takes remaining space)
                         <div class="main-view">

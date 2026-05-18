@@ -1,16 +1,17 @@
 // Hearing Bar — the "what comes out the speakers" strip between the
 // Overview and the main canvas.
 //
-// Layout:  [HFR ▾ HET] │ [Band] [EQ] [Notch] [Gain] │ [🎤 Listen]
+// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [Notch] │ [Listen | …]
 //
-//          ^brightness   ^DSP filter combos          ^live mic
-//           encoded
+//          ^HfrButton    ^ModeButton    ^filter combos             ^ListenButton
 //
-// The HFR cell wraps the full `HfrButton` in a class that drives per-letter
+// The HFR cell wraps `HfrButton` in a class that drives per-letter
 // brightness on the "HFR" label (H dims when the active band sits entirely
-// below 24 kHz — i.e. an audible-only filter). Listen lives at the right
-// end because its DSP pipeline is unified with HFR. Filter combos in the
-// middle wrap onto a second row on narrow viewports.
+// below 24 kHz — i.e. an audible-only filter). HfrButton's right half is
+// the band-presets dropdown; ModeButton is a separate combo so each half
+// of HfrButton stays single-purpose. Listen lives at the right end
+// because its DSP pipeline is unified with HFR/Mode. Filter combos in
+// the middle wrap onto a second row on narrow viewports.
 
 use leptos::prelude::*;
 
@@ -18,20 +19,11 @@ use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::HfrButton;
 use crate::components::listen_button::ListenButton;
+use crate::components::mode_button::ModeButton;
 use crate::state::{
-    ActiveFocus, AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
+    AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
     PeakSource, PlaybackMode, RightSidebarTab,
 };
-
-fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
-    if disabled {
-        "layer-panel-opt disabled"
-    } else if active {
-        "layer-panel-opt sel"
-    } else {
-        "layer-panel-opt"
-    }
-}
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.layer_panel_open.update(|p| {
@@ -39,289 +31,8 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
     });
 }
 
-fn nyquist_for_current(state: AppState) -> f64 {
-    // When listening or recording, the live waterfall has the most up-to-date
-    // sample rate (USB devices can re-negotiate after the AppState signal is
-    // first set). Fall back to AppState's view otherwise — that handles the
-    // armed-but-not-streaming case too.
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
-    if is_mic_active && crate::canvas::live_waterfall::is_active() {
-        crate::canvas::live_waterfall::max_freq()
-    } else {
-        state.active_nyquist()
-    }
-}
-
-/// Apply a band preset: set the BandFF range and ensure HFR is enabled.
-/// Used by every preset button except "None".
-fn apply_band(state: AppState, lo: f64, hi: f64) {
-    state.set_band_ff_range(lo, hi);
-    if !state.focus_stack.get_untracked().hfr_enabled() {
-        state.toggle_hfr();
-    }
-    state.layer_panel_open.set(None);
-}
-
-fn clear_band(state: AppState) {
-    state.set_band_ff_range(0.0, 0.0);
-    if state.focus_stack.get_untracked().hfr_enabled() {
-        state.toggle_hfr();
-    }
-    state.layer_panel_open.set(None);
-}
-
-/// Range of the bat-book species auto-resolved from the file's metadata.
-/// Returns None when there's no file, no species match, or the entry has
-/// no useful frequency bounds.
-fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked()?;
-    let file = files.get(idx)?;
-    let favourites = state.bat_book_favourites.get_untracked();
-    let resolved = crate::bat_book::auto_resolve::resolve_auto(Some(file), &favourites);
-    let species_id = resolved.matched_species_id?;
-    let entry = crate::bat_book::auto_resolve::find_entry_in_manifest(resolved.region, &species_id)
-        .or_else(|| crate::bat_book::auto_resolve::find_entry_any_book(&species_id))?;
-    if entry.freq_lo_hz <= 0.0 || entry.freq_hi_hz <= entry.freq_lo_hz {
-        return None;
-    }
-    let nyq = file.spectrogram.max_freq;
-    Some((entry.name.to_string(), entry.freq_lo_hz, entry.freq_hi_hz.min(nyq)))
-}
-
-/// Range covering all currently-selected bat book species (min lo, max hi).
-fn selected_species_range(state: AppState) -> Option<(f64, f64)> {
-    let ids = state.bat_book_selected_ids.get_untracked();
-    if ids.is_empty() {
-        return None;
-    }
-    let mut lo = f64::MAX;
-    let mut hi = f64::MIN;
-    let mut found = false;
-    for id in &ids {
-        if let Some(entry) = crate::bat_book::auto_resolve::find_entry_any_book(id) {
-            if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
-                lo = lo.min(entry.freq_lo_hz);
-                hi = hi.max(entry.freq_hi_hz);
-                found = true;
-            }
-        }
-    }
-    if found && hi > lo { Some((lo, hi)) } else { None }
-}
-
-/// Range from whichever of selection / annotation / frequency-focus is
-/// the active focus right now (only one can be active at a time).
-fn focused_range(state: AppState) -> Option<(f64, f64)> {
-    match state.active_focus.get_untracked() {
-        Some(ActiveFocus::TransientSelection) => {
-            let sel = state.selection.get_untracked()?;
-            match (sel.freq_low, sel.freq_high) {
-                (Some(lo), Some(hi)) if hi > lo => Some((lo, hi)),
-                _ => None,
-            }
-        }
-        Some(ActiveFocus::Annotations) => state.selected_annotation_focus_range(),
-        Some(ActiveFocus::FrequencyFocus) => {
-            let r = state.focus_stack.get_untracked().effective_range();
-            if r.is_active() { Some((r.lo, r.hi)) } else { None }
-        }
-        None => None,
-    }
-}
-
-/// Band Presets combo — sits next to the HFR/FR toggle.
-#[component]
-fn BandPresetsCombo() -> impl IntoView {
-    let state = expect_context::<AppState>();
-
-    let is_open = Signal::derive(move || {
-        state.layer_panel_open.get() == Some(LayerPanel::BandPresets)
-    });
-    let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
-    };
-
-    // Detect which preset is active so the right-side label reflects state.
-    let preset_label = Signal::derive(move || {
-        if !state.hfr_enabled.get() {
-            return "None".to_string();
-        }
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
-        if hi <= lo { return "None".to_string(); }
-        let nyq = nyquist_for_current(state);
-        let close = |a: f64, b: f64| (a - b).abs() < 100.0;
-        if close(lo, 0.0) && close(hi, nyq) { return "All".to_string(); }
-        if close(lo, 20_000.0) && close(hi, nyq) { return "Ultrasound".to_string(); }
-        if close(lo, 0.0) && close(hi, 24_000.0) { return "Audible".to_string(); }
-        "Custom".to_string()
-    });
-
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left no-annotation disabled"
-        } else if state.hfr_enabled.get() {
-            "layer-btn combo-btn-left no-annotation active"
-        } else {
-            "layer-btn combo-btn-left no-annotation"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-right disabled"
-        } else if is_open.get() {
-            "layer-btn combo-btn-right open"
-        } else {
-            "layer-btn combo-btn-right"
-        }
-    });
-
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        toggle_panel(&state, LayerPanel::BandPresets);
-    });
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::BandPresets);
-    });
-
-    let left_value = Signal::derive(move || preset_label.get());
-    let right_value = Signal::derive(String::new);
-
-    view! {
-        <ComboButton
-            left_label="Band"
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Band presets"
-            right_title="Band presets"
-            menu_direction="below"
-            panel_align="left"
-            panel_style="min-width: 220px;"
-        >
-            <div class="layer-panel-title">"Band presets"</div>
-
-            // ── All ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    let nyq = nyquist_for_current(state);
-                    apply_band(state, 0.0, nyq);
-                }
-            >"All"</button>
-
-            // ── Bat book: file species ──
-            {move || {
-                let r = file_species_range(state);
-                let label = match &r {
-                    Some((name, lo, hi)) => format!(
-                        "Bat book: {} ({:.0}\u{2013}{:.0} kHz)",
-                        name, lo / 1000.0, hi / 1000.0,
-                    ),
-                    None => "Bat book: file species".to_string(),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((_, lo, hi)) = file_species_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}</button>
-                }
-            }}
-
-            // ── Bat book: selected species ──
-            {move || {
-                let r = selected_species_range(state);
-                let label = match r {
-                    Some((lo, hi)) => format!(
-                        "Bat book: selected ({:.0}\u{2013}{:.0} kHz)",
-                        lo / 1000.0, hi / 1000.0,
-                    ),
-                    None => "Bat book: selected species".to_string(),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((lo, hi)) = selected_species_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}</button>
-                }
-            }}
-
-            // ── Selection or annotation (whichever is focused) ──
-            {move || {
-                let r = focused_range(state);
-                let (label, hint) = match (state.active_focus.get(), &r) {
-                    (Some(ActiveFocus::TransientSelection), Some((lo, hi))) => (
-                        "Selection".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    (Some(ActiveFocus::Annotations), Some((lo, hi))) => (
-                        "Annotation".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    (Some(ActiveFocus::FrequencyFocus), Some((lo, hi))) => (
-                        "Focus".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    _ => ("Selection / annotation".to_string(), String::new()),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((lo, hi)) = focused_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}{hint}</button>
-                }
-            }}
-
-            // ── Ultrasound ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    let nyq = nyquist_for_current(state);
-                    if nyq > 20_000.0 {
-                        apply_band(state, 20_000.0, nyq);
-                    }
-                }
-            >"Ultrasound (≥20 kHz)"</button>
-
-            // ── Audible ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| { apply_band(state, 0.0, 24_000.0); }
-            >"Audible (\u{2264}24 kHz)"</button>
-
-            <hr/>
-
-            // ── None ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| { clear_band(state); }
-            >"None"</button>
-        </ComboButton>
-    }
-}
+// Band presets and their helpers moved into `hfr_button.rs` — they're
+// the body of HfrButton's right-half dropdown now.
 
 fn layer_opt_class_simple(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -542,8 +253,11 @@ fn BandpassCombo() -> impl IntoView {
         } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
     });
 
+    // Always show the band range when one is set — even with the filter
+    // off, this is the range that AUTO/ON would apply. Previously the
+    // range only showed while active, which made the off state read as
+    // empty/broken.
     let left_value = Signal::derive(move || {
-        if state.bandpass_mode.get() == BandpassMode::Off { return String::new(); }
         let lo = state.filter_freq_low.get();
         let hi = state.filter_freq_high.get();
         if hi > lo {
@@ -863,11 +577,11 @@ pub fn HearingBar() -> impl IntoView {
                 <div class=move || cell_class.get()>
                     <HfrButton/>
                 </div>
+                <ModeButton/>
                 <div class="bar-sep"></div>
-                <BandPresetsCombo/>
                 <BandpassCombo/>
-                <NotchCombo/>
                 <GainCombo/>
+                <NotchCombo/>
                 <div class="bar-spacer"></div>
                 <ListenButton/>
             </div>

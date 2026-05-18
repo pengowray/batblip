@@ -11,6 +11,7 @@ pub mod analysis_panel;
 pub mod overview;
 pub mod play_controls;
 pub mod hfr_button;
+pub mod mode_button;
 pub mod hearing_bar;
 pub mod listen_button;
 pub mod view_bar;

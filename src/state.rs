@@ -1863,7 +1863,7 @@ impl AppState {
             mic_max_bit_depth: RwSignal::new(0),
             mic_channel_mode: RwSignal::new(ChannelMode::Mono),
             mic_device_info: RwSignal::new(None),
-            listen_context_samples: RwSignal::new(16384),
+            listen_context_samples: RwSignal::new(65536),
             mic_mute_output: RwSignal::new(false),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),

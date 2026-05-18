@@ -53,15 +53,22 @@ fn AnnoToggle() -> impl IntoView {
     }
 }
 
-/// Bat book strip toggle.
+/// Bat book toggle — shows/hides both the strip below the main view
+/// and the floating reference panel together. "On" means either is open;
+/// clicking when on closes both, clicking when off opens both.
 #[component]
 fn BookToggle() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let is_on = move || state.bat_book_open.get() || state.bat_book_ref_open.get();
     view! {
         <button
-            class=move || if state.bat_book_open.get() { "layer-btn active" } else { "layer-btn" }
-            on:click=move |_| { state.bat_book_open.update(|v| *v = !*v); }
-            title=move || if state.bat_book_open.get() { "Hide bat book" } else { "Show bat book" }
+            class=move || if is_on() { "layer-btn active" } else { "layer-btn" }
+            on:click=move |_| {
+                let on = is_on();
+                state.bat_book_open.set(!on);
+                state.bat_book_ref_open.set(!on);
+            }
+            title=move || if is_on() { "Hide bat book" } else { "Show bat book" }
         >
             <span class="layer-btn-category">"Bat"</span>
             <span class="layer-btn-value">"Book"</span>

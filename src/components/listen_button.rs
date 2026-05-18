@@ -1,9 +1,12 @@
 // Listen combo button — lives at the right end of the Hearing Bar.
 //
-// Mode (HET/PS/PV/ZC/1:1), heterodyne freq/cutoff, factors, and the
-// bandpass filter all live in the unified HFR menu and band gutter.
-// This combo only carries listen-specific settings:
-//   • Mute output (mic warm-up — process audio without playing it)
+// Left half: toggles live mic listening; status text reflects acquire /
+//   ready / muted state.
+// Right half (caret): "…" — opens this popup of listen-specific knobs.
+//
+// Mode (HET/PS/PV/ZC/1:1), heterodyne freq/cutoff, factors, bandpass,
+// and the Output On/Mute toggle live in the Mode and HFR buttons. This
+// popup only carries settings that have nowhere else to go:
 //   • PS/PV overlap-save buffer size (latency vs smoothness tradeoff)
 
 use leptos::prelude::*;
@@ -64,22 +67,10 @@ pub fn ListenButton() -> impl IntoView {
             "\u{1F3A4} Listen".to_string()
         }
     });
-    // Right-button label tracks the unified HFR mode that drives live audio.
-    let listen_right_value = Signal::derive(move || {
-        if state.mic_mute_output.get() { return "MUTE".to_string(); }
-        let hfr_on = state.focus_stack.get().hfr_enabled();
-        if !hfr_on { return "1:1".to_string(); }
-        match state.playback_mode.get() {
-            PlaybackMode::Heterodyne => "HET".to_string(),
-            PlaybackMode::PitchShift => "PS".to_string(),
-            PlaybackMode::PhaseVocoder => "PV".to_string(),
-            PlaybackMode::ZeroCrossing => "ZC".to_string(),
-            PlaybackMode::Normal => "1:1".to_string(),
-            // TimeExpansion isn't applicable to live audio (handled as
-            // passthrough with a toast in process_live_audio).
-            PlaybackMode::TimeExpansion => "TE\u{2009}!".to_string(),
-        }
-    });
+    // Right-button is a generic "more options" affordance — the listen
+    // mode is determined by HFR/Mode settings elsewhere, so duplicating
+    // it here was confusing.
+    let listen_right_value = Signal::derive(|| "\u{2026}".to_string()); // …
 
     let listen_left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if state.mic_strategy.get_untracked() == MicStrategy::None {
@@ -110,20 +101,8 @@ pub fn ListenButton() -> impl IntoView {
             panel_align="right"
             panel_style="min-width: 220px;"
         >
-            // ── Output ──
-            <div class="layer-panel-title">"Output"</div>
-            <button class=move || layer_opt_class(!state.mic_mute_output.get())
-                on:click=move |_| state.mic_mute_output.set(false)
-                title="Play processed audio through speakers"
-            >"On"</button>
-            <button class=move || layer_opt_class(state.mic_mute_output.get())
-                on:click=move |_| state.mic_mute_output.set(true)
-                title="Mute speaker output (mic warm-up). Spectrogram still updates."
-            >"Mute (warm-up)"</button>
-
             // ── Buffer size (PS/PV only) ──
             <Show when=move || matches!(state.playback_mode.get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
-                <hr />
                 <div class="layer-panel-title">"PS/PV Buffer"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                     <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
@@ -151,7 +130,7 @@ pub fn ListenButton() -> impl IntoView {
 
             <hr />
             <div class="layer-panel-hint" style="padding: 4px 8px; font-size: 11px; opacity: 0.65;">
-                "Mode, frequency range, and bandpass live in the HFR menu and band gutter."
+                "Mode, output mute, frequency range, and bandpass live in the HFR / Mode buttons."
             </div>
         </ComboButton>
     }
